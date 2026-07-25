@@ -108,5 +108,20 @@ export interface PasskeyCreationOptions {
   attestation: 'none';
 }
 
-export { batchLineMessages } from './line';
-export type { LineBatch, LineMessage } from './line';
+export { batchLineMessages, discoveredLineDestinations, verifyLineWebhookSignature } from './line';
+export type { LineBatch, LineDestination, LineMessage } from './line';
+export { canUpdateAttendance } from './attendance';
+export type { AttendanceLinkCheck } from './attendance';
+export { MAX_ATTACHMENT_BYTES, MAX_SOURCE_MESSAGE_ATTACHMENT_BYTES, validateAttachmentIntake } from './attachments';
+export type { AttachmentIntakeResult } from './attachments';
+export { MAX_DELIVERY_ATTEMPTS, MAX_RETRY_WINDOW_MS, nextRetry } from './retry';
+export type { RetryDecision } from './retry';
+export { CAPACITY_CRITICAL_THRESHOLD, CAPACITY_WARNING_THRESHOLD, capacityWarning } from './capacity';
+export type { CapacityWarning } from './capacity';
+export { canConsumeRecipientLink } from './recipient-links';
+export type { RecipientLinkCheck } from './recipient-links';
+export { ATTENDANCE_REMINDER_DAYS, shouldSendAttendanceReminder } from './reminders';
+export { classifyEventChange } from './event-changes';
+export type { EventChangeKind } from './event-changes';
+export { shouldWriteRecoveryReceipt } from './recovery';
+export { displayRecipientIdentifier } from './privacy';

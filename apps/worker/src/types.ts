@@ -1,5 +1,6 @@
 export interface Bindings {
   CONTROL_DB: D1Database;
+  RECOVERY_RECEIPTS: R2Bucket;
   ASSETS: Fetcher;
   APP_URL: string;
   WEB_ORIGIN: string;
@@ -26,6 +27,7 @@ export interface SetupRow {
   granted_scopes: string | null;
   credential_envelope: string | null;
   history_id: string | null;
+  owner_email: string | null;
   owner_identity_id: string | null;
   organization_id: string | null;
   database_id: string | null;

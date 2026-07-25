@@ -17,6 +17,12 @@
       "migrations_dir": "migrations/control"
     },
   ],
+  "r2_buckets": [
+    {
+      "binding": "RECOVERY_RECEIPTS",
+      "bucket_name": "mail-automation-recovery-receipts"
+    }
+  ],
   "triggers": {
     "crons": ["* * * * *"]
   },

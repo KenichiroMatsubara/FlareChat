@@ -8,7 +8,9 @@ describe('Automation Inbox Google grant', () => {
     expect(hasCompleteGoogleGrant(GOOGLE_SCOPES.filter((scope) => scope !== 'https://www.googleapis.com/auth/gmail.readonly'))).toBe(false);
     expect(missingGoogleScopes(['openid', 'email', 'profile'])).toEqual([
       'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/gmail.send',
       'https://www.googleapis.com/auth/calendar.events.owned',
+      'https://www.googleapis.com/auth/drive.file',
     ]);
   });
 
@@ -18,8 +20,30 @@ describe('Automation Inbox Google grant', () => {
       'https://www.googleapis.com/auth/userinfo.email',
       'https://www.googleapis.com/auth/userinfo.profile',
       'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/gmail.send',
       'https://www.googleapis.com/auth/calendar.events.owned',
+      'https://www.googleapis.com/auth/drive.file',
     ])).toBe(true);
+  });
+
+  it('requires Gmail sending and Drive publication capabilities for an Automation Inbox', () => {
+    expect(hasCompleteGoogleGrant([
+      'openid',
+      'email',
+      'profile',
+      'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/calendar.events.owned',
+    ])).toBe(false);
+    expect(missingGoogleScopes([
+      'openid',
+      'email',
+      'profile',
+      'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/calendar.events.owned',
+    ])).toEqual([
+      'https://www.googleapis.com/auth/gmail.send',
+      'https://www.googleapis.com/auth/drive.file',
+    ]);
   });
 
   it('always sends OAuth through PKCE and requests offline consent', () => {

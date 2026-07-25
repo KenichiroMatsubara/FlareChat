@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 
+import { canUpdateAttendance, discoveredLineDestinations, displayRecipientIdentifier, verifyLineWebhookSignature } from '@mail/domain';
 import type { OrganizationSetup, PasskeyCreationOptions } from '@mail/domain';
 
 import { runAutomationForIdentity } from './automation';
@@ -18,6 +19,8 @@ import {
 } from './google';
 import { loginReturnOrigin } from './origin';
 import { createSetupOrganizationKey, provisionSetup } from './provisioning';
+import { readRecoveryReceipt, restoreDeliveryRecordFromReceipt } from './recovery-receipts';
+import { exportRecipientCsv, previewRecipientCsv } from './recipients';
 import { failure, json } from './response';
 import type { Bindings, ConnectionRow, GoogleAutomationRow, OrganizationConnectionRow, OrganizationRow, PasskeyRow, SessionRow, SetupRow } from './types';
 import { verifyAuthentication, verifyRegistration } from './webauthn';
@@ -31,6 +34,7 @@ const PROVISIONING_WINDOW_MS = 24 * 60 * 60 * 1_000;
 const SESSION_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
 const PASSKEY_WINDOW_MS = 5 * 60 * 1_000;
 const GOOGLE_LOGIN_WINDOW_MS = 10 * 60 * 1_000;
+const RECIPIENT_LINK_WINDOW_MS = 15 * 60 * 1_000;
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
 
 type OrganizationCredential = Record<string, string>;
@@ -414,13 +418,17 @@ app.post('/api/setup/passkey/options', async (context) => {
   try {
     const setup = validSetup(await setupFromRequest(context.req.raw, context.env), 'awaiting_passkey');
     if (!setup.inbox_address) throw new Error('Setup is missing the Automation Inbox.');
+    const input = await context.req.json<{ ownerEmail?: string }>();
+    const ownerEmail = input.ownerEmail?.trim().toLowerCase();
+    if (!ownerEmail || !ownerEmail.includes('@')) throw new Error('Initial Owner email is required.');
+    if (ownerEmail === setup.inbox_address.toLowerCase()) throw new Error('Initial Owner must be a separate Identity from the Automation Inbox.');
     const challenge = randomToken();
-    await context.env.CONTROL_DB.prepare('UPDATE organization_setups SET passkey_challenge_hash = ?, updated_at = ? WHERE id = ?')
-      .bind(await sha256(challenge), now(), setup.id).run();
+    await context.env.CONTROL_DB.prepare('UPDATE organization_setups SET owner_email = ?, passkey_challenge_hash = ?, updated_at = ? WHERE id = ?')
+      .bind(ownerEmail, await sha256(challenge), now(), setup.id).run();
     const options: PasskeyCreationOptions = {
       challenge,
       rp: { id: context.env.RP_ID, name: 'Mail Automation' },
-      user: { id: randomToken(16), name: setup.inbox_address, displayName: setup.inbox_address },
+      user: { id: randomToken(16), name: ownerEmail, displayName: ownerEmail },
       pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
       timeout: PASSKEY_WINDOW_MS,
       authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
@@ -435,15 +443,16 @@ app.post('/api/setup/passkey/options', async (context) => {
 app.post('/api/setup/passkey/verify', async (context) => {
   try {
     const setup = validSetup(await setupFromRequest(context.req.raw, context.env), 'awaiting_passkey');
-    if (!setup.passkey_challenge_hash || !setup.inbox_address || !setup.google_subject) throw new Error('Passkey registration was not started.');
+    if (!setup.passkey_challenge_hash || !setup.inbox_address || !setup.google_subject || !setup.owner_email) throw new Error('Passkey registration was not started.');
     const credential = await verifyRegistration(await context.req.json(), setup.passkey_challenge_hash, context.env.RP_ID, context.env.WEB_ORIGIN);
     const organizationId = crypto.randomUUID();
-    const identityId = crypto.randomUUID();
+    const existingOwner = await context.env.CONTROL_DB.prepare('SELECT id FROM identities WHERE email = ?').bind(setup.owner_email).first<{ id: string }>();
+    const identityId = existingOwner?.id ?? crypto.randomUUID();
     const bindingName = `ORG_${organizationId.replaceAll('-', '')}`;
     const createdAt = now();
     await context.env.CONTROL_DB.batch([
       context.env.CONTROL_DB.prepare('INSERT INTO organizations (id, name, inbox_address, status, binding_name, created_at, updated_at) VALUES (?, ?, ?, \'provisioning\', ?, ?, ?)').bind(organizationId, setup.name, setup.inbox_address, bindingName, createdAt, createdAt),
-      context.env.CONTROL_DB.prepare('INSERT INTO identities (id, email, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').bind(identityId, setup.inbox_address, setup.inbox_address, createdAt, createdAt),
+      context.env.CONTROL_DB.prepare('INSERT OR IGNORE INTO identities (id, email, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').bind(identityId, setup.owner_email, setup.owner_email, createdAt, createdAt),
       context.env.CONTROL_DB.prepare("INSERT INTO members (organization_id, identity_id, role, state, created_at, updated_at) VALUES (?, ?, 'owner', 'pending', ?, ?)").bind(organizationId, identityId, createdAt, createdAt),
       context.env.CONTROL_DB.prepare('INSERT INTO passkeys (id, identity_id, credential_id, public_key_jwk, sign_count, transports, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(crypto.randomUUID(), identityId, credential.credentialId, JSON.stringify(credential.publicKeyJwk), credential.signCount, JSON.stringify(credential.transports), createdAt),
       context.env.CONTROL_DB.prepare("UPDATE organization_setups SET state = 'provisioning', owner_identity_id = ?, organization_id = ?, binding_name = ?, provisioning_key = ?, provisioning_expires_at = ?, passkey_challenge_hash = NULL, updated_at = ? WHERE id = ?").bind(identityId, organizationId, bindingName, crypto.randomUUID(), expiresIn(PROVISIONING_WINDOW_MS), createdAt, setup.id),
@@ -470,7 +479,7 @@ app.post('/api/auth/passkey/options', async (context) => {
   const challenge = randomToken();
   await context.env.CONTROL_DB.prepare('INSERT INTO passkey_challenges (id, identity_id, challenge_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)')
     .bind(challengeId, identity.id, await sha256(challenge), expiresIn(PASSKEY_WINDOW_MS), now()).run();
-  const keys = await context.env.CONTROL_DB.prepare('SELECT credential_id FROM passkeys WHERE identity_id = ?').bind(identity.id).all<{ credential_id: string }>();
+  const keys = await context.env.CONTROL_DB.prepare('SELECT credential_id FROM passkeys WHERE identity_id = ? AND revoked_at IS NULL').bind(identity.id).all<{ credential_id: string }>();
   context.header('Set-Cookie', cookie(LOGIN_COOKIE, challengeId, requestIsSecure(context.req.raw), Math.floor(PASSKEY_WINDOW_MS / 1_000)));
   return json(context, { challenge, rpId: context.env.RP_ID, timeout: PASSKEY_WINDOW_MS, userVerification: 'required', allowCredentials: keys.results.map((key) => ({ type: 'public-key', id: key.credential_id })) });
 });
@@ -481,7 +490,7 @@ app.post('/api/auth/passkey/verify', async (context) => {
   const challenge = await context.env.CONTROL_DB.prepare('SELECT * FROM passkey_challenges WHERE id = ? AND expires_at > ?').bind(challengeId, now()).first<{ id: string; identity_id: string; challenge_hash: string }>();
   if (!challenge) return failure(context, 'Login challenge expired.', 401);
   const response = await context.req.json<AuthenticationResponse>();
-  const passkey = await context.env.CONTROL_DB.prepare('SELECT * FROM passkeys WHERE credential_id = ? AND identity_id = ?').bind(response.rawId, challenge.identity_id).first<PasskeyRow>();
+  const passkey = await context.env.CONTROL_DB.prepare('SELECT * FROM passkeys WHERE credential_id = ? AND identity_id = ? AND revoked_at IS NULL').bind(response.rawId, challenge.identity_id).first<PasskeyRow>();
   if (!passkey) return failure(context, 'Unknown passkey.', 401);
   try {
     const signCount = await verifyAuthentication(response, challenge.challenge_hash, context.env.RP_ID, context.env.WEB_ORIGIN, { credentialId: passkey.credential_id, publicKeyJwk: JSON.parse(passkey.public_key_jwk), signCount: passkey.sign_count });
@@ -768,6 +777,697 @@ app.post('/api/organizations/:organizationId/connections/gemini/test', async (co
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Gemini API の接続テストに失敗しました。';
     return failure(context, message, message === 'Authentication is required.' ? 401 : 500);
+  }
+});
+
+app.get('/api/organizations/:organizationId/lists', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const rows = await access.database.prepare(
+      'SELECT id, kind, name, description, created_at, updated_at FROM lists ORDER BY name',
+    ).all<{ id: string; kind: string; name: string; description: string; created_at: string; updated_at: string }>();
+    return json(context, rows.results.map((row) => ({
+      id: row.id,
+      organizationId: access.organization.id,
+      kind: row.kind,
+      name: row.name,
+      description: row.description,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    })));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Typed Lists could not be loaded.', 403);
+  }
+});
+
+app.post('/api/organizations/:organizationId/lists', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Typed Lists can only be changed by an Owner or Admin.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ kind?: string; name?: string; description?: string }>();
+    const kind = input.kind?.trim();
+    const name = input.name?.trim();
+    if (!kind || !['source', 'label', 'calendar_recipient', 'line_destination'].includes(kind)) return failure(context, 'Unsupported Typed List kind.');
+    if (!name) return failure(context, 'Typed List name is required.');
+    const id = crypto.randomUUID();
+    const timestamp = now();
+    const description = input.description?.trim() ?? '';
+    await access.database.prepare(
+      'INSERT INTO lists (id, organization_id, kind, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).bind(id, access.organization.id, kind, name, description, timestamp, timestamp).run();
+    return json(context, {
+      id,
+      organizationId: access.organization.id,
+      kind,
+      name,
+      description,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Typed List could not be created.', 409);
+  }
+});
+
+app.post('/api/organizations/:organizationId/lists/:listId/items', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'List Items can only be changed by an Owner or Admin.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ value?: string; label?: string }>();
+    const value = input.value?.trim();
+    if (!value) return failure(context, 'List Item value is required.');
+    const id = crypto.randomUUID();
+    await access.database.prepare('INSERT INTO list_items (id, list_id, value, label, enabled) VALUES (?, ?, ?, ?, 1)')
+      .bind(id, context.req.param('listId'), value, input.label?.trim() ?? '').run();
+    return json(context, { id, listId: context.req.param('listId'), value, label: input.label?.trim() ?? '', enabled: true }, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'List Item could not be created.', 409);
+  }
+});
+
+app.patch('/api/organizations/:organizationId/lists/:listId/items/:itemId', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'List Items can only be changed by an Owner or Admin.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ enabled?: boolean }>();
+    if (typeof input.enabled !== 'boolean') return failure(context, 'enabled must be a boolean.');
+    const result = await access.database.prepare('UPDATE list_items SET enabled = ? WHERE id = ? AND list_id = ?')
+      .bind(input.enabled ? 1 : 0, context.req.param('itemId'), context.req.param('listId')).run();
+    if (result.meta.changes === 0) return failure(context, 'List Item was not found.', 404);
+    return json(context, { id: context.req.param('itemId'), enabled: input.enabled });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'List Item could not be updated.', 409);
+  }
+});
+
+app.get('/api/organizations/:organizationId/rules', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const rows = await access.database.prepare('SELECT id, name, status, selection_policy, routing_policy, priority, created_at, updated_at FROM rules ORDER BY priority DESC, name')
+      .all<{ id: string; name: string; status: string; selection_policy: string; routing_policy: string; priority: number; created_at: string; updated_at: string }>();
+    return json(context, rows.results.map((row) => ({
+      id: row.id,
+      organizationId: access.organization.id,
+      name: row.name,
+      state: row.status,
+      selectionPolicy: JSON.parse(row.selection_policy) as Record<string, unknown>,
+      routingPolicy: JSON.parse(row.routing_policy) as Record<string, unknown>,
+      priority: row.priority,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    })));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Rules could not be loaded.', 403);
+  }
+});
+
+app.post('/api/organizations/:organizationId/rules', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Rules can only be changed by an Owner or Admin.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ name?: string; state?: string; selectionPolicy?: Record<string, unknown>; routingPolicy?: Record<string, unknown>; priority?: number }>();
+    const name = input.name?.trim();
+    const state = input.state ?? 'draft';
+    if (!name) return failure(context, 'Rule name is required.');
+    if (!['draft', 'active', 'suspended', 'archived'].includes(state)) return failure(context, 'Unsupported Rule State.');
+    const id = crypto.randomUUID();
+    const timestamp = now();
+    const selectionPolicy = JSON.stringify(input.selectionPolicy ?? {});
+    const routingPolicy = JSON.stringify(input.routingPolicy ?? {});
+    const priority = Number.isInteger(input.priority) ? input.priority : 0;
+    await access.database.prepare(
+      'INSERT INTO rules (id, organization_id, name, status, selection_policy, routing_policy, priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).bind(id, access.organization.id, name, state, selectionPolicy, routingPolicy, priority, timestamp, timestamp).run();
+    await access.database.prepare(
+      'INSERT INTO rule_revisions (id, rule_id, revision, selection_policy, routing_policy, created_at) VALUES (?, ?, 1, ?, ?, ?)',
+    ).bind(crypto.randomUUID(), id, selectionPolicy, routingPolicy, timestamp).run();
+    return json(context, { id, organizationId: access.organization.id, name, state, selectionPolicy: input.selectionPolicy ?? {}, routingPolicy: input.routingPolicy ?? {}, priority, createdAt: timestamp, updatedAt: timestamp }, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Rule could not be created.', 409);
+  }
+});
+
+app.patch('/api/organizations/:organizationId/rules/:ruleId', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Rules can only be changed by an Owner or Admin.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ state?: string }>();
+    if (!input.state || !['draft', 'active', 'suspended', 'archived'].includes(input.state)) return failure(context, 'Unsupported Rule State.');
+    const result = await access.database.prepare('UPDATE rules SET status = ?, updated_at = ? WHERE id = ?')
+      .bind(input.state, now(), context.req.param('ruleId')).run();
+    if (result.meta.changes === 0) return failure(context, 'Rule was not found.', 404);
+    return json(context, { id: context.req.param('ruleId'), state: input.state });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Rule could not be updated.', 409);
+  }
+});
+
+app.get('/api/organizations/:organizationId/recipients', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const rows = await access.database.prepare('SELECT id, name, email, state, tags, created_at, updated_at FROM recipient_profiles ORDER BY name')
+      .all<{ id: string; name: string; email: string; state: string; tags: string; created_at: string; updated_at: string }>();
+    return json(context, rows.results.map((row) => ({
+      id: row.id,
+      organizationId: access.organization.id,
+      name: row.name,
+      email: displayRecipientIdentifier(access.role as 'owner' | 'admin' | 'operator' | 'viewer', row.email),
+      state: row.state,
+      tags: JSON.parse(row.tags) as string[],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    })));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Recipient Profiles could not be loaded.', 403);
+  }
+});
+
+app.get('/api/organizations/:organizationId/recipients/export', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const rows = await access.database.prepare("SELECT name, email FROM recipient_profiles WHERE state = 'active' ORDER BY name").all<{ name: string; email: string }>();
+    return new Response(exportRecipientCsv(rows.results), { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="recipients.csv"' } });
+  } catch (error) { return failure(context, error instanceof Error ? error.message : 'Recipient export could not be created.', 403); }
+});
+
+app.post('/api/organizations/:organizationId/recipients', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Recipient Profiles can only be changed by an Owner, Admin, or Operator.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ name?: string; email?: string }>();
+    const name = input.name?.trim();
+    const email = input.email?.trim().toLowerCase();
+    if (!name || !email || !email.includes('@')) return failure(context, 'Recipient name and a valid email address are required.');
+    const id = crypto.randomUUID();
+    const timestamp = now();
+    await access.database.prepare(
+      "INSERT INTO recipient_profiles (id, organization_id, name, email, state, tags, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', '[]', ?, ?)",
+    ).bind(id, access.organization.id, name, email, timestamp, timestamp).run();
+    return json(context, { id, organizationId: access.organization.id, name, email, state: 'active', tags: [], createdAt: timestamp, updatedAt: timestamp }, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Recipient Profile could not be created.', 409);
+  }
+});
+
+app.patch('/api/organizations/:organizationId/recipients/:recipientId', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Recipient Profiles can only be changed by an Owner, Admin, or Operator.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ name?: string; email?: string; tags?: unknown; state?: string }>();
+    const updates: Array<{ column: string; value: string }> = [];
+    if (input.name !== undefined) {
+      const name = input.name.trim();
+      if (!name) return failure(context, 'Recipient name cannot be empty.');
+      updates.push({ column: 'name', value: name });
+    }
+    if (input.email !== undefined) {
+      const email = input.email.trim().toLowerCase();
+      if (!email.includes('@')) return failure(context, 'A valid Recipient email address is required.');
+      updates.push({ column: 'email', value: email });
+    }
+    let tags: string[] | undefined;
+    if (input.tags !== undefined) {
+      if (!Array.isArray(input.tags) || input.tags.some((tag) => typeof tag !== 'string' || !tag.trim())) return failure(context, 'Recipient tags must be non-empty strings.');
+      tags = input.tags.map((tag) => tag.trim());
+      updates.push({ column: 'tags', value: JSON.stringify(tags) });
+    }
+    if (input.state !== undefined) {
+      if (!['active', 'inactive'].includes(input.state)) return failure(context, 'Unsupported Recipient state.');
+      updates.push({ column: 'state', value: input.state });
+    }
+    if (!updates.length) return failure(context, 'At least one Recipient field is required.');
+    const result = await access.database.prepare(`UPDATE recipient_profiles SET ${updates.map((update) => `${update.column} = ?`).join(', ')}, updated_at = ? WHERE id = ?`)
+      .bind(...updates.map((update) => update.value), now(), context.req.param('recipientId')).run();
+    if (result.meta.changes === 0) return failure(context, 'Recipient Profile was not found.', 404);
+    return json(context, {
+      id: context.req.param('recipientId'),
+      ...(input.name === undefined ? {} : { name: input.name.trim() }),
+      ...(input.email === undefined ? {} : { email: input.email.trim().toLowerCase() }),
+      ...(tags === undefined ? {} : { tags }),
+      ...(input.state === undefined ? {} : { state: input.state }),
+    });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Recipient Profile could not be updated.', 409);
+  }
+});
+
+app.post('/api/organizations/:organizationId/recipients/:recipientId/line-links', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Recipient Links can only be issued by an Owner, Admin, or Operator.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const token = randomToken(24);
+    const timestamp = now();
+    const expiresAt = expiresIn(RECIPIENT_LINK_WINDOW_MS);
+    await access.database.prepare('UPDATE recipient_link_tokens SET used_at = ? WHERE recipient_profile_id = ? AND used_at IS NULL')
+      .bind(timestamp, context.req.param('recipientId')).run();
+    await access.database.prepare(
+      'INSERT INTO recipient_link_tokens (token, recipient_profile_id, expires_at, used_at, created_at) VALUES (?, ?, ?, NULL, ?)',
+    ).bind(token, context.req.param('recipientId'), expiresAt, timestamp).run();
+    return json(context, {
+      recipientProfileId: context.req.param('recipientId'),
+      token,
+      expiresAt,
+      linkUrl: `${context.env.APP_URL.replace(/\/$/u, '')}/api/public/organizations/${encodeURIComponent(access.organization.id)}/line-links/${encodeURIComponent(token)}`,
+    }, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Recipient Link could not be issued.', 409);
+  }
+});
+
+app.post('/api/organizations/:organizationId/recipients/import/preview', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Recipient imports can only be previewed by an Owner, Admin, or Operator.', 403);
+    const input = await context.req.json<{ csv?: string }>();
+    if (typeof input.csv !== 'string') return failure(context, 'CSV content is required.');
+    return json(context, previewRecipientCsv(input.csv));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Recipient import could not be previewed.', 409);
+  }
+});
+
+app.post('/api/organizations/:organizationId/recipients/import', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Recipient imports can only be confirmed by an Owner, Admin, or Operator.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ csv?: string }>();
+    if (typeof input.csv !== 'string') return failure(context, 'CSV content is required.');
+    const preview = previewRecipientCsv(input.csv);
+    const timestamp = now();
+    const writes = await Promise.all(preview.accepted.map((recipient) => access.database!.prepare(
+      "INSERT OR IGNORE INTO recipient_profiles (id, organization_id, name, email, state, tags, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', '[]', ?, ?)",
+    ).bind(crypto.randomUUID(), access.organization.id, recipient.name, recipient.email, timestamp, timestamp).run()));
+    const imported = writes.reduce((count, result) => count + result.meta.changes, 0);
+    return json(context, { imported, duplicates: preview.duplicates, invalid: preview.invalid }, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Recipient import could not be completed.', 409);
+  }
+});
+
+app.get('/api/organizations/:organizationId/dashboard', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const [rules, events, jobs, exceptions, connection] = await Promise.all([
+      access.database.prepare("SELECT COUNT(*) AS count FROM rules WHERE status = 'active'").first<{ count: number }>(),
+      access.database.prepare("SELECT COUNT(*) AS count FROM events WHERE status = 'scheduled' AND starts_at >= ?").bind(now()).first<{ count: number }>(),
+      access.database.prepare("SELECT COUNT(*) AS count FROM jobs WHERE state IN ('pending', 'running')").first<{ count: number }>(),
+      access.database.prepare("SELECT COUNT(*) AS count FROM exceptions WHERE state = 'open'").first<{ count: number }>(),
+      access.database.prepare("SELECT MAX(updated_at) AS last_synced_at FROM google_connections WHERE kind = 'automation_inbox'").first<{ last_synced_at: string | null }>(),
+    ]);
+    return json(context, {
+      activeRules: rules?.count ?? 0,
+      upcomingEvents: events?.count ?? 0,
+      pendingJobs: jobs?.count ?? 0,
+      exceptions: exceptions?.count ?? 0,
+      lastSyncedAt: connection?.last_synced_at ?? null,
+    });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Dashboard could not be loaded.', 403);
+  }
+});
+
+app.patch('/api/organizations/:organizationId/members/:identityId', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner') return failure(context, 'Only an Owner can change member roles.', 403);
+    const input = await context.req.json<{ role?: string; state?: string }>();
+    if (input.role !== undefined && !['owner', 'admin', 'operator', 'viewer'].includes(input.role)) return failure(context, 'Unsupported member role.');
+    if (input.state !== undefined && !['active', 'suspended'].includes(input.state)) return failure(context, 'Unsupported member state.');
+    if (input.role === undefined && input.state === undefined) return failure(context, 'A member role or state is required.');
+    const updates: Array<{ column: string; value: string }> = [];
+    if (input.role !== undefined) updates.push({ column: 'role', value: input.role });
+    if (input.state !== undefined) updates.push({ column: 'state', value: input.state });
+    const result = await context.env.CONTROL_DB.prepare(`UPDATE members SET ${updates.map((update) => `${update.column} = ?`).join(', ')}, updated_at = ? WHERE organization_id = ? AND identity_id = ?`)
+      .bind(...updates.map((update) => update.value), now(), access.organization.id, context.req.param('identityId')).run();
+    if (result.meta.changes === 0) return failure(context, 'Member was not found.', 404);
+    return json(context, { identityId: context.req.param('identityId'), ...(input.role === undefined ? {} : { role: input.role }), ...(input.state === undefined ? {} : { state: input.state }) });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Member could not be updated.', 409);
+  }
+});
+
+app.get('/api/organizations/:organizationId/passkeys', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner') return failure(context, 'Only an Owner can view passkeys.', 403);
+    const rows = await context.env.CONTROL_DB.prepare(
+      `SELECT p.id, p.identity_id, i.email, p.created_at, p.last_used_at
+       FROM passkeys p JOIN members m ON m.identity_id = p.identity_id JOIN identities i ON i.id = p.identity_id
+       WHERE m.organization_id = ? AND p.revoked_at IS NULL ORDER BY p.created_at DESC`,
+    ).bind(access.organization.id).all<{ id: string; identity_id: string; email: string; created_at: string; last_used_at: string | null }>();
+    return json(context, rows.results.map((row) => ({ id: row.id, identityId: row.identity_id, email: row.email, createdAt: row.created_at, lastUsedAt: row.last_used_at })));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Passkeys could not be loaded.', 403);
+  }
+});
+
+app.delete('/api/organizations/:organizationId/passkeys/:passkeyId', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner') return failure(context, 'Only an Owner can revoke passkeys.', 403);
+    const result = await context.env.CONTROL_DB.prepare(
+      `UPDATE passkeys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL
+       AND identity_id IN (SELECT identity_id FROM members WHERE organization_id = ?)`,
+    ).bind(now(), context.req.param('passkeyId'), access.organization.id).run();
+    if (result.meta.changes === 0) return failure(context, 'Passkey was not found or already revoked.', 404);
+    return json(context, { id: context.req.param('passkeyId'), state: 'revoked' });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Passkey could not be revoked.', 409);
+  }
+});
+
+app.post('/api/organizations/:organizationId/recovery-requests', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner') return failure(context, 'Only an Owner can request recovery.', 403);
+    const input = await context.req.json<{ idempotencyKey?: string }>();
+    const idempotencyKey = input.idempotencyKey?.trim();
+    if (!idempotencyKey) return failure(context, 'A recovery receipt idempotency key is required.');
+    const id = crypto.randomUUID();
+    const timestamp = now();
+    await context.env.CONTROL_DB.prepare(
+      "INSERT INTO recovery_requests (id, organization_id, idempotency_key, state, requested_by_identity_id, created_at) VALUES (?, ?, ?, 'requested', ?, ?)",
+    ).bind(id, access.organization.id, idempotencyKey, access.session.identity_id, timestamp).run();
+    return json(context, { id, organizationId: access.organization.id, idempotencyKey, state: 'requested', createdAt: timestamp }, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Recovery request could not be created.', 409);
+  }
+});
+
+app.post('/api/organizations/:organizationId/recovery-requests/:requestId/execute', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'operator') return failure(context, 'Only an Operator can execute an Owner recovery request.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const request = await context.env.CONTROL_DB.prepare(
+      "SELECT id, idempotency_key FROM recovery_requests WHERE id = ? AND organization_id = ? AND state = 'requested'",
+    ).bind(context.req.param('requestId'), access.organization.id).first<{ id: string; idempotency_key: string }>();
+    if (!request) return failure(context, 'Recovery request was not found or is no longer pending.', 404);
+    const claimed = await context.env.CONTROL_DB.prepare("UPDATE recovery_requests SET state = 'executing', executed_by_identity_id = ? WHERE id = ? AND state = 'requested'")
+      .bind(access.session.identity_id, request.id).run();
+    if (claimed.meta.changes === 0) return failure(context, 'Recovery request is already being executed.', 409);
+    try {
+      const keyRecord = await context.env.CONTROL_DB.prepare('SELECT master_key_version, wrapped_key_envelope FROM organization_keys WHERE organization_id = ?')
+        .bind(access.organization.id).first<{ master_key_version: string; wrapped_key_envelope: string }>();
+      if (!keyRecord) throw new Error('Organization encryption key is missing.');
+      const organizationKey = await unwrapOrganizationKey(
+        { masterKeyVersion: keyRecord.master_key_version, envelope: JSON.parse(keyRecord.wrapped_key_envelope) },
+        await masterKey(context.env.CREDENTIAL_MASTER_KEY), access.organization.id,
+      );
+      const receipt = await readRecoveryReceipt({ bucket: context.env.RECOVERY_RECEIPTS, organizationKey, organizationId: access.organization.id, idempotencyKey: request.idempotency_key });
+      if (!receipt) throw new Error('The requested recovery receipt no longer exists.');
+      await restoreDeliveryRecordFromReceipt(access.database, receipt);
+      await context.env.CONTROL_DB.prepare("UPDATE recovery_requests SET state = 'completed', executed_at = ?, error_message = NULL WHERE id = ?")
+        .bind(now(), request.id).run();
+      return json(context, { id: request.id, state: 'completed' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Recovery execution failed.';
+      await context.env.CONTROL_DB.prepare("UPDATE recovery_requests SET state = 'failed', error_message = ?, executed_at = ? WHERE id = ?")
+        .bind(message, now(), request.id).run();
+      return failure(context, message, 409);
+    }
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Recovery execution could not be started.', 409);
+  }
+});
+
+app.post('/api/public/organizations/:organizationId/attendance/:token', async (context) => {
+  try {
+    const organizationId = context.req.param('organizationId');
+    const organization = await context.env.CONTROL_DB.prepare(
+      "SELECT id, status, binding_name FROM organizations WHERE id = ? AND status = 'active'",
+    ).bind(organizationId).first<{ id: string; status: string; binding_name: string }>();
+    const database = organization ? organizationDatabase(context.env, organization.binding_name) : null;
+    if (!database) return failure(context, 'Attendance link was not found.', 404);
+    const input = await context.req.json<{ eventId?: string; status?: string; comment?: string }>();
+    if (!input.eventId || !['unanswered', 'attending', 'not_attending'].includes(input.status ?? '')) return failure(context, 'A response status is required.');
+    const comment = input.comment?.trim() ?? '';
+    if (comment.length > 1_000) return failure(context, 'Attendance comment is too long.');
+    const link = await database.prepare(
+      `SELECT a.event_id, a.event_id AS link_event_id, a.revoked_at, e.attendance_deadline
+       FROM attendance a JOIN events e ON e.id = a.event_id WHERE a.token = ?`,
+    ).bind(context.req.param('token')).first<{ event_id: string; link_event_id: string; revoked_at: string | null; attendance_deadline: string | null }>();
+    if (!link || !link.attendance_deadline || !canUpdateAttendance({
+      eventId: input.eventId,
+      linkEventId: link.link_event_id,
+      revokedAt: link.revoked_at,
+      deadline: link.attendance_deadline,
+      now: now(),
+    })) return failure(context, 'Attendance link is no longer available.', 410);
+    await database.prepare('UPDATE attendance SET status = ?, comment = ?, updated_at = ? WHERE token = ? AND event_id = ?')
+      .bind(input.status, comment, now(), context.req.param('token'), input.eventId).run();
+    return json(context, { eventId: input.eventId, status: input.status });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Attendance response could not be saved.', 409);
+  }
+});
+
+app.get('/api/public/organizations/:organizationId/attendance/:token', async (context) => {
+  const organization = await context.env.CONTROL_DB.prepare("SELECT binding_name FROM organizations WHERE id = ? AND status = 'active'").bind(context.req.param('organizationId')).first<{ binding_name: string }>();
+  const database = organization ? organizationDatabase(context.env, organization.binding_name) : null;
+  if (!database) return failure(context, 'Attendance link was not found.', 404);
+  const row = await database.prepare('SELECT event_id, status, comment FROM attendance WHERE token = ? AND revoked_at IS NULL').bind(context.req.param('token')).first<{ event_id: string; status: string; comment: string }>();
+  if (!row) return failure(context, 'Attendance link was not found.', 404);
+  return json(context, { eventId: row.event_id, status: row.status, comment: row.comment });
+});
+
+app.patch('/api/organizations/:organizationId/events/:eventId', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Events can only be changed by an Owner, Admin, or Operator.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ title?: string; startsAt?: string; endsAt?: string; location?: string; description?: string; status?: string; reason?: string }>();
+    const candidates: Array<{ key: string; column: string; value: string | undefined }> = [
+      { key: 'title', column: 'title', value: input.title?.trim() },
+      { key: 'startsAt', column: 'starts_at', value: input.startsAt?.trim() },
+      { key: 'endsAt', column: 'ends_at', value: input.endsAt?.trim() },
+      { key: 'location', column: 'location', value: input.location?.trim() },
+      { key: 'description', column: 'description', value: input.description?.trim() },
+      { key: 'status', column: 'status', value: input.status?.trim() },
+    ];
+    const updates = candidates.filter((candidate) => candidate.value !== undefined);
+    if (!updates.length || updates.some((candidate) => candidate.value === '')) return failure(context, 'At least one non-empty Event field is required.');
+    const status = updates.find((candidate) => candidate.key === 'status')?.value;
+    if (status && !['draft', 'scheduled', 'cancelled', 'exception'].includes(status)) return failure(context, 'Unsupported Event status.');
+    const timestamp = now();
+    const result = await access.database.prepare(
+      `UPDATE events SET ${updates.map((candidate) => `${candidate.column} = ?`).join(', ')}, updated_at = ? WHERE id = ?`,
+    ).bind(...updates.map((candidate) => candidate.value), timestamp, context.req.param('eventId')).run();
+    if (result.meta.changes === 0) return failure(context, 'Event was not found.', 404);
+    const changeSet = Object.fromEntries(updates.map((candidate) => [candidate.key, candidate.value]));
+    await access.database.prepare(
+      'INSERT INTO event_overrides (id, event_id, actor_identity_id, changes_json, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    ).bind(crypto.randomUUID(), context.req.param('eventId'), access.session.identity_id, JSON.stringify(changeSet), input.reason?.trim() ?? '', timestamp).run();
+    return json(context, { id: context.req.param('eventId'), updatedFields: updates.map((candidate) => candidate.key) });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Event could not be updated.', 409);
+  }
+});
+
+app.post('/api/organizations/:organizationId/events/:eventId/attendance-links', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Attendance links can only be issued by an Owner, Admin, or Operator.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ recipientItemId?: string }>();
+    if (!input.recipientItemId?.trim()) return failure(context, 'A Recipient is required.');
+    const eventId = context.req.param('eventId');
+    const token = randomToken(32);
+    const timestamp = now();
+    await access.database.prepare(
+      `INSERT INTO attendance (event_id, recipient_item_id, status, comment, token, revoked_at, updated_at)
+       VALUES (?, ?, 'unanswered', '', ?, NULL, ?)
+       ON CONFLICT(event_id, recipient_item_id) DO UPDATE SET token = excluded.token, status = 'unanswered', comment = '', revoked_at = NULL, updated_at = excluded.updated_at`,
+    ).bind(eventId, input.recipientItemId.trim(), token, timestamp).run();
+    return json(context, {
+      eventId,
+      recipientItemId: input.recipientItemId.trim(),
+      token,
+      attendanceUrl: `${context.env.APP_URL.replace(/\/$/u, '')}/api/public/organizations/${encodeURIComponent(access.organization.id)}/attendance/${encodeURIComponent(token)}`,
+    }, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Attendance link could not be issued.', 409);
+  }
+});
+
+app.post('/api/organizations/:organizationId/events/:eventId/recipient-snapshots', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Recipient snapshots can only be created by an Owner, Admin, or Operator.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ recipientProfileIds?: unknown }>();
+    if (!Array.isArray(input.recipientProfileIds) || !input.recipientProfileIds.length || input.recipientProfileIds.some((id) => typeof id !== 'string' || !id.trim())) return failure(context, 'At least one Recipient Profile is required.');
+    const recipientProfileIds = [...new Set(input.recipientProfileIds.map((id) => id.trim()))];
+    const recipients = await Promise.all(recipientProfileIds.map((id) => access.database!.prepare(
+      "SELECT id, name, email, state FROM recipient_profiles WHERE id = ? AND state = 'active'",
+    ).bind(id).first<{ id: string; name: string; email: string; state: string }>()));
+    if (recipients.some((recipient) => !recipient)) return failure(context, 'One or more active Recipient Profiles were not found.', 404);
+    const timestamp = now();
+    await Promise.all(recipients.map((recipient) => access.database!.prepare(
+      'INSERT OR IGNORE INTO event_recipients (event_id, recipient_profile_id, name_snapshot, email_snapshot, created_at) VALUES (?, ?, ?, ?, ?)',
+    ).bind(context.req.param('eventId'), recipient!.id, recipient!.name, recipient!.email, timestamp).run()));
+    return json(context, { eventId: context.req.param('eventId'), snapshotted: recipients.length }, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Recipient snapshots could not be created.', 409);
+  }
+});
+
+app.get('/api/organizations/:organizationId/audit/deliveries', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const rows = await access.database.prepare(
+      'SELECT id, event_id, channel, destination, outcome, external_id, created_at FROM deliveries ORDER BY created_at DESC LIMIT 100',
+    ).all<{ id: string; event_id: string | null; channel: string; destination: string; outcome: string; external_id: string | null; created_at: string }>();
+    return json(context, rows.results.map((row) => ({
+      id: row.id,
+      eventId: row.event_id,
+      channel: row.channel,
+      destination: displayRecipientIdentifier(access.role as 'owner' | 'admin' | 'operator' | 'viewer', row.destination),
+      outcome: row.outcome,
+      externalId: row.external_id,
+      createdAt: row.created_at,
+    })));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Delivery audit could not be loaded.', 403);
+  }
+});
+
+app.get('/api/organizations/:organizationId/operations/exceptions', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const rows = await access.database.prepare(
+      'SELECT id, source_message_id, code, message, state, created_at, resolved_at FROM exceptions ORDER BY created_at DESC LIMIT 100',
+    ).all<{ id: string; source_message_id: string | null; code: string; message: string; state: string; created_at: string; resolved_at: string | null }>();
+    return json(context, rows.results.map((row) => ({
+      id: row.id, sourceMessageId: row.source_message_id, code: row.code, message: row.message, state: row.state, createdAt: row.created_at, resolvedAt: row.resolved_at,
+    })));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Exceptions could not be loaded.', 403);
+  }
+});
+
+app.patch('/api/organizations/:organizationId/operations/exceptions/:exceptionId', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Only an Owner, Admin, or Operator can change Exceptions.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ action?: string }>();
+    if (input.action === 'resolve') {
+      const result = await access.database.prepare("UPDATE exceptions SET state = 'resolved', resolved_at = ? WHERE id = ? AND state != 'resolved'")
+        .bind(now(), context.req.param('exceptionId')).run();
+      if (result.meta.changes === 0) return failure(context, 'Exception was not found or already resolved.', 404);
+      return json(context, { id: context.req.param('exceptionId'), state: 'resolved' });
+    }
+    if (input.action === 'retry') {
+      const result = await access.database.prepare("UPDATE exceptions SET state = 'retry_requested', resolved_at = NULL WHERE id = ?")
+        .bind(context.req.param('exceptionId')).run();
+      if (result.meta.changes === 0) return failure(context, 'Exception was not found.', 404);
+      return json(context, { id: context.req.param('exceptionId'), state: 'retry_requested' });
+    }
+    return failure(context, 'Unsupported Exception action.');
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Exception could not be updated.', 409);
+  }
+});
+
+app.post('/api/public/organizations/:organizationId/line/webhook', async (context) => {
+  try {
+    const organizationId = context.req.param('organizationId');
+    const organization = await context.env.CONTROL_DB.prepare(
+      "SELECT id, status, binding_name FROM organizations WHERE id = ? AND status = 'active'",
+    ).bind(organizationId).first<{ id: string; status: string; binding_name: string }>();
+    const database = organization ? organizationDatabase(context.env, organization.binding_name) : null;
+    if (!database) return failure(context, 'LINE webhook was not found.', 404);
+    const connection = await database.prepare("SELECT * FROM connections WHERE kind = 'line' AND status = 'active' LIMIT 1")
+      .first<ConnectionRow>();
+    if (!connection) return failure(context, 'LINE webhook was not found.', 404);
+    const keyRecord = await context.env.CONTROL_DB.prepare('SELECT master_key_version, wrapped_key_envelope FROM organization_keys WHERE organization_id = ?')
+      .bind(organizationId).first<{ master_key_version: string; wrapped_key_envelope: string }>();
+    if (!keyRecord) throw new Error('Organization encryption key is missing.');
+    const organizationKey = await unwrapOrganizationKey(
+      { masterKeyVersion: keyRecord.master_key_version, envelope: JSON.parse(keyRecord.wrapped_key_envelope) },
+      await masterKey(context.env.CREDENTIAL_MASTER_KEY),
+      organizationId,
+    );
+    const credential = await connectionCredential(connection, organizationKey, organizationId, 'line');
+    const rawBody = await context.req.text();
+    const signature = context.req.header('x-line-signature') ?? '';
+    if (!credential.channelSecret || !await verifyLineWebhookSignature(credential.channelSecret, rawBody, signature)) return failure(context, 'Invalid LINE webhook signature.', 401);
+    const destinations = discoveredLineDestinations(JSON.parse(rawBody) as { events?: Array<{ source?: { type?: string; userId?: string; groupId?: string; roomId?: string } }> });
+    const timestamp = now();
+    await Promise.all(destinations.map((destination) => database.prepare(
+      "INSERT OR IGNORE INTO line_destinations (id, connection_id, destination_id, kind, status, discovered_at, updated_at) VALUES (?, ?, ?, ?, 'discovered', ?, ?)",
+    ).bind(crypto.randomUUID(), connection.id, destination.destinationId, destination.kind, timestamp, timestamp).run()));
+    return json(context, { discovered: destinations.length });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'LINE webhook could not be processed.', 400);
+  }
+});
+
+app.post('/api/public/organizations/:organizationId/line-links/:token', async (context) => {
+  try {
+    const organizationId = context.req.param('organizationId');
+    const organization = await context.env.CONTROL_DB.prepare(
+      "SELECT id, status, binding_name FROM organizations WHERE id = ? AND status = 'active'",
+    ).bind(organizationId).first<{ id: string; status: string; binding_name: string }>();
+    const database = organization ? organizationDatabase(context.env, organization.binding_name) : null;
+    if (!database) return failure(context, 'Recipient Link was not found.', 404);
+    const input = await context.req.json<{ destinationId?: string }>();
+    if (!input.destinationId?.trim()) return failure(context, 'A discovered LINE Destination is required.');
+    const link = await database.prepare(
+      'SELECT recipient_profile_id, expires_at, used_at FROM recipient_link_tokens WHERE token = ? AND used_at IS NULL AND expires_at > ?',
+    ).bind(context.req.param('token'), now()).first<{ recipient_profile_id: string; expires_at: string; used_at: string | null }>();
+    if (!link) return failure(context, 'Recipient Link has expired or was already used.', 410);
+    const destination = await database.prepare("SELECT id FROM line_destinations WHERE destination_id = ? AND status = 'discovered' LIMIT 1")
+      .bind(input.destinationId.trim()).first<{ id: string }>();
+    if (!destination) return failure(context, 'LINE Destination was not found.', 404);
+    const timestamp = now();
+    await database.prepare(
+      'INSERT OR IGNORE INTO recipient_line_destinations (recipient_profile_id, line_destination_id, created_at) VALUES (?, ?, ?)',
+    ).bind(link.recipient_profile_id, destination.id, timestamp).run();
+    const consumed = await database.prepare('UPDATE recipient_link_tokens SET used_at = ? WHERE token = ? AND used_at IS NULL')
+      .bind(timestamp, context.req.param('token')).run();
+    if (consumed.meta.changes === 0) return failure(context, 'Recipient Link was already used.', 410);
+    return json(context, { recipientProfileId: link.recipient_profile_id, destinationId: input.destinationId.trim() });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Recipient Link could not be consumed.', 409);
+  }
+});
+
+app.patch('/api/organizations/:organizationId/suspension', async (context) => {
+  try {
+    const session = await sessionFromRequest(context.req.raw, context.env);
+    if (!session) return failure(context, 'Authentication is required.', 401);
+    const organizationId = context.req.param('organizationId');
+    const membership = await context.env.CONTROL_DB.prepare(
+      `SELECT o.id, o.status, m.role FROM members m JOIN organizations o ON o.id = m.organization_id
+       WHERE m.identity_id = ? AND m.organization_id = ? AND m.state = 'active'`,
+    ).bind(session.identity_id, organizationId).first<{ id: string; status: string; role: string }>();
+    if (!membership || membership.role !== 'owner') return failure(context, 'Only an Owner can suspend or resume an Organization.', 403);
+    const input = await context.req.json<{ suspended?: boolean }>();
+    if (typeof input.suspended !== 'boolean') return failure(context, 'A suspension state is required.');
+    const status = input.suspended ? 'suspended' : 'active';
+    await context.env.CONTROL_DB.prepare('UPDATE organizations SET status = ?, updated_at = ? WHERE id = ?')
+      .bind(status, now(), organizationId).run();
+    return json(context, { organizationId, status });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Organization suspension could not be changed.', 409);
   }
 });
 

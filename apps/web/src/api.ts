@@ -1,3 +1,5 @@
+import type { OrganizationSetup, PasskeyCreationOptions } from '@mail/domain';
+
 interface ApiResult<T> {
   data: T;
 }
@@ -52,6 +54,36 @@ export interface OrganizationConnections {
   };
 }
 
+export interface OrganizationDashboard {
+  activeRules: number;
+  upcomingEvents: number;
+  pendingJobs: number;
+  exceptions: number;
+  lastSyncedAt: string | null;
+}
+
+export interface OrganizationRule {
+  id: string;
+  organizationId: string;
+  name: string;
+  state: 'draft' | 'active' | 'suspended' | 'archived';
+  selectionPolicy: Record<string, unknown>;
+  routingPolicy: Record<string, unknown>;
+  priority: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DeliveryAuditRecord {
+  id: string;
+  eventId: string | null;
+  channel: string;
+  destination: string;
+  outcome: string;
+  externalId: string | null;
+  createdAt: string;
+}
+
 export interface PasskeyAuthenticationOptions {
   challenge: string;
   rpId: string;
@@ -84,11 +116,22 @@ const currentMember = async (): Promise<AuthMe | null> => {
 };
 
 export const api = {
+  startOrganizationSetup: (name: string): Promise<{ authorizationUrl: string }> => request('/api/setup', { method: 'POST', body: JSON.stringify({ name }) }),
+  currentOrganizationSetup: (): Promise<OrganizationSetup | null> => request('/api/setup/current'),
+  setupPasskeyOptions: (ownerEmail: string): Promise<PasskeyCreationOptions> => request('/api/setup/passkey/options', { method: 'POST', body: JSON.stringify({ ownerEmail }) }),
+  verifySetupPasskey: (credential: unknown): Promise<OrganizationSetup> => request('/api/setup/passkey/verify', { method: 'POST', body: JSON.stringify(credential) }),
   googleLogin: (): Promise<{ authorizationUrl: string }> => request('/api/auth/google', { method: 'POST' }),
   passkeyOptions: (email: string): Promise<PasskeyAuthenticationOptions> => request('/api/auth/passkey/options', { method: 'POST', body: JSON.stringify({ email }) }),
   verifyPasskey: (credential: unknown): Promise<{ authenticated: boolean }> => request('/api/auth/passkey/verify', { method: 'POST', body: JSON.stringify(credential) }),
   currentAutomation,
   currentMember,
+  organizationDashboard: (organizationId: string): Promise<OrganizationDashboard> => request(`/api/organizations/${encodeURIComponent(organizationId)}/dashboard`),
+  organizationRules: (organizationId: string): Promise<OrganizationRule[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules`),
+  organizationDeliveryAudit: (organizationId: string): Promise<DeliveryAuditRecord[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/audit/deliveries`),
+  createOrganizationRule: (organizationId: string, input: { name: string; state: 'draft' | 'active' }): Promise<OrganizationRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }),
   organizationConnections: (organizationId: string): Promise<OrganizationConnections> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections`),
   saveOrganizationConnections: (organizationId: string, input: {
     line: { channelAccessToken?: string | undefined; channelSecret?: string | undefined };

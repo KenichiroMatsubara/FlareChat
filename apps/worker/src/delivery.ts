@@ -1,0 +1,93 @@
+export interface DeliveryAttempt {
+  id: string;
+  eventId: string;
+  destination: string;
+  channel: 'calendar' | 'line' | 'email' | 'drive';
+  outcome: 'succeeded' | 'failed' | 'pending';
+  externalId: string | null;
+  createdAt: string;
+}
+
+/** Preserves one external effect outcome per destination instead of collapsing a partial batch. */
+export const recordDeliveryAttempt = async (
+  database: D1Database,
+  input: Omit<DeliveryAttempt, 'id' | 'createdAt'>,
+): Promise<DeliveryAttempt> => {
+  const record: DeliveryAttempt = { id: crypto.randomUUID(), ...input, createdAt: new Date().toISOString() };
+  await database.prepare('INSERT INTO deliveries (id, event_id, channel, destination, outcome, external_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .bind(record.id, record.eventId, record.channel, record.destination, record.outcome, record.externalId, record.createdAt).run();
+  return record;
+};
+
+/** Invites one snapshotted recipient and always leaves an independent Delivery Record. */
+export const deliverCalendarInvitation = async (input: {
+  database: D1Database;
+  accessToken: string;
+  eventId: string;
+  calendarEventId: string;
+  recipientEmail: string;
+}): Promise<DeliveryAttempt> => {
+  try {
+    const existing = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(input.calendarEventId)}`, { headers: { Authorization: `Bearer ${input.accessToken}` } });
+    const event = existing.ok ? await existing.json() as { attendees?: Array<{ email?: string }> } : { attendees: [] };
+    const attendees = event.attendees ?? [];
+    if (!attendees.some((attendee) => attendee.email?.toLowerCase() === input.recipientEmail.toLowerCase())) attendees.push({ email: input.recipientEmail });
+    const response = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(input.calendarEventId)}?sendUpdates=all`,
+      {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${input.accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attendees }),
+      },
+    );
+    const body = await response.json() as { id?: string; error?: { message?: string } };
+    if (!response.ok) throw new Error(body.error?.message ?? 'Google Calendar invitation failed.');
+    return recordDeliveryAttempt(input.database, {
+      eventId: input.eventId,
+      destination: input.recipientEmail,
+      channel: 'calendar',
+      outcome: 'succeeded',
+      externalId: body.id ?? input.calendarEventId,
+    });
+  } catch {
+    return recordDeliveryAttempt(input.database, {
+      eventId: input.eventId,
+      destination: input.recipientEmail,
+      channel: 'calendar',
+      outcome: 'failed',
+      externalId: null,
+    });
+  }
+};
+
+/** Sends one LINE push batch (at most five message objects) and records every intended notification. */
+export const deliverLineBatch = async (input: {
+  database: D1Database;
+  accessToken: string;
+  eventId: string;
+  destinationId: string;
+  messages: string[];
+}): Promise<DeliveryAttempt[]> => {
+  if (!input.messages.length || input.messages.length > 5) throw new Error('A LINE batch must contain between one and five messages.');
+  let outcome: DeliveryAttempt['outcome'] = 'failed';
+  let externalId: string | null = null;
+  try {
+    const response = await fetch('https://api.line.me/v2/bot/message/push', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${input.accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: input.destinationId, messages: input.messages.map((text) => ({ type: 'text', text })) }),
+    });
+    if (!response.ok) throw new Error('LINE push failed.');
+    outcome = 'succeeded';
+    externalId = response.headers.get('x-line-request-id');
+  } catch {
+    // Every failed intended message still receives its own retryable record below.
+  }
+  return Promise.all(input.messages.map(() => recordDeliveryAttempt(input.database, {
+    eventId: input.eventId,
+    destination: input.destinationId,
+    channel: 'line',
+    outcome,
+    externalId,
+  })));
+};
