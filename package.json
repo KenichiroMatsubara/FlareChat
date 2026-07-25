@@ -13,11 +13,16 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",
     "db:local": "npm run db:local -w @mail/worker",
+    "db:studio": "drizzle-kit studio --config=drizzle.config.ts",
     "deploy": "npm run build && npm run deploy -w @mail/worker"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260722.1",
+    "@types/node": "^22.20.1",
+    "better-sqlite3": "^13.0.1",
     "concurrently": "^9.2.0",
+    "drizzle-kit": "^0.31.10",
+    "drizzle-orm": "^0.45.2",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4",
     "wrangler": "^4.26.0"

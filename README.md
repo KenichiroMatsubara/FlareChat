@@ -20,6 +20,15 @@ npm run dev
 
 GUIは `http://localhost:5173`、APIは `http://localhost:8787` で起動します。
 
+ローカルの Control D1 は Drizzle Studio で確認できます。先にマイグレーションを適用してから、別のターミナルで起動してください。
+
+```bash
+npm run db:local
+npm run db:studio
+```
+
+Organization D1 など別の SQLite ファイルを開く場合は、`DB_STUDIO_PATH` にファイルパスを指定します。
+
 Google OAuthやLINE Messaging APIの値は `apps/worker/.dev.vars.example` を
 `apps/worker/.dev.vars` にコピーして設定します。
 
