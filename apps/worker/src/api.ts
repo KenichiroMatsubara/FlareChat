@@ -1238,6 +1238,45 @@ app.get('/api/organizations/:organizationId/audit/deliveries', async (context) =
   }
 });
 
+app.get('/api/organizations/:organizationId/operations/exceptions', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const rows = await access.database.prepare(
+      'SELECT id, source_message_id, code, message, state, created_at, resolved_at FROM exceptions ORDER BY created_at DESC LIMIT 100',
+    ).all<{ id: string; source_message_id: string | null; code: string; message: string; state: string; created_at: string; resolved_at: string | null }>();
+    return json(context, rows.results.map((row) => ({
+      id: row.id, sourceMessageId: row.source_message_id, code: row.code, message: row.message, state: row.state, createdAt: row.created_at, resolvedAt: row.resolved_at,
+    })));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Exceptions could not be loaded.', 403);
+  }
+});
+
+app.patch('/api/organizations/:organizationId/operations/exceptions/:exceptionId', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Only an Owner, Admin, or Operator can change Exceptions.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ action?: string }>();
+    if (input.action === 'resolve') {
+      const result = await access.database.prepare("UPDATE exceptions SET state = 'resolved', resolved_at = ? WHERE id = ? AND state != 'resolved'")
+        .bind(now(), context.req.param('exceptionId')).run();
+      if (result.meta.changes === 0) return failure(context, 'Exception was not found or already resolved.', 404);
+      return json(context, { id: context.req.param('exceptionId'), state: 'resolved' });
+    }
+    if (input.action === 'retry') {
+      const result = await access.database.prepare("UPDATE exceptions SET state = 'retry_requested', resolved_at = NULL WHERE id = ?")
+        .bind(context.req.param('exceptionId')).run();
+      if (result.meta.changes === 0) return failure(context, 'Exception was not found.', 404);
+      return json(context, { id: context.req.param('exceptionId'), state: 'retry_requested' });
+    }
+    return failure(context, 'Unsupported Exception action.');
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Exception could not be updated.', 409);
+  }
+});
+
 app.post('/api/public/organizations/:organizationId/line/webhook', async (context) => {
   try {
     const organizationId = context.req.param('organizationId');
