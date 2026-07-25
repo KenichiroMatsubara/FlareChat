@@ -4,6 +4,7 @@ import { extractGeminiEventDetails } from './event-details';
 import { refreshGoogleToken } from './google';
 import type { GoogleTokenSet } from './google';
 import type { Bindings, ConnectionRow, GoogleAutomationRow } from './types';
+import { validateAttachmentIntake } from '@mail/domain';
 
 interface GmailHistory {
   historyId?: string;
@@ -18,9 +19,10 @@ interface GmailMessage {
 }
 
 interface GmailPart {
+  filename?: string;
   mimeType?: string;
   headers?: Array<{ name?: string; value?: string }>;
-  body?: { data?: string };
+  body?: { data?: string; size?: number; attachmentId?: string };
   parts?: GmailPart[];
 }
 
@@ -87,6 +89,13 @@ const decodedBody = (part: GmailPart | undefined): string => {
   const own = part.body?.data ? new TextDecoder().decode(fromBase64Url(part.body.data)) : '';
   const nested = part.parts?.map(decodedBody).join('\n') ?? '';
   return `${own}\n${nested}`.replace(/<[^>]*>/gu, ' ').replace(/\s+/gu, ' ').trim();
+};
+
+/** Returns declared attachment byte sizes, excluding inline message body parts. */
+export const sourceAttachmentSizes = (part: GmailPart | undefined): number[] => {
+  if (!part) return [];
+  const own = (part.filename || part.body?.attachmentId) && Number.isFinite(part.body?.size) ? [part.body?.size ?? 0] : [];
+  return [...own, ...(part.parts?.flatMap(sourceAttachmentSizes) ?? [])];
 };
 
 const subjectOf = (part: GmailPart | undefined): string =>
@@ -221,6 +230,14 @@ const processOrganizationMessage = async (
     "INSERT INTO source_messages (id, gmail_message_id, gmail_history_id, sender, subject, received_at, processed_at, state) VALUES (?, ?, ?, ?, ?, ?, ?, 'processing')",
   ).bind(sourceMessageId, gmailMessageId, gmailHistoryId, senderOf(message.payload), subject, timestamp, timestamp).run();
   const body = decodedBody(message.payload) || (message.snippet ?? '');
+  const attachmentIntake = validateAttachmentIntake(sourceAttachmentSizes(message.payload));
+  if (!attachmentIntake.accepted) {
+    await database.prepare("INSERT INTO exceptions (id, source_message_id, code, message, state, created_at) VALUES (?, ?, ?, ?, 'open', ?)")
+      .bind(crypto.randomUUID(), sourceMessageId, attachmentIntake.reason, 'Source Message attachments exceed the configured intake limit.', now()).run();
+    await database.prepare("UPDATE source_messages SET state = 'exception', processed_at = ? WHERE id = ?")
+      .bind(now(), sourceMessageId).run();
+    return;
+  }
   const rules = await database.prepare("SELECT id, priority, selection_policy FROM rules WHERE status = 'active' ORDER BY priority DESC")
     .all<{ id: string; priority: number; selection_policy: string }>();
   const rule = selectActiveRule(rules.results.flatMap((row) => {

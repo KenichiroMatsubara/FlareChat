@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { extractEventCandidate, selectActiveRule, runEnabledAutomations } from './automation';
+import { extractEventCandidate, sourceAttachmentSizes, selectActiveRule, runEnabledAutomations } from './automation';
 import { createOrganizationKey, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
 
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -25,6 +25,13 @@ describe('mail event extraction', () => {
       { id: 'rule-high', priority: 10, selectionPolicy: { sender: 'announcer@example.com', keyword: '例会' } },
     ], { sender: 'announcer@example.com', subject: '例会のお知らせ', body: '2026年8月3日 19:00〜21:00' })).toMatchObject({ id: 'rule-high' });
     expect(selectActiveRule([{ id: 'rule-1', priority: 1, selectionPolicy: { domain: 'example.com' } }], { sender: 'other@invalid.test', subject: '例会', body: '' })).toBeNull();
+  });
+
+  it('counts only attached file parts when enforcing Source Message attachment limits', () => {
+    expect(sourceAttachmentSizes({ body: { size: 1_000 }, parts: [
+      { filename: 'agenda.pdf', body: { size: 20 * 1024 * 1024 } },
+      { filename: 'map.png', body: { size: 3 } },
+    ] })).toEqual([20 * 1024 * 1024, 3]);
   });
 });
 
