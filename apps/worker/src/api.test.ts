@@ -445,6 +445,17 @@ describe('Public attendance', () => {
     expect(response.status).toBe(410);
     expect(wrote).toBe(false);
   });
+
+  it('allows a live link to return an attendance response to unanswered', async () => {
+    const controlDatabase = { prepare: (_sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => ({ id: 'organization-1', status: 'active', binding_name: 'ORG_ORGANIZATION1' }) }) }) } as unknown as D1Database;
+    const organizationDatabase = { prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => sql.includes('FROM attendance') ? { event_id: 'event-1', link_event_id: 'event-1', revoked_at: null, attendance_deadline: '2099-01-01T00:00:00.000Z' } : null, run: async () => ({ meta: { changes: 1 } }) }) }) } as unknown as D1Database;
+    const response = await app.fetch(new Request('https://app.example.com/api/public/organizations/organization-1/attendance/link-token', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ eventId: 'event-1', status: 'unanswered' }),
+    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ data: { status: 'unanswered' } });
+  });
 });
 
 describe('Manual Event overrides', () => {

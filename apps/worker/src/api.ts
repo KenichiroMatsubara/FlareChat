@@ -1089,7 +1089,7 @@ app.post('/api/public/organizations/:organizationId/attendance/:token', async (c
     const database = organization ? organizationDatabase(context.env, organization.binding_name) : null;
     if (!database) return failure(context, 'Attendance link was not found.', 404);
     const input = await context.req.json<{ eventId?: string; status?: string; comment?: string }>();
-    if (!input.eventId || !['attending', 'not_attending'].includes(input.status ?? '')) return failure(context, 'A response status is required.');
+    if (!input.eventId || !['unanswered', 'attending', 'not_attending'].includes(input.status ?? '')) return failure(context, 'A response status is required.');
     const comment = input.comment?.trim() ?? '';
     if (comment.length > 1_000) return failure(context, 'Attendance comment is too long.');
     const link = await database.prepare(
