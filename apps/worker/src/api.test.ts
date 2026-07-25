@@ -302,6 +302,27 @@ describe('Recipient Profiles', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ data: { accepted: [{ email: 'alice@example.com' }], duplicates: ['alice@example.com'], invalid: [{ row: 3 }] } });
   });
+
+  it('imports only the accepted Recipient CSV rows into the current Organization database', async () => {
+    const writes: unknown[][] = [];
+    const controlDatabase = {
+      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
+        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'operator-identity', email: 'operator@example.com', display_name: 'Operator' };
+        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'operator' };
+        return null;
+      } }) }),
+    } as unknown as D1Database;
+    const organizationDatabase = { prepare: (_sql: string) => ({ bind: (...values: unknown[]) => ({ run: async () => { writes.push(values); return { meta: { changes: 1 } }; } }) }) } as unknown as D1Database;
+    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/recipients/import', {
+      method: 'POST', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ csv: 'Alice,alice@example.com\nAgain,ALICE@example.com\nBroken' }),
+    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({ data: { imported: 1, duplicates: ['alice@example.com'], invalid: [{ row: 3 }] } });
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toContain('organization-1');
+    expect(writes[0]).toContain('alice@example.com');
+  });
 });
 
 describe('Organization dashboard', () => {

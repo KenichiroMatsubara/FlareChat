@@ -980,6 +980,25 @@ app.post('/api/organizations/:organizationId/recipients/import/preview', async (
   }
 });
 
+app.post('/api/organizations/:organizationId/recipients/import', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Recipient imports can only be confirmed by an Owner, Admin, or Operator.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ csv?: string }>();
+    if (typeof input.csv !== 'string') return failure(context, 'CSV content is required.');
+    const preview = previewRecipientCsv(input.csv);
+    const timestamp = now();
+    const writes = await Promise.all(preview.accepted.map((recipient) => access.database!.prepare(
+      "INSERT OR IGNORE INTO recipient_profiles (id, organization_id, name, email, state, tags, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', '[]', ?, ?)",
+    ).bind(crypto.randomUUID(), access.organization.id, recipient.name, recipient.email, timestamp, timestamp).run()));
+    const imported = writes.reduce((count, result) => count + result.meta.changes, 0);
+    return json(context, { imported, duplicates: preview.duplicates, invalid: preview.invalid }, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Recipient import could not be completed.', 409);
+  }
+});
+
 app.get('/api/organizations/:organizationId/dashboard', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
