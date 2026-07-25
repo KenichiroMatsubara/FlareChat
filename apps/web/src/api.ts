@@ -74,6 +74,16 @@ export interface OrganizationRule {
   updatedAt: string;
 }
 
+export interface DeliveryAuditRecord {
+  id: string;
+  eventId: string | null;
+  channel: string;
+  destination: string;
+  outcome: string;
+  externalId: string | null;
+  createdAt: string;
+}
+
 export interface PasskeyAuthenticationOptions {
   challenge: string;
   rpId: string;
@@ -117,6 +127,7 @@ export const api = {
   currentMember,
   organizationDashboard: (organizationId: string): Promise<OrganizationDashboard> => request(`/api/organizations/${encodeURIComponent(organizationId)}/dashboard`),
   organizationRules: (organizationId: string): Promise<OrganizationRule[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules`),
+  organizationDeliveryAudit: (organizationId: string): Promise<DeliveryAuditRecord[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/audit/deliveries`),
   createOrganizationRule: (organizationId: string, input: { name: string; state: 'draft' | 'active' }): Promise<OrganizationRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules`, {
     method: 'POST',
     body: JSON.stringify(input),

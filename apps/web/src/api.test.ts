@@ -41,4 +41,14 @@ describe('Organization setup client', () => {
     }));
     vi.unstubAllGlobals();
   });
+
+  it('loads the tenant-scoped delivery audit for the operations view', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.organizationDeliveryAudit('organization-1');
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/organizations/organization-1/audit/deliveries', expect.any(Object));
+    vi.unstubAllGlobals();
+  });
 });
