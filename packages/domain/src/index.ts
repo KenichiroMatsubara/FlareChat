@@ -121,3 +121,5 @@ export type { CapacityWarning } from './capacity';
 export { canConsumeRecipientLink } from './recipient-links';
 export type { RecipientLinkCheck } from './recipient-links';
 export { ATTENDANCE_REMINDER_DAYS, shouldSendAttendanceReminder } from './reminders';
+export { classifyEventChange } from './event-changes';
+export type { EventChangeKind } from './event-changes';
