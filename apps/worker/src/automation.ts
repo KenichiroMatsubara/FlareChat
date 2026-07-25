@@ -1,8 +1,9 @@
 import { decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
 import { fromBase64Url } from './encoding';
+import { extractGeminiEventDetails } from './event-details';
 import { refreshGoogleToken } from './google';
 import type { GoogleTokenSet } from './google';
-import type { Bindings, GoogleAutomationRow } from './types';
+import type { Bindings, ConnectionRow, GoogleAutomationRow } from './types';
 
 interface GmailHistory {
   historyId?: string;
@@ -180,7 +181,29 @@ const accessTokenForInbox = async (
   return refreshed.accessToken;
 };
 
+/** Uses the Organization-scoped Gemini connection when it is configured. */
+const geminiCandidate = async (
+  env: Bindings,
+  organizationId: string,
+  database: D1Database,
+  source: string,
+): Promise<EventCandidate | null | undefined> => {
+  const connection = await database.prepare("SELECT * FROM connections WHERE kind = 'ai' AND status = 'active' LIMIT 1")
+    .bind().first<ConnectionRow>();
+  if (!connection) return undefined;
+  try {
+    const key = await organizationKeyFor(env, organizationId);
+    const credential = JSON.parse(await decrypt(JSON.parse(connection.credential), key, `organization-connection:${organizationId}:ai`)) as { provider?: string; apiKey?: string; model?: string };
+    if (credential.provider !== 'Google Gemini API' || !credential.apiKey || !credential.model) return null;
+    const details = await extractGeminiEventDetails({ apiKey: credential.apiKey, model: credential.model, source });
+    return details && { title: details.title, startsAt: details.startsAt, endsAt: details.endsAt };
+  } catch {
+    return null;
+  }
+};
+
 const processOrganizationMessage = async (
+  env: Bindings,
   database: D1Database,
   organizationId: string,
   accessToken: string,
@@ -209,7 +232,15 @@ const processOrganizationMessage = async (
       .bind(now(), sourceMessageId).run();
     return;
   }
-  const candidate = extractEventCandidate(subject, body);
+  const aiCandidate = await geminiCandidate(env, organizationId, database, `${subject}\n${body}`);
+  if (aiCandidate === null) {
+    await database.prepare("INSERT INTO exceptions (id, source_message_id, code, message, state, created_at) VALUES (?, ?, 'gemini_event_details_invalid', ?, 'open', ?)")
+      .bind(crypto.randomUUID(), sourceMessageId, 'Gemini could not produce safe Event Details.', now()).run();
+    await database.prepare("UPDATE source_messages SET state = 'exception', processed_at = ? WHERE id = ?")
+      .bind(now(), sourceMessageId).run();
+    return;
+  }
+  const candidate = aiCandidate ?? extractEventCandidate(subject, body);
   if (!candidate) {
     await database.prepare("UPDATE source_messages SET state = 'skipped', processed_at = ? WHERE id = ?")
       .bind(now(), sourceMessageId).run();
@@ -249,7 +280,7 @@ const runOrganizationInbox = async (
     const history = await googleFetch<GmailHistory>(accessToken, query.toString());
     for (const entry of history.history ?? []) {
       for (const message of entry.messagesAdded ?? []) {
-        if (message.message?.id) await processOrganizationMessage(database, organizationId, accessToken, inbox.gmail_history_id, message.message.id);
+        if (message.message?.id) await processOrganizationMessage(env, database, organizationId, accessToken, inbox.gmail_history_id, message.message.id);
       }
     }
     historyId = history.historyId ?? historyId;
