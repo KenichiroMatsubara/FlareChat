@@ -1,6 +1,7 @@
 import { retryProvisioning } from './api';
 import { runEnabledAutomations } from './automation';
 import type { Bindings } from './types';
+import { nextRetry } from '@mail/domain';
 
 export interface DurableJob {
   id: string;
@@ -52,6 +53,33 @@ export const claimDueJobs = async (database: D1Database, dueAt: string): Promise
     if (result.meta.changes > 0) claimed.push({ id: row.id, kind: row.kind, payload: row.payload, attempts: row.attempts, idempotencyKey: row.idempotency_key });
   }
   return claimed;
+};
+
+/** Finalizes a claimed Job once its idempotent external effect has succeeded. */
+export const completeJob = async (database: D1Database, id: string, completedAt: string): Promise<void> => {
+  await database.prepare("UPDATE jobs SET state = 'succeeded', updated_at = ? WHERE id = ? AND state = 'running'")
+    .bind(completedAt, id).run();
+};
+
+export type JobRetryResult = { state: 'pending'; attempts: number; availableAt: string } | { state: 'failed'; attempts: number };
+
+/** Returns a failed claim to the durable queue or records its bounded terminal failure. */
+export const retryJob = async (
+  database: D1Database,
+  job: Pick<ClaimedJob, 'id' | 'attempts'>,
+  error: string,
+  failedAt: string,
+): Promise<JobRetryResult> => {
+  const attempts = job.attempts + 1;
+  const retry = nextRetry({ attempts, now: failedAt });
+  if ('terminal' in retry) {
+    await database.prepare("UPDATE jobs SET state = 'failed', attempts = ?, last_error = ?, updated_at = ? WHERE id = ? AND state = 'running'")
+      .bind(attempts, error, failedAt, job.id).run();
+    return { state: 'failed', attempts };
+  }
+  await database.prepare("UPDATE jobs SET state = 'pending', attempts = ?, available_at = ?, last_error = ?, updated_at = ? WHERE id = ? AND state = 'running'")
+    .bind(attempts, retry.retryAt, error, failedAt, job.id).run();
+  return { state: 'pending', attempts, availableAt: retry.retryAt };
 };
 
 /** Finds due Jobs in every active Organization database; Queue messages never own job state. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { claimDueJobs, enqueueJob, recoverDueOrganizationJobs } from './jobs';
+import { claimDueJobs, completeJob, enqueueJob, retryJob, recoverDueOrganizationJobs } from './jobs';
 
 describe('Durable Jobs', () => {
   it('persists an Organization job with a retryable state and idempotency key', async () => {
@@ -46,5 +46,24 @@ describe('Cron due scans', () => {
     expect(jobs).toHaveLength(1);
     expect(jobs[0]).toMatchObject({ id: 'job-1', kind: 'calendar_delivery' });
     expect(writes[0]).toContain('job-1');
+  });
+});
+
+describe('Durable Job completion', () => {
+  it('records successful work and schedules only retryable failures back to pending', async () => {
+    const writes: Array<{ sql: string; values: unknown[] }> = [];
+    const database = {
+      prepare: (sql: string) => ({ bind: (...values: unknown[]) => ({ run: async () => { writes.push({ sql, values }); return { meta: { changes: 1 } }; } }) }),
+    } as unknown as D1Database;
+
+    await completeJob(database, 'job-succeeded', '2026-07-25T00:00:00.000Z');
+    const retry = await retryJob(database, { id: 'job-retry', attempts: 0 }, 'temporary failure', '2026-07-25T00:00:00.000Z');
+    const terminal = await retryJob(database, { id: 'job-terminal', attempts: 4 }, 'permanent failure', '2026-07-25T00:00:00.000Z');
+
+    expect(retry).toMatchObject({ state: 'pending', attempts: 1 });
+    expect(terminal).toMatchObject({ state: 'failed', attempts: 5 });
+    expect(writes[0]).toMatchObject({ sql: expect.stringContaining("state = 'succeeded'") });
+    expect(writes.some((write) => write.sql.includes("state = 'pending'"))).toBe(true);
+    expect(writes.some((write) => write.sql.includes("state = 'failed'"))).toBe(true);
   });
 });
