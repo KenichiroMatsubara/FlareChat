@@ -1,4 +1,4 @@
-import { decrypt, encrypt, masterKey } from './cryptography';
+import { decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
 import { fromBase64Url } from './encoding';
 import { refreshGoogleToken } from './google';
 import type { GoogleTokenSet } from './google';
@@ -25,6 +25,23 @@ interface GmailPart {
 
 interface CalendarEvent {
   id?: string;
+}
+
+interface ActiveOrganization {
+  id: string;
+  binding_name: string;
+  database_id: string;
+}
+
+interface AutomationInbox {
+  id: string;
+  kind: 'automation_inbox';
+  google_subject: string;
+  inbox_address: string;
+  granted_scopes: string;
+  token_envelope: string;
+  gmail_history_id: string;
+  status: 'active' | 'reauthentication_required' | 'disconnected';
 }
 
 export interface AutomationSummary {
@@ -61,6 +78,9 @@ const decodedBody = (part: GmailPart | undefined): string => {
 
 const subjectOf = (part: GmailPart | undefined): string =>
   part?.headers?.find((header) => header.name?.toLowerCase() === 'subject')?.value?.trim() ?? '(件名なし)';
+
+const senderOf = (part: GmailPart | undefined): string =>
+  part?.headers?.find((header) => header.name?.toLowerCase() === 'from')?.value?.trim() ?? '';
 
 const padded = (value: number): string => String(value).padStart(2, '0');
 
@@ -101,6 +121,101 @@ const accessTokenFor = async (env: Bindings, automation: GoogleAutomationRow): P
   await env.CONTROL_DB.prepare('UPDATE google_automations SET token_envelope = ?, updated_at = ? WHERE id = ?')
     .bind(JSON.stringify(envelope), now(), automation.id).run();
   return refreshed.accessToken;
+};
+
+const organizationKeyFor = async (env: Bindings, organizationId: string): Promise<CryptoKey> => {
+  const record = await env.CONTROL_DB.prepare(
+    'SELECT master_key_version, wrapped_key_envelope FROM organization_keys WHERE organization_id = ?',
+  ).bind(organizationId).first<{ master_key_version: string; wrapped_key_envelope: string }>();
+  if (!record) throw new Error('Organization encryption key is missing.');
+  return unwrapOrganizationKey({ masterKeyVersion: record.master_key_version, envelope: JSON.parse(record.wrapped_key_envelope) }, await masterKey(env.CREDENTIAL_MASTER_KEY), organizationId);
+};
+
+const accessTokenForInbox = async (
+  env: Bindings,
+  organizationId: string,
+  database: D1Database,
+  inbox: AutomationInbox,
+): Promise<string> => {
+  const key = await organizationKeyFor(env, organizationId);
+  const token = JSON.parse(await decrypt(JSON.parse(inbox.token_envelope), key, `google-connection:${organizationId}:automation-inbox`)) as GoogleTokenSet;
+  if (Date.parse(token.expiresAt) > Date.now() + 60_000) return token.accessToken;
+  const refreshed = await refreshGoogleToken({
+    refreshToken: token.refreshToken,
+    clientId: env.GOOGLE_CLIENT_ID,
+    clientSecret: env.GOOGLE_CLIENT_SECRET,
+  });
+  const envelope = await encrypt(JSON.stringify(refreshed), key, `google-connection:${organizationId}:automation-inbox`);
+  await database.prepare('UPDATE google_connections SET token_envelope = ?, updated_at = ? WHERE id = ?')
+    .bind(JSON.stringify(envelope), now(), inbox.id).run();
+  return refreshed.accessToken;
+};
+
+const processOrganizationMessage = async (
+  database: D1Database,
+  organizationId: string,
+  accessToken: string,
+  gmailHistoryId: string,
+  gmailMessageId: string,
+): Promise<void> => {
+  const known = await database.prepare('SELECT id FROM source_messages WHERE gmail_message_id = ?')
+    .bind(gmailMessageId).first<{ id: string }>();
+  if (known) return;
+  const message = await googleFetch<GmailMessage>(accessToken, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(gmailMessageId)}?format=full`);
+  const subject = subjectOf(message.payload);
+  const sourceMessageId = crypto.randomUUID();
+  const timestamp = now();
+  await database.prepare(
+    "INSERT INTO source_messages (id, gmail_message_id, gmail_history_id, sender, subject, received_at, processed_at, state) VALUES (?, ?, ?, ?, ?, ?, ?, 'processing')",
+  ).bind(sourceMessageId, gmailMessageId, gmailHistoryId, senderOf(message.payload), subject, timestamp, timestamp).run();
+  const candidate = extractEventCandidate(subject, decodedBody(message.payload) || (message.snippet ?? ''));
+  if (!candidate) {
+    await database.prepare("UPDATE source_messages SET state = 'skipped', processed_at = ? WHERE id = ?")
+      .bind(now(), sourceMessageId).run();
+    return;
+  }
+  const event = await googleFetch<CalendarEvent>(accessToken, 'https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+    method: 'POST',
+    body: JSON.stringify({
+      summary: candidate.title,
+      description: `Mail Automation が Gmail メッセージ ${gmailMessageId} から作成しました。`,
+      start: { dateTime: candidate.startsAt, timeZone: 'Asia/Tokyo' },
+      end: { dateTime: candidate.endsAt, timeZone: 'Asia/Tokyo' },
+    }),
+  });
+  if (!event.id) throw new Error('Google Calendar did not return an event ID.');
+  await database.prepare(
+    "INSERT INTO events (id, organization_id, source_message_id, google_event_id, title, starts_at, ends_at, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?)",
+  ).bind(crypto.randomUUID(), organizationId, sourceMessageId, event.id, candidate.title, candidate.startsAt, candidate.endsAt, now(), now()).run();
+  await database.prepare("UPDATE source_messages SET state = 'processed', processed_at = ? WHERE id = ?")
+    .bind(now(), sourceMessageId).run();
+};
+
+const runOrganizationInbox = async (
+  env: Bindings,
+  organizationId: string,
+  database: D1Database,
+  inbox: AutomationInbox,
+): Promise<void> => {
+  const accessToken = await accessTokenForInbox(env, organizationId, database, inbox);
+  let pageToken: string | undefined;
+  let historyId = inbox.gmail_history_id;
+  do {
+    const query = new URL('https://gmail.googleapis.com/gmail/v1/users/me/history');
+    query.searchParams.set('startHistoryId', inbox.gmail_history_id);
+    query.searchParams.set('historyTypes', 'messageAdded');
+    if (pageToken) query.searchParams.set('pageToken', pageToken);
+    const history = await googleFetch<GmailHistory>(accessToken, query.toString());
+    for (const entry of history.history ?? []) {
+      for (const message of entry.messagesAdded ?? []) {
+        if (message.message?.id) await processOrganizationMessage(database, organizationId, accessToken, inbox.gmail_history_id, message.message.id);
+      }
+    }
+    historyId = history.historyId ?? historyId;
+    pageToken = history.nextPageToken;
+  } while (pageToken);
+  await database.prepare('UPDATE google_connections SET gmail_history_id = ?, updated_at = ? WHERE id = ?')
+    .bind(historyId, now(), inbox.id).run();
 };
 
 const recordMessage = async (
@@ -196,14 +311,22 @@ export const runAutomationForIdentity = async (env: Bindings, identityId: string
 };
 
 export const runEnabledAutomations = async (env: Bindings): Promise<void> => {
-  const rows = await env.CONTROL_DB.prepare('SELECT * FROM google_automations WHERE enabled = 1 ORDER BY last_synced_at LIMIT 20')
-    .all<GoogleAutomationRow>();
-  for (const automation of rows.results) {
-    try {
-      await runAutomation(env, automation);
-    } catch (error) {
-      await env.CONTROL_DB.prepare('UPDATE google_automations SET last_error = ?, updated_at = ? WHERE id = ?')
-        .bind(error instanceof Error ? error.message : '自動化の同期に失敗しました。', now(), automation.id).run();
+  const organizations = await env.CONTROL_DB.prepare(
+    "SELECT id, binding_name, database_id FROM organizations WHERE status = 'active' AND database_id IS NOT NULL ORDER BY updated_at LIMIT 20",
+  ).all<ActiveOrganization>();
+  for (const organization of organizations.results) {
+    const database = (env as unknown as Record<string, unknown>)[organization.binding_name];
+    if (!database || typeof database !== 'object') continue;
+    const inboxes = await (database as D1Database).prepare(
+      "SELECT * FROM google_connections WHERE kind = 'automation_inbox' AND status = 'active'",
+    ).all<AutomationInbox>();
+    for (const inbox of inboxes.results) {
+      try {
+        await runOrganizationInbox(env, organization.id, database as D1Database, inbox);
+      } catch {
+        await (database as D1Database).prepare("UPDATE google_connections SET status = 'reauthentication_required', updated_at = ? WHERE id = ?")
+          .bind(now(), inbox.id).run();
+      }
     }
   }
 };
