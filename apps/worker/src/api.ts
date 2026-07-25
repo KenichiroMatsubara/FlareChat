@@ -1170,6 +1170,28 @@ app.post('/api/organizations/:organizationId/events/:eventId/attendance-links', 
   }
 });
 
+app.post('/api/organizations/:organizationId/events/:eventId/recipient-snapshots', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Recipient snapshots can only be created by an Owner, Admin, or Operator.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ recipientProfileIds?: unknown }>();
+    if (!Array.isArray(input.recipientProfileIds) || !input.recipientProfileIds.length || input.recipientProfileIds.some((id) => typeof id !== 'string' || !id.trim())) return failure(context, 'At least one Recipient Profile is required.');
+    const recipientProfileIds = [...new Set(input.recipientProfileIds.map((id) => id.trim()))];
+    const recipients = await Promise.all(recipientProfileIds.map((id) => access.database!.prepare(
+      "SELECT id, name, email, state FROM recipient_profiles WHERE id = ? AND state = 'active'",
+    ).bind(id).first<{ id: string; name: string; email: string; state: string }>()));
+    if (recipients.some((recipient) => !recipient)) return failure(context, 'One or more active Recipient Profiles were not found.', 404);
+    const timestamp = now();
+    await Promise.all(recipients.map((recipient) => access.database!.prepare(
+      'INSERT OR IGNORE INTO event_recipients (event_id, recipient_profile_id, name_snapshot, email_snapshot, created_at) VALUES (?, ?, ?, ?, ?)',
+    ).bind(context.req.param('eventId'), recipient!.id, recipient!.name, recipient!.email, timestamp).run()));
+    return json(context, { eventId: context.req.param('eventId'), snapshotted: recipients.length }, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Recipient snapshots could not be created.', 409);
+  }
+});
+
 app.get('/api/organizations/:organizationId/audit/deliveries', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));

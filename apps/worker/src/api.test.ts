@@ -344,6 +344,30 @@ describe('Recipient Profiles', () => {
     expect(writes[0]).toMatchObject({ sql: expect.stringContaining('UPDATE recipient_profiles SET') });
     expect(writes[0]?.values).toContain('recipient-1');
   });
+
+  it('snapshots selected Recipient Profiles for an Event so later profile edits cannot change its audience', async () => {
+    const writes: unknown[][] = [];
+    const controlDatabase = {
+      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
+        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'operator-identity', email: 'operator@example.com', display_name: 'Operator' };
+        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'operator' };
+        return null;
+      } }) }),
+    } as unknown as D1Database;
+    const organizationDatabase = {
+      prepare: (sql: string) => ({ bind: (...values: unknown[]) => ({
+        first: async () => sql.includes('FROM recipient_profiles') ? { id: 'recipient-1', name: 'Guest', email: 'guest@example.com', state: 'active' } : null,
+        run: async () => { writes.push(values); return { meta: { changes: 1 } }; },
+      }) }),
+    } as unknown as D1Database;
+    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/events/event-1/recipient-snapshots', {
+      method: 'POST', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ recipientProfileIds: ['recipient-1'] }),
+    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({ data: { eventId: 'event-1', snapshotted: 1 } });
+    expect(writes[0]).toContain('guest@example.com');
+  });
 });
 
 describe('Organization dashboard', () => {
