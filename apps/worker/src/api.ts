@@ -865,17 +865,23 @@ app.post('/api/organizations/:organizationId/rules', async (context) => {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
     if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Rules can only be changed by an Owner or Admin.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
-    const input = await context.req.json<{ name?: string; state?: string }>();
+    const input = await context.req.json<{ name?: string; state?: string; selectionPolicy?: Record<string, unknown>; routingPolicy?: Record<string, unknown>; priority?: number }>();
     const name = input.name?.trim();
     const state = input.state ?? 'draft';
     if (!name) return failure(context, 'Rule name is required.');
     if (!['draft', 'active', 'suspended', 'archived'].includes(state)) return failure(context, 'Unsupported Rule State.');
     const id = crypto.randomUUID();
     const timestamp = now();
+    const selectionPolicy = JSON.stringify(input.selectionPolicy ?? {});
+    const routingPolicy = JSON.stringify(input.routingPolicy ?? {});
+    const priority = Number.isInteger(input.priority) ? input.priority : 0;
     await access.database.prepare(
-      'INSERT INTO rules (id, organization_id, name, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-    ).bind(id, access.organization.id, name, state, timestamp, timestamp).run();
-    return json(context, { id, organizationId: access.organization.id, name, state, createdAt: timestamp, updatedAt: timestamp }, 201);
+      'INSERT INTO rules (id, organization_id, name, status, selection_policy, routing_policy, priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).bind(id, access.organization.id, name, state, selectionPolicy, routingPolicy, priority, timestamp, timestamp).run();
+    await access.database.prepare(
+      'INSERT INTO rule_revisions (id, rule_id, revision, selection_policy, routing_policy, created_at) VALUES (?, ?, 1, ?, ?, ?)',
+    ).bind(crypto.randomUUID(), id, selectionPolicy, routingPolicy, timestamp).run();
+    return json(context, { id, organizationId: access.organization.id, name, state, selectionPolicy: input.selectionPolicy ?? {}, routingPolicy: input.routingPolicy ?? {}, priority, createdAt: timestamp, updatedAt: timestamp }, 201);
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Rule could not be created.', 409);
   }
@@ -914,6 +920,29 @@ app.post('/api/organizations/:organizationId/recipients', async (context) => {
     return json(context, { id, organizationId: access.organization.id, name, email, state: 'active', tags: [], createdAt: timestamp, updatedAt: timestamp }, 201);
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Recipient Profile could not be created.', 409);
+  }
+});
+
+app.get('/api/organizations/:organizationId/dashboard', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const [rules, events, jobs, exceptions, connection] = await Promise.all([
+      access.database.prepare("SELECT COUNT(*) AS count FROM rules WHERE status = 'active'").first<{ count: number }>(),
+      access.database.prepare("SELECT COUNT(*) AS count FROM events WHERE status = 'scheduled' AND starts_at >= ?").bind(now()).first<{ count: number }>(),
+      access.database.prepare("SELECT COUNT(*) AS count FROM jobs WHERE state IN ('pending', 'running')").first<{ count: number }>(),
+      access.database.prepare("SELECT COUNT(*) AS count FROM exceptions WHERE state = 'open'").first<{ count: number }>(),
+      access.database.prepare("SELECT MAX(updated_at) AS last_synced_at FROM google_connections WHERE kind = 'automation_inbox'").first<{ last_synced_at: string | null }>(),
+    ]);
+    return json(context, {
+      activeRules: rules?.count ?? 0,
+      upcomingEvents: events?.count ?? 0,
+      pendingJobs: jobs?.count ?? 0,
+      exceptions: exceptions?.count ?? 0,
+      lastSyncedAt: connection?.last_synced_at ?? null,
+    });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Dashboard could not be loaded.', 403);
   }
 });
 

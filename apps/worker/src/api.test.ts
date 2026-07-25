@@ -199,6 +199,25 @@ describe('Automation Rules', () => {
     expect(writes[0]).toContain('organization-1');
   });
 
+  it('snapshots Selection and Routing Policies as an immutable Rule Revision', async () => {
+    const writes: string[] = [];
+    const controlDatabase = {
+      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
+        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'identity-1', email: 'owner@example.com', display_name: 'Owner' };
+        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'owner' };
+        return null;
+      } }) }),
+    } as unknown as D1Database;
+    const organizationDatabase = { prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ run: async () => { writes.push(sql); return { meta: { changes: 1 } }; } }) }) } as unknown as D1Database;
+    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/rules', {
+      method: 'POST', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Announcements', state: 'active', selectionPolicy: { sender: 'announcer@example.com' }, routingPolicy: { calendarRecipientListId: 'list-1' } }),
+    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
+
+    expect(response.status).toBe(201);
+    expect(writes).toContainEqual(expect.stringContaining('INSERT INTO rule_revisions'));
+  });
+
   it('moves a Rule through its explicit lifecycle states', async () => {
     const writes: Array<{ sql: string; values: unknown[] }> = [];
     const controlDatabase = {
@@ -236,5 +255,33 @@ describe('Recipient Profiles', () => {
     expect(response.status).toBe(201);
     await expect(response.json()).resolves.toMatchObject({ data: { organizationId: 'organization-1', name: 'Guest', email: 'guest@example.com', state: 'active' } });
     expect(writes[0]).toContain('organization-1');
+  });
+});
+
+describe('Organization dashboard', () => {
+  it('reports active Rules, upcoming events, pending Jobs, Exceptions, and the latest Inbox sync from one Organization database', async () => {
+    const controlDatabase = {
+      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
+        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'identity-1', email: 'viewer@example.com', display_name: 'Viewer' };
+        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'viewer' };
+        return null;
+      } }) }),
+    } as unknown as D1Database;
+    const dashboardResult = (sql: string) => {
+      if (sql.includes('FROM rules')) return { count: 2 };
+      if (sql.includes('FROM events')) return { count: 3 };
+      if (sql.includes('FROM jobs')) return { count: 4 };
+      if (sql.includes('FROM exceptions')) return { count: 5 };
+      return { last_synced_at: '2026-07-25T00:00:00.000Z' };
+    };
+    const organizationDatabase = {
+      prepare: (sql: string) => ({ first: async () => dashboardResult(sql), bind: (..._values: unknown[]) => ({ first: async () => dashboardResult(sql) }) }),
+    } as unknown as D1Database;
+    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/dashboard', { headers: { Cookie: 'mail_session=session-1' } }), {
+      ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase,
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ data: { activeRules: 2, upcomingEvents: 3, pendingJobs: 4, exceptions: 5, lastSyncedAt: '2026-07-25T00:00:00.000Z' } });
   });
 });
