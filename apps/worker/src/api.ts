@@ -897,6 +897,26 @@ app.patch('/api/organizations/:organizationId/rules/:ruleId', async (context) =>
   }
 });
 
+app.post('/api/organizations/:organizationId/recipients', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Recipient Profiles can only be changed by an Owner, Admin, or Operator.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ name?: string; email?: string }>();
+    const name = input.name?.trim();
+    const email = input.email?.trim().toLowerCase();
+    if (!name || !email || !email.includes('@')) return failure(context, 'Recipient name and a valid email address are required.');
+    const id = crypto.randomUUID();
+    const timestamp = now();
+    await access.database.prepare(
+      "INSERT INTO recipient_profiles (id, organization_id, name, email, state, tags, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', '[]', ?, ?)",
+    ).bind(id, access.organization.id, name, email, timestamp, timestamp).run();
+    return json(context, { id, organizationId: access.organization.id, name, email, state: 'active', tags: [], createdAt: timestamp, updatedAt: timestamp }, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Recipient Profile could not be created.', 409);
+  }
+});
+
 app.all('/api/*', async (context) => {
   const session = await sessionFromRequest(context.req.raw, context.env);
   if (!session) return failure(context, 'Authentication is required.', 401);

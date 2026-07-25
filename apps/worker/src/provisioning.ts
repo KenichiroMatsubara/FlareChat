@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, kind TEXT NOT NULL, payloa
 CREATE TABLE IF NOT EXISTS exceptions (id TEXT PRIMARY KEY, source_message_id TEXT, code TEXT NOT NULL, message TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL, resolved_at TEXT);
 CREATE TABLE IF NOT EXISTS connections (id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('line', 'ai')), label TEXT NOT NULL, credential TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS deliveries (id TEXT PRIMARY KEY, event_id TEXT, channel TEXT NOT NULL, destination TEXT NOT NULL, outcome TEXT NOT NULL, external_id TEXT, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS recipient_profiles (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, name TEXT NOT NULL, email TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'active', tags TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(email));
 CREATE TABLE IF NOT EXISTS google_connections (id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK (kind = 'automation_inbox'), google_subject TEXT NOT NULL UNIQUE, inbox_address TEXT NOT NULL UNIQUE, granted_scopes TEXT NOT NULL, token_envelope TEXT NOT NULL, gmail_history_id TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('active', 'reauthentication_required', 'disconnected')), created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TEXT NOT NULL);
 `;
