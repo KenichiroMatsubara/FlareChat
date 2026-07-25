@@ -21,3 +21,6 @@ export const previewRecipientCsv = (csv: string): RecipientImportPreview => {
   }
   return { accepted, duplicates, invalid };
 };
+
+export const exportRecipientCsv = (recipients: Array<{ name: string; email: string }>): string =>
+  recipients.map((recipient) => `${recipient.name.replaceAll('"', '""')},${recipient.email}`).join('\n');
