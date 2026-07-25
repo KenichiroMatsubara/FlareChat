@@ -19,6 +19,7 @@ import {
 } from './google';
 import { loginReturnOrigin } from './origin';
 import { createSetupOrganizationKey, provisionSetup } from './provisioning';
+import { readRecoveryReceipt, restoreDeliveryRecordFromReceipt } from './recovery-receipts';
 import { exportRecipientCsv, previewRecipientCsv } from './recipients';
 import { failure, json } from './response';
 import type { Bindings, ConnectionRow, GoogleAutomationRow, OrganizationConnectionRow, OrganizationRow, PasskeyRow, SessionRow, SetupRow } from './types';
@@ -1146,6 +1147,61 @@ app.delete('/api/organizations/:organizationId/passkeys/:passkeyId', async (cont
     return json(context, { id: context.req.param('passkeyId'), state: 'revoked' });
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Passkey could not be revoked.', 409);
+  }
+});
+
+app.post('/api/organizations/:organizationId/recovery-requests', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner') return failure(context, 'Only an Owner can request recovery.', 403);
+    const input = await context.req.json<{ idempotencyKey?: string }>();
+    const idempotencyKey = input.idempotencyKey?.trim();
+    if (!idempotencyKey) return failure(context, 'A recovery receipt idempotency key is required.');
+    const id = crypto.randomUUID();
+    const timestamp = now();
+    await context.env.CONTROL_DB.prepare(
+      "INSERT INTO recovery_requests (id, organization_id, idempotency_key, state, requested_by_identity_id, created_at) VALUES (?, ?, ?, 'requested', ?, ?)",
+    ).bind(id, access.organization.id, idempotencyKey, access.session.identity_id, timestamp).run();
+    return json(context, { id, organizationId: access.organization.id, idempotencyKey, state: 'requested', createdAt: timestamp }, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Recovery request could not be created.', 409);
+  }
+});
+
+app.post('/api/organizations/:organizationId/recovery-requests/:requestId/execute', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'operator') return failure(context, 'Only an Operator can execute an Owner recovery request.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const request = await context.env.CONTROL_DB.prepare(
+      "SELECT id, idempotency_key FROM recovery_requests WHERE id = ? AND organization_id = ? AND state = 'requested'",
+    ).bind(context.req.param('requestId'), access.organization.id).first<{ id: string; idempotency_key: string }>();
+    if (!request) return failure(context, 'Recovery request was not found or is no longer pending.', 404);
+    const claimed = await context.env.CONTROL_DB.prepare("UPDATE recovery_requests SET state = 'executing', executed_by_identity_id = ? WHERE id = ? AND state = 'requested'")
+      .bind(access.session.identity_id, request.id).run();
+    if (claimed.meta.changes === 0) return failure(context, 'Recovery request is already being executed.', 409);
+    try {
+      const keyRecord = await context.env.CONTROL_DB.prepare('SELECT master_key_version, wrapped_key_envelope FROM organization_keys WHERE organization_id = ?')
+        .bind(access.organization.id).first<{ master_key_version: string; wrapped_key_envelope: string }>();
+      if (!keyRecord) throw new Error('Organization encryption key is missing.');
+      const organizationKey = await unwrapOrganizationKey(
+        { masterKeyVersion: keyRecord.master_key_version, envelope: JSON.parse(keyRecord.wrapped_key_envelope) },
+        await masterKey(context.env.CREDENTIAL_MASTER_KEY), access.organization.id,
+      );
+      const receipt = await readRecoveryReceipt({ bucket: context.env.RECOVERY_RECEIPTS, organizationKey, organizationId: access.organization.id, idempotencyKey: request.idempotency_key });
+      if (!receipt) throw new Error('The requested recovery receipt no longer exists.');
+      await restoreDeliveryRecordFromReceipt(access.database, receipt);
+      await context.env.CONTROL_DB.prepare("UPDATE recovery_requests SET state = 'completed', executed_at = ?, error_message = NULL WHERE id = ?")
+        .bind(now(), request.id).run();
+      return json(context, { id: request.id, state: 'completed' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Recovery execution failed.';
+      await context.env.CONTROL_DB.prepare("UPDATE recovery_requests SET state = 'failed', error_message = ?, executed_at = ? WHERE id = ?")
+        .bind(message, now(), request.id).run();
+      return failure(context, message, 409);
+    }
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Recovery execution could not be started.', 409);
   }
 });
 
