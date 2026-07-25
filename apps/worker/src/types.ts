@@ -1,5 +1,6 @@
 export interface Bindings {
   CONTROL_DB: D1Database;
+  RECOVERY_RECEIPTS: R2Bucket;
   ASSETS: Fetcher;
   APP_URL: string;
   WEB_ORIGIN: string;
