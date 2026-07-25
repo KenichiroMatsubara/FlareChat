@@ -10,7 +10,7 @@ CREATE TABLE members (
   organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   identity_id TEXT NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
   role TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'operator', 'viewer')),
-  state TEXT NOT NULL CHECK (state IN ('pending', 'active', 'removed')),
+  state TEXT NOT NULL CHECK (state IN ('pending', 'active', 'suspended', 'removed')),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (organization_id, identity_id)
