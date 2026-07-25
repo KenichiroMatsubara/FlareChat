@@ -25,4 +25,20 @@ describe('Organization setup client', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/organizations/organization-1/dashboard', expect.any(Object));
     vi.unstubAllGlobals();
   });
+
+  it('lists and creates Organization-scoped Rules through the tenant API', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { id: 'rule-1', name: 'Announcements', state: 'draft' } }), { status: 201 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.organizationRules('organization-1');
+    await api.createOrganizationRule('organization-1', { name: 'Announcements', state: 'draft' });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/organizations/organization-1/rules', expect.any(Object));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/organizations/organization-1/rules', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ name: 'Announcements', state: 'draft' }),
+    }));
+    vi.unstubAllGlobals();
+  });
 });

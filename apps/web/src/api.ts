@@ -62,6 +62,18 @@ export interface OrganizationDashboard {
   lastSyncedAt: string | null;
 }
 
+export interface OrganizationRule {
+  id: string;
+  organizationId: string;
+  name: string;
+  state: 'draft' | 'active' | 'suspended' | 'archived';
+  selectionPolicy: Record<string, unknown>;
+  routingPolicy: Record<string, unknown>;
+  priority: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface PasskeyAuthenticationOptions {
   challenge: string;
   rpId: string;
@@ -104,6 +116,11 @@ export const api = {
   currentAutomation,
   currentMember,
   organizationDashboard: (organizationId: string): Promise<OrganizationDashboard> => request(`/api/organizations/${encodeURIComponent(organizationId)}/dashboard`),
+  organizationRules: (organizationId: string): Promise<OrganizationRule[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules`),
+  createOrganizationRule: (organizationId: string, input: { name: string; state: 'draft' | 'active' }): Promise<OrganizationRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }),
   organizationConnections: (organizationId: string): Promise<OrganizationConnections> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections`),
   saveOrganizationConnections: (organizationId: string, input: {
     line: { channelAccessToken?: string | undefined; channelSecret?: string | undefined };
