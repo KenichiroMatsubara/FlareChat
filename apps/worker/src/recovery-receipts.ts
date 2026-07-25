@@ -1,4 +1,5 @@
 import { decrypt, encrypt } from './cryptography';
+import { recordDeliveryAttempt } from './delivery';
 
 export interface RecoveryReceipt {
   organizationId: string;
@@ -28,4 +29,15 @@ export const readRecoveryReceipt = async (input: { bucket: R2Bucket; organizatio
   const object = await input.bucket.get(receiptKey(receipt));
   if (!object) return null;
   return JSON.parse(await decrypt(JSON.parse(await object.text()), input.organizationKey, receiptContext(receipt))) as RecoveryReceipt;
+};
+
+/** Rebuilds the minimal succeeded Delivery Record after D1 recovery without retaining the original payload. */
+export const restoreDeliveryRecordFromReceipt = async (database: D1Database, receipt: RecoveryReceipt): Promise<void> => {
+  await recordDeliveryAttempt(database, {
+    eventId: receipt.idempotencyKey.split(':')[1] ?? receipt.idempotencyKey,
+    destination: receipt.destinationFingerprint,
+    channel: receipt.effectType,
+    outcome: 'succeeded',
+    externalId: receipt.externalId,
+  });
 };

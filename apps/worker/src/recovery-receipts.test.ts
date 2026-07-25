@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { masterKey } from './cryptography';
-import { readRecoveryReceipt, writeRecoveryReceipt } from './recovery-receipts';
+import { readRecoveryReceipt, restoreDeliveryRecordFromReceipt, writeRecoveryReceipt } from './recovery-receipts';
 
 describe('Recovery Receipts', () => {
   it('stores a success receipt encrypted in R2 and reconstructs it by idempotency key', async () => {
@@ -17,5 +17,13 @@ describe('Recovery Receipts', () => {
 
     expect(values.get(path)).not.toContain('google-event-1');
     await expect(readRecoveryReceipt({ bucket, organizationKey: key, organizationId: 'organization-1', idempotencyKey: 'calendar:event-1:recipient-1' })).resolves.toEqual(receipt);
+  });
+
+  it('rebuilds a succeeded Delivery Record from a recovered receipt', async () => {
+    const writes: unknown[][] = [];
+    const database = { prepare: (_sql: string) => ({ bind: (...values: unknown[]) => ({ run: async () => { writes.push(values); return { meta: { changes: 1 } }; } }) }) } as unknown as D1Database;
+    await restoreDeliveryRecordFromReceipt(database, { organizationId: 'organization-1', idempotencyKey: 'calendar:event-1:recipient-1', effectType: 'calendar', externalId: 'google-event-1', destinationFingerprint: 'sha256:abc', succeededAt: '2026-07-25T00:00:00.000Z' });
+
+    expect(writes[0]).toEqual(expect.arrayContaining(['event-1', 'sha256:abc', 'calendar', 'succeeded', 'google-event-1']));
   });
 });

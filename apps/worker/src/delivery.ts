@@ -2,7 +2,7 @@ export interface DeliveryAttempt {
   id: string;
   eventId: string;
   destination: string;
-  channel: 'calendar' | 'line' | 'email';
+  channel: 'calendar' | 'line' | 'email' | 'drive';
   outcome: 'succeeded' | 'failed' | 'pending';
   externalId: string | null;
   createdAt: string;
