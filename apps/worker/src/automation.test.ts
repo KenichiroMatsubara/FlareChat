@@ -25,6 +25,7 @@ describe('mail event extraction', () => {
       { id: 'rule-high', priority: 10, selectionPolicy: { sender: 'announcer@example.com', keyword: '例会' } },
     ], { sender: 'announcer@example.com', subject: '例会のお知らせ', body: '2026年8月3日 19:00〜21:00' })).toMatchObject({ id: 'rule-high' });
     expect(selectActiveRule([{ id: 'rule-1', priority: 1, selectionPolicy: { domain: 'example.com' } }], { sender: 'other@invalid.test', subject: '例会', body: '' })).toBeNull();
+    expect(selectActiveRule([{ id: 'rule-label', priority: 1, selectionPolicy: { label: 'Announcements' } }], { sender: 'a@example.com', subject: '例会', body: '', labels: ['Announcements'] })).toMatchObject({ id: 'rule-label' });
   });
 
   it('counts only attached file parts when enforcing Source Message attachment limits', () => {

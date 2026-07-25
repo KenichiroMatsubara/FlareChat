@@ -14,6 +14,7 @@ interface GmailHistory {
 
 interface GmailMessage {
   id?: string;
+  labelIds?: string[];
   payload?: GmailPart;
   snippet?: string;
 }
@@ -70,6 +71,7 @@ export interface RuleSource {
   sender: string;
   subject: string;
   body: string;
+  labels?: string[];
 }
 
 const now = (): string => new Date().toISOString();
@@ -140,9 +142,11 @@ export const selectActiveRule = (rules: ActiveRule[], source: RuleSource): Activ
     const requiredSender = typeof policy.sender === 'string' ? policy.sender.trim().toLowerCase() : '';
     const requiredDomain = typeof policy.domain === 'string' ? policy.domain.trim().toLowerCase() : '';
     const requiredKeyword = typeof policy.keyword === 'string' ? policy.keyword.trim().toLowerCase() : '';
+    const requiredLabel = typeof policy.label === 'string' ? policy.label.trim() : '';
     return (!requiredSender || requiredSender === sender)
       && (!requiredDomain || requiredDomain === domain)
-      && (!requiredKeyword || content.includes(requiredKeyword));
+      && (!requiredKeyword || content.includes(requiredKeyword))
+      && (!requiredLabel || (source.labels ?? []).includes(requiredLabel));
   });
   return matching.sort((left, right) => right.priority - left.priority)[0] ?? null;
 };
@@ -243,7 +247,7 @@ const processOrganizationMessage = async (
   const rule = selectActiveRule(rules.results.flatMap((row) => {
     try { return [{ id: row.id, priority: row.priority, selectionPolicy: JSON.parse(row.selection_policy) as Record<string, unknown> }]; }
     catch { return []; }
-  }), { sender: senderOf(message.payload), subject, body });
+  }), { sender: senderOf(message.payload), subject, body, labels: message.labelIds });
   if (!rule) {
     await database.prepare("UPDATE source_messages SET state = 'skipped', processed_at = ? WHERE id = ?")
       .bind(now(), sourceMessageId).run();
