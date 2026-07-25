@@ -474,6 +474,30 @@ describe('Organization membership', () => {
   });
 });
 
+describe('Passkey lifecycle', () => {
+  it('lets an Owner revoke a passkey only within the current Organization', async () => {
+    const writes: Array<{ sql: string; values: unknown[] }> = [];
+    const controlDatabase = {
+      prepare: (sql: string) => ({ bind: (...values: unknown[]) => ({
+        first: async () => {
+          if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'owner-identity', email: 'owner@example.com', display_name: 'Owner' };
+          if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'owner' };
+          return null;
+        },
+        run: async () => { writes.push({ sql, values }); return { meta: { changes: 1 } }; },
+      }) }),
+    } as unknown as D1Database;
+
+    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/passkeys/passkey-1', {
+      method: 'DELETE', headers: { Cookie: 'mail_session=session-1' },
+    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ data: { id: 'passkey-1', state: 'revoked' } });
+    expect(writes[0]).toMatchObject({ sql: expect.stringContaining('UPDATE passkeys SET revoked_at'), values: [expect.any(String), 'passkey-1', 'organization-1'] });
+  });
+});
+
 describe('Public attendance', () => {
   it('shows only the linked attendance state and comment to the public token holder', async () => {
     const controlDatabase={prepare:(_s:string)=>({bind:(..._v:unknown[])=>({first:async()=>({binding_name:'ORG_ORGANIZATION1'})})})} as unknown as D1Database;

@@ -478,7 +478,7 @@ app.post('/api/auth/passkey/options', async (context) => {
   const challenge = randomToken();
   await context.env.CONTROL_DB.prepare('INSERT INTO passkey_challenges (id, identity_id, challenge_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)')
     .bind(challengeId, identity.id, await sha256(challenge), expiresIn(PASSKEY_WINDOW_MS), now()).run();
-  const keys = await context.env.CONTROL_DB.prepare('SELECT credential_id FROM passkeys WHERE identity_id = ?').bind(identity.id).all<{ credential_id: string }>();
+  const keys = await context.env.CONTROL_DB.prepare('SELECT credential_id FROM passkeys WHERE identity_id = ? AND revoked_at IS NULL').bind(identity.id).all<{ credential_id: string }>();
   context.header('Set-Cookie', cookie(LOGIN_COOKIE, challengeId, requestIsSecure(context.req.raw), Math.floor(PASSKEY_WINDOW_MS / 1_000)));
   return json(context, { challenge, rpId: context.env.RP_ID, timeout: PASSKEY_WINDOW_MS, userVerification: 'required', allowCredentials: keys.results.map((key) => ({ type: 'public-key', id: key.credential_id })) });
 });
@@ -489,7 +489,7 @@ app.post('/api/auth/passkey/verify', async (context) => {
   const challenge = await context.env.CONTROL_DB.prepare('SELECT * FROM passkey_challenges WHERE id = ? AND expires_at > ?').bind(challengeId, now()).first<{ id: string; identity_id: string; challenge_hash: string }>();
   if (!challenge) return failure(context, 'Login challenge expired.', 401);
   const response = await context.req.json<AuthenticationResponse>();
-  const passkey = await context.env.CONTROL_DB.prepare('SELECT * FROM passkeys WHERE credential_id = ? AND identity_id = ?').bind(response.rawId, challenge.identity_id).first<PasskeyRow>();
+  const passkey = await context.env.CONTROL_DB.prepare('SELECT * FROM passkeys WHERE credential_id = ? AND identity_id = ? AND revoked_at IS NULL').bind(response.rawId, challenge.identity_id).first<PasskeyRow>();
   if (!passkey) return failure(context, 'Unknown passkey.', 401);
   try {
     const signCount = await verifyAuthentication(response, challenge.challenge_hash, context.env.RP_ID, context.env.WEB_ORIGIN, { credentialId: passkey.credential_id, publicKeyJwk: JSON.parse(passkey.public_key_jwk), signCount: passkey.sign_count });
@@ -1116,6 +1116,36 @@ app.patch('/api/organizations/:organizationId/members/:identityId', async (conte
     return json(context, { identityId: context.req.param('identityId'), ...(input.role === undefined ? {} : { role: input.role }), ...(input.state === undefined ? {} : { state: input.state }) });
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Member could not be updated.', 409);
+  }
+});
+
+app.get('/api/organizations/:organizationId/passkeys', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner') return failure(context, 'Only an Owner can view passkeys.', 403);
+    const rows = await context.env.CONTROL_DB.prepare(
+      `SELECT p.id, p.identity_id, i.email, p.created_at, p.last_used_at
+       FROM passkeys p JOIN members m ON m.identity_id = p.identity_id JOIN identities i ON i.id = p.identity_id
+       WHERE m.organization_id = ? AND p.revoked_at IS NULL ORDER BY p.created_at DESC`,
+    ).bind(access.organization.id).all<{ id: string; identity_id: string; email: string; created_at: string; last_used_at: string | null }>();
+    return json(context, rows.results.map((row) => ({ id: row.id, identityId: row.identity_id, email: row.email, createdAt: row.created_at, lastUsedAt: row.last_used_at })));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Passkeys could not be loaded.', 403);
+  }
+});
+
+app.delete('/api/organizations/:organizationId/passkeys/:passkeyId', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner') return failure(context, 'Only an Owner can revoke passkeys.', 403);
+    const result = await context.env.CONTROL_DB.prepare(
+      `UPDATE passkeys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL
+       AND identity_id IN (SELECT identity_id FROM members WHERE organization_id = ?)`,
+    ).bind(now(), context.req.param('passkeyId'), access.organization.id).run();
+    if (result.meta.changes === 0) return failure(context, 'Passkey was not found or already revoked.', 404);
+    return json(context, { id: context.req.param('passkeyId'), state: 'revoked' });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Passkey could not be revoked.', 409);
   }
 });
 
