@@ -54,6 +54,14 @@ export interface OrganizationConnections {
   };
 }
 
+export interface OrganizationDashboard {
+  activeRules: number;
+  upcomingEvents: number;
+  pendingJobs: number;
+  exceptions: number;
+  lastSyncedAt: string | null;
+}
+
 export interface PasskeyAuthenticationOptions {
   challenge: string;
   rpId: string;
@@ -95,6 +103,7 @@ export const api = {
   verifyPasskey: (credential: unknown): Promise<{ authenticated: boolean }> => request('/api/auth/passkey/verify', { method: 'POST', body: JSON.stringify(credential) }),
   currentAutomation,
   currentMember,
+  organizationDashboard: (organizationId: string): Promise<OrganizationDashboard> => request(`/api/organizations/${encodeURIComponent(organizationId)}/dashboard`),
   organizationConnections: (organizationId: string): Promise<OrganizationConnections> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections`),
   saveOrganizationConnections: (organizationId: string, input: {
     line: { channelAccessToken?: string | undefined; channelSecret?: string | undefined };

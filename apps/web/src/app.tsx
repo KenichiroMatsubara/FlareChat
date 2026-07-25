@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import type { OrganizationSetup, PasskeyCreationOptions } from '@mail/domain';
 
 import { api } from './api';
-import type { AutomationStatus, AutomationSummary, AuthMe, OrganizationConnections } from './api';
+import type { AutomationStatus, AutomationSummary, AuthMe, OrganizationConnections, OrganizationDashboard } from './api';
 
 const toBuffer = (value: string): ArrayBuffer => {
   const padded = value.replaceAll('-', '+').replaceAll('_', '/') + '='.repeat((4 - (value.length % 4)) % 4);
@@ -52,6 +52,7 @@ export const App = () => {
   const [ownerEmail, setOwnerEmail] = useState('');
   const [organizationId, setOrganizationId] = useState('');
   const [connections, setConnections] = useState<OrganizationConnections | null>(null);
+  const [organizationDashboard, setOrganizationDashboard] = useState<OrganizationDashboard | null>(null);
   const [lineChannelAccessToken, setLineChannelAccessToken] = useState('');
   const [lineChannelSecret, setLineChannelSecret] = useState('');
   const [geminiApiKey, setGeminiApiKey] = useState('');
@@ -88,9 +89,9 @@ export const App = () => {
     }
   }, [member, organizationId]);
   useEffect(() => {
-    if (!organizationId) { setConnections(null); return; }
-    void api.organizationConnections(organizationId).then((value) => {
-      setConnections(value);
+    if (!organizationId) { setConnections(null); setOrganizationDashboard(null); return; }
+    void Promise.all([api.organizationConnections(organizationId), api.organizationDashboard(organizationId)]).then(([value, dashboard]) => {
+      setConnections(value); setOrganizationDashboard(dashboard);
       setAiProvider('Google Gemini API');
       setAiModel('gemini-3.5-flash-lite');
       setLineChannelAccessToken('');
@@ -198,7 +199,7 @@ export const App = () => {
   };
   const logout = async () => {
     setBusy(true);
-    try { await api.logout(); setAutomation(null); setMember(null); setOrganizationId(''); setConnections(null); setSummary(null); }
+    try { await api.logout(); setAutomation(null); setMember(null); setOrganizationId(''); setConnections(null); setOrganizationDashboard(null); setSummary(null); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'ログアウトできませんでした。'); }
     finally { setBusy(false); }
   };
@@ -234,6 +235,6 @@ export const App = () => {
     {summary && <div className="run-result"><CheckCircle2 size={18} /><span>今回: {summary.created}件を予定化、{summary.skipped}件を保留、{summary.exceptions}件でエラー</span></div>}
     <div className="automation-guide"><CalendarDays size={19} /><div><strong>予定として認識する書式</strong><p>メールの件名または本文に <code>2026/08/03 19:00-21:00</code> または <code>2026年8月3日 19:00〜21:00</code> のように、日付と開始・終了時刻を含めてください。</p></div></div>
     <div className="automation-counts"><span><b>{automation.created}</b> 予定を作成</span><span><b>{automation.skipped}</b> 書式不足</span><span><b>{automation.exceptions}</b> エラー</span></div></>}
-    {organization && <section className="organization-settings"><div className="settings-heading"><div><p className="eyebrow">ORGANIZATION SETTINGS</p><h2>{organization.name} の接続設定</h2></div>{member && member.organizations.length > 1 && <select value={organizationId} onChange={(event) => setOrganizationId(event.target.value)}><option value="">組織を選択</option>{member.organizations.map((value) => <option key={value.organizationId} value={value.organizationId}>{value.name}</option>)}</select>}</div><p className="settings-description">組織ごとに異なる LINE Messaging API と Gemini API を登録します。秘密情報は暗号化して保存され、画面には再表示されません。</p>{connections && <div className="settings-form"><div className="settings-section"><div className="settings-section-title"><KeyRound size={17} /><strong>LINE Messaging API</strong></div><label>チャネルアクセストークン<SecretInput label="チャネルアクセストークン" value={lineChannelAccessToken} onChange={setLineChannelAccessToken} placeholder={connections.line.channelAccessTokenConfigured ? '登録済み（変更する場合のみ入力）' : 'チャネルアクセストークン'} /></label><label>チャネルシークレット<SecretInput label="チャネルシークレット" value={lineChannelSecret} onChange={setLineChannelSecret} placeholder={connections.line.channelSecretConfigured ? '登録済み（変更する場合のみ入力）' : 'チャネルシークレット'} /></label></div><div className="settings-section"><div className="settings-section-title"><KeyRound size={17} /><strong>Gemini API</strong></div><p className="gemini-note"><a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">Google AI Studio で Gemini API キーを作成</a>し、ここに貼り付けてください。キーは暗号化して保存され、画面には再表示されません。</p><label>Gemini API キー<SecretInput label="Gemini API キー" value={geminiApiKey} onChange={setGeminiApiKey} placeholder={connections.ai.apiKeyConfigured ? '登録済み（変更する場合のみ入力）' : 'AIza…'} /></label><p className="gemini-status">モデル: gemini-3.5-flash-lite（自動選択）</p>{connections.ai.apiKeyConfigured && <div className="gemini-test"><label>Gemini への質問<textarea value={geminiTestPrompt} onChange={(event) => setGeminiTestPrompt(event.target.value)} maxLength={10000} /></label><button className="secondary" onClick={() => void testGeminiConnection()} disabled={geminiTestBusy}>{geminiTestBusy ? "Gemini に問い合わせ中…" : "質問して接続をテスト"}</button>{geminiTestResult && <pre>{geminiTestResult}</pre>}</div>}</div><button className="primary" onClick={() => void saveConnections()} disabled={settingsBusy || (!geminiApiKey && !connections.ai.apiKeyConfigured)}><Save size={16} />{settingsBusy ? '保存中…' : 'Gemini API キーを保存'}</button></div>}</section>}
+    {organization && <section className="organization-settings"><div className="settings-heading"><div><p className="eyebrow">ORGANIZATION SETTINGS</p><h2>{organization.name} の接続設定</h2></div>{member && member.organizations.length > 1 && <select value={organizationId} onChange={(event) => setOrganizationId(event.target.value)}><option value="">組織を選択</option>{member.organizations.map((value) => <option key={value.organizationId} value={value.organizationId}>{value.name}</option>)}</select>}</div><p className="settings-description">組織ごとに異なる LINE Messaging API と Gemini API を登録します。秘密情報は暗号化して保存され、画面には再表示されません。</p>{organizationDashboard && <div className="automation-counts"><span><b>{organizationDashboard.activeRules}</b> Active Rule</span><span><b>{organizationDashboard.upcomingEvents}</b> Upcoming Event</span><span><b>{organizationDashboard.pendingJobs}</b> Pending Job</span><span><b>{organizationDashboard.exceptions}</b> Exception</span><span>最終同期: {formatted(organizationDashboard.lastSyncedAt)}</span></div>}{connections && <div className="settings-form"><div className="settings-section"><div className="settings-section-title"><KeyRound size={17} /><strong>LINE Messaging API</strong></div><label>チャネルアクセストークン<SecretInput label="チャネルアクセストークン" value={lineChannelAccessToken} onChange={setLineChannelAccessToken} placeholder={connections.line.channelAccessTokenConfigured ? '登録済み（変更する場合のみ入力）' : 'チャネルアクセストークン'} /></label><label>チャネルシークレット<SecretInput label="チャネルシークレット" value={lineChannelSecret} onChange={setLineChannelSecret} placeholder={connections.line.channelSecretConfigured ? '登録済み（変更する場合のみ入力）' : 'チャネルシークレット'} /></label></div><div className="settings-section"><div className="settings-section-title"><KeyRound size={17} /><strong>Gemini API</strong></div><p className="gemini-note"><a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">Google AI Studio で Gemini API キーを作成</a>し、ここに貼り付けてください。キーは暗号化して保存され、画面には再表示されません。</p><label>Gemini API キー<SecretInput label="Gemini API キー" value={geminiApiKey} onChange={setGeminiApiKey} placeholder={connections.ai.apiKeyConfigured ? '登録済み（変更する場合のみ入力）' : 'AIza…'} /></label><p className="gemini-status">モデル: gemini-3.5-flash-lite（自動選択）</p>{connections.ai.apiKeyConfigured && <div className="gemini-test"><label>Gemini への質問<textarea value={geminiTestPrompt} onChange={(event) => setGeminiTestPrompt(event.target.value)} maxLength={10000} /></label><button className="secondary" onClick={() => void testGeminiConnection()} disabled={geminiTestBusy}>{geminiTestBusy ? "Gemini に問い合わせ中…" : "質問して接続をテスト"}</button>{geminiTestResult && <pre>{geminiTestResult}</pre>}</div>}</div><button className="primary" onClick={() => void saveConnections()} disabled={settingsBusy || (!geminiApiKey && !connections.ai.apiKeyConfigured)}><Save size={16} />{settingsBusy ? '保存中…' : 'Gemini API キーを保存'}</button></div>}</section>}
   </section></main>;
 };

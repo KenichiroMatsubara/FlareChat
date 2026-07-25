@@ -15,4 +15,14 @@ describe('Organization setup client', () => {
     }));
     vi.unstubAllGlobals();
   });
+
+  it('loads the Organization-scoped dashboard rather than the retired global automation summary', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: { activeRules: 1, upcomingEvents: 2, pendingJobs: 3, exceptions: 4, lastSyncedAt: null } }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.organizationDashboard('organization-1');
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/organizations/organization-1/dashboard', expect.any(Object));
+    vi.unstubAllGlobals();
+  });
 });
