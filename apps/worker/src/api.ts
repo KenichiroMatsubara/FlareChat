@@ -4,7 +4,7 @@ import { cors } from 'hono/cors';
 import type { OrganizationSetup, PasskeyCreationOptions } from '@mail/domain';
 
 import { runAutomationForIdentity } from './automation';
-import { decrypt, encrypt, masterKey } from './cryptography';
+import { decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
 import { randomToken, sha256 } from './encoding';
 import {
   createPkce,
@@ -19,7 +19,7 @@ import {
 import { loginReturnOrigin } from './origin';
 import { createSetupOrganizationKey, provisionSetup } from './provisioning';
 import { failure, json } from './response';
-import type { Bindings, GoogleAutomationRow, PasskeyRow, SessionRow, SetupRow } from './types';
+import type { Bindings, ConnectionRow, GoogleAutomationRow, OrganizationConnectionRow, OrganizationRow, PasskeyRow, SessionRow, SetupRow } from './types';
 import { verifyAuthentication, verifyRegistration } from './webauthn';
 import type { AuthenticationResponse } from './webauthn';
 
@@ -31,6 +31,21 @@ const PROVISIONING_WINDOW_MS = 24 * 60 * 60 * 1_000;
 const SESSION_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
 const PASSKEY_WINDOW_MS = 5 * 60 * 1_000;
 const GOOGLE_LOGIN_WINDOW_MS = 10 * 60 * 1_000;
+
+type OrganizationCredential = Record<string, string>;
+
+interface OrganizationConnectionInput {
+  line?: {
+    channelAccessToken?: string;
+    channelSecret?: string;
+  };
+  ai?: {
+    provider?: string;
+    apiKey?: string;
+    model?: string;
+    baseUrl?: string;
+  };
+}
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -83,6 +98,89 @@ const configurationError = (env: Bindings): string | null => {
   if (!env.CREDENTIAL_MASTER_KEY || !env.CREDENTIAL_MASTER_KEY_VERSION) return 'Credential encryption is not configured.';
   return null;
 };
+
+const organizationDatabase = (env: Bindings, bindingName: string): D1Database | null => {
+  const database = (env as unknown as Record<string, unknown>)[bindingName];
+  return database && typeof database === 'object' ? database as D1Database : null;
+};
+
+const ensureGoogleOrganization = async (
+  env: Bindings,
+  identityId: string,
+  email: string,
+  displayName: string,
+): Promise<void> => {
+  const membership = await env.CONTROL_DB.prepare("SELECT organization_id FROM members WHERE identity_id = ? AND state = 'active' LIMIT 1")
+    .bind(identityId).first<{ organization_id: string }>();
+  if (membership) return;
+  const orphanOrganizations = await env.CONTROL_DB.prepare(
+    `SELECT o.id, o.name, o.inbox_address, o.status, o.database_id, o.binding_name
+     FROM organizations o LEFT JOIN members m ON m.organization_id = o.id
+     WHERE o.status = 'active'
+     GROUP BY o.id
+     HAVING COUNT(m.identity_id) = 0
+     ORDER BY o.created_at
+     LIMIT 2`,
+  ).all<OrganizationRow & { inbox_address: string }>();
+  const occupiedInbox = await env.CONTROL_DB.prepare('SELECT id FROM organizations WHERE inbox_address = ? LIMIT 1')
+    .bind(email).first<{ id: string }>();
+  if (occupiedInbox && !orphanOrganizations.results.some((organization) => organization.id === occupiedInbox.id)) return;
+  const organization = orphanOrganizations.results.length === 1 ? orphanOrganizations.results[0] : undefined;
+  const organizationId = organization?.id ?? crypto.randomUUID();
+  const createdAt = now();
+  if (!organization) {
+    await env.CONTROL_DB.prepare(
+      "INSERT INTO organizations (id, name, inbox_address, status, binding_name, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?, ?)",
+    ).bind(organizationId, `${displayName || email} の組織`, email, `ORG_${organizationId.replaceAll('-', '')}`, createdAt, createdAt).run();
+  }
+  await env.CONTROL_DB.prepare(
+    "INSERT OR IGNORE INTO members (organization_id, identity_id, role, state, created_at, updated_at) VALUES (?, ?, 'owner', 'active', ?, ?)",
+  ).bind(organizationId, identityId, createdAt, createdAt).run();
+  await createSetupOrganizationKey(env, organizationId);
+};
+
+const organizationForRequest = async (
+  request: Request,
+  env: Bindings,
+  organizationId: string,
+): Promise<{ session: SessionRow; organization: OrganizationRow; role: string; database: D1Database | null }> => {
+  const session = await sessionFromRequest(request, env);
+  if (!session) throw new Error('Authentication is required.');
+  const membership = await env.CONTROL_DB.prepare(
+    `SELECT m.role, o.id, o.name, o.status, o.database_id, o.binding_name
+     FROM members m JOIN organizations o ON o.id = m.organization_id
+     WHERE m.identity_id = ? AND m.organization_id = ? AND m.state = 'active'`,
+  ).bind(session.identity_id, organizationId).first<OrganizationRow & { role: string }>();
+  if (!membership) throw new Error('この組織へのアクセス権がありません。');
+  if (membership.status !== 'active') throw new Error('この組織は現在利用できません。');
+  const database = organizationDatabase(env, membership.binding_name);
+  return { session, organization: membership, role: membership.role, database };
+};
+
+const connectionContext = (organizationId: string, kind: 'line' | 'ai'): string => `organization-connection:${organizationId}:${kind}`;
+
+const connectionCredential = async (
+  row: ConnectionRow | null,
+  key: CryptoKey,
+  organizationId: string,
+  kind: 'line' | 'ai',
+): Promise<OrganizationCredential> => {
+  if (!row) return {};
+  return JSON.parse(await decrypt(JSON.parse(row.credential), key, connectionContext(organizationId, kind))) as OrganizationCredential;
+};
+
+const connectionView = (line: OrganizationCredential, ai: OrganizationCredential) => ({
+  line: {
+    channelAccessTokenConfigured: Boolean(line.channelAccessToken),
+    channelSecretConfigured: Boolean(line.channelSecret),
+  },
+  ai: {
+    apiKeyConfigured: Boolean(ai.apiKey),
+    provider: ai.provider ?? '',
+    model: ai.model ?? '',
+    baseUrl: ai.baseUrl ?? '',
+  },
+});
 
 app.get('/api/health', (context) => json(context, { status: 'ok', service: 'mail-automation', time: now() }));
 
@@ -149,6 +247,7 @@ app.get('/oauth/google/login/callback', async (context) => {
     ).bind(crypto.randomUUID(), identity.email, identity.displayName, timestamp, timestamp).run();
     const owner = await context.env.CONTROL_DB.prepare('SELECT id FROM identities WHERE email = ?').bind(identity.email).first<{ id: string }>();
     if (!owner) throw new Error('Google identity could not be stored.');
+    await ensureGoogleOrganization(context.env, owner.id, identity.email, identity.displayName);
     const automationId = crypto.randomUUID();
     const envelope = await encrypt(JSON.stringify(tokenSet), key, `google-automation:${automationId}`);
     const existing = await context.env.CONTROL_DB.prepare('SELECT id FROM google_automations WHERE identity_id = ?').bind(owner.id).first<{ id: string }>();
@@ -389,6 +488,7 @@ app.post('/api/auth/passkey/verify', async (context) => {
 app.get('/api/auth/me', async (context) => {
   const session = await sessionFromRequest(context.req.raw, context.env);
   if (!session) return failure(context, 'Authentication is required.', 401);
+  await ensureGoogleOrganization(context.env, session.identity_id, session.email, session.display_name);
   const memberships = await context.env.CONTROL_DB.prepare(
     `SELECT m.organization_id AS organizationId, m.role, o.name, o.status
      FROM members m JOIN organizations o ON o.id = m.organization_id
@@ -402,6 +502,98 @@ app.post('/api/auth/logout', async (context) => {
   if (sessionId) await context.env.CONTROL_DB.prepare('UPDATE sessions SET revoked_at = ? WHERE id = ?').bind(now(), sessionId).run();
   context.header('Set-Cookie', cookie(SESSION_COOKIE, '', requestIsSecure(context.req.raw), 0));
   return json(context, { loggedOut: true });
+});
+
+app.get('/api/organizations/:organizationId/connections', async (context) => {
+  try {
+    const organizationId = context.req.param('organizationId');
+    const access = await organizationForRequest(context.req.raw, context.env, organizationId);
+    const rows = access.database
+      ? await access.database.prepare("SELECT * FROM connections WHERE kind IN ('line', 'ai') AND status = 'active'").all<ConnectionRow>()
+      : await context.env.CONTROL_DB.prepare("SELECT id, kind, label, credential, status FROM organization_connections WHERE organization_id = ? AND status = 'active'")
+        .bind(organizationId).all<OrganizationConnectionRow>();
+    const keyRecord = await context.env.CONTROL_DB.prepare('SELECT master_key_version, wrapped_key_envelope FROM organization_keys WHERE organization_id = ?')
+      .bind(organizationId).first<{ master_key_version: string; wrapped_key_envelope: string }>();
+    if (!keyRecord) throw new Error('組織暗号鍵が見つかりません。');
+    const deploymentKey = await masterKey(context.env.CREDENTIAL_MASTER_KEY);
+    const organizationKey = await unwrapOrganizationKey(
+      { masterKeyVersion: keyRecord.master_key_version, envelope: JSON.parse(keyRecord.wrapped_key_envelope) },
+      deploymentKey,
+      organizationId,
+    );
+    const line = rows.results.find((row) => row.kind === 'line');
+    const ai = rows.results.find((row) => row.kind === 'ai');
+    const [lineCredential, aiCredential] = await Promise.all([
+      connectionCredential(line ?? null, organizationKey, organizationId, 'line'),
+      connectionCredential(ai ?? null, organizationKey, organizationId, 'ai'),
+    ]);
+    return json(context, { organizationId, organizationName: access.organization.name, ...connectionView(lineCredential, aiCredential) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '接続設定を取得できませんでした。';
+    return failure(context, message, message === 'Authentication is required.' ? 401 : 403);
+  }
+});
+
+app.put('/api/organizations/:organizationId/connections', async (context) => {
+  try {
+    const organizationId = context.req.param('organizationId');
+    const access = await organizationForRequest(context.req.raw, context.env, organizationId);
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, '接続設定を変更できる権限がありません。', 403);
+    const input = await context.req.json<OrganizationConnectionInput>();
+    const rows = access.database
+      ? await access.database.prepare("SELECT * FROM connections WHERE kind IN ('line', 'ai') AND status = 'active'").all<ConnectionRow>()
+      : await context.env.CONTROL_DB.prepare("SELECT id, organization_id, kind, label, credential, status FROM organization_connections WHERE organization_id = ? AND status = 'active'")
+        .bind(organizationId).all<OrganizationConnectionRow>();
+    const keyRecord = await context.env.CONTROL_DB.prepare('SELECT master_key_version, wrapped_key_envelope FROM organization_keys WHERE organization_id = ?')
+      .bind(organizationId).first<{ master_key_version: string; wrapped_key_envelope: string }>();
+    if (!keyRecord) throw new Error('組織暗号鍵が見つかりません。');
+    const deploymentKey = await masterKey(context.env.CREDENTIAL_MASTER_KEY);
+    const organizationKey = await unwrapOrganizationKey(
+      { masterKeyVersion: keyRecord.master_key_version, envelope: JSON.parse(keyRecord.wrapped_key_envelope) },
+      deploymentKey,
+      organizationId,
+    );
+    const existingLine = rows.results.find((row) => row.kind === 'line');
+    const existingAi = rows.results.find((row) => row.kind === 'ai');
+    const [lineCredential, aiCredential] = await Promise.all([
+      connectionCredential(existingLine ?? null, organizationKey, organizationId, 'line'),
+      connectionCredential(existingAi ?? null, organizationKey, organizationId, 'ai'),
+    ]);
+    const nextLine = { ...lineCredential, ...input.line };
+    const nextAi = { ...aiCredential, ...input.ai };
+    if (!nextLine.channelAccessToken || !nextLine.channelSecret) return failure(context, 'LINEのチャネルアクセストークンとチャネルシークレットを入力してください。');
+    if (!nextAi.apiKey || !nextAi.provider || !nextAi.model) return failure(context, 'AIのプロバイダー、APIキー、モデルを入力してください。');
+    const timestamp = now();
+    const lineEnvelope = await encrypt(JSON.stringify(nextLine), organizationKey, connectionContext(organizationId, 'line'));
+    const aiEnvelope = await encrypt(JSON.stringify(nextAi), organizationKey, connectionContext(organizationId, 'ai'));
+    const save = async (existing: ConnectionRow | undefined, kind: 'line' | 'ai', label: string, credential: string): Promise<void> => {
+      if (existing) {
+        if (access.database) {
+          await access.database.prepare('UPDATE connections SET label = ?, credential = ?, status = \'active\', updated_at = ? WHERE id = ?')
+            .bind(label, credential, timestamp, existing.id).run();
+        } else {
+          await context.env.CONTROL_DB.prepare('UPDATE organization_connections SET label = ?, credential = ?, status = \'active\', updated_at = ? WHERE id = ?')
+            .bind(label, credential, timestamp, existing.id).run();
+        }
+        return;
+      }
+      if (access.database) {
+        await access.database.prepare('INSERT INTO connections (id, kind, label, credential, status, created_at, updated_at) VALUES (?, ?, ?, ?, \'active\', ?, ?)')
+          .bind(crypto.randomUUID(), kind, label, credential, timestamp, timestamp).run();
+      } else {
+        await context.env.CONTROL_DB.prepare('INSERT INTO organization_connections (id, organization_id, kind, label, credential, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, \'active\', ?, ?)')
+          .bind(crypto.randomUUID(), organizationId, kind, label, credential, timestamp, timestamp).run();
+      }
+    };
+    await Promise.all([
+      save(existingLine, 'line', 'LINE Messaging API', JSON.stringify(lineEnvelope)),
+      save(existingAi, 'ai', `${nextAi.provider} AI`, JSON.stringify(aiEnvelope)),
+    ]);
+    return json(context, { organizationId, organizationName: access.organization.name, ...connectionView(nextLine, nextAi) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '接続設定を保存できませんでした。';
+    return failure(context, message, message === 'Authentication is required.' ? 401 : 403);
+  }
 });
 
 app.all('/api/*', async (context) => {

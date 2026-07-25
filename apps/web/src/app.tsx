@@ -1,8 +1,19 @@
-import { CalendarDays, CheckCircle2, CircleAlert, LogOut, Mail, Play, RefreshCw, ShieldCheck } from 'lucide-react';
+import { CalendarDays, CheckCircle2, CircleAlert, KeyRound, LogOut, Mail, Play, RefreshCw, Save, ShieldCheck } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { api } from './api';
-import type { AutomationStatus, AutomationSummary } from './api';
+import type { AutomationStatus, AutomationSummary, AuthMe, OrganizationConnections } from './api';
+
+const toBuffer = (value: string): ArrayBuffer => {
+  const padded = value.replaceAll('-', '+').replaceAll('_', '/') + '='.repeat((4 - (value.length % 4)) % 4);
+  const bytes = Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
+  return bytes.buffer;
+};
+
+const toBase64Url = (value: ArrayBuffer): string => {
+  const binary = String.fromCharCode(...new Uint8Array(value));
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '');
+};
 
 const formatted = (value: string | null): string => value
   ? new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
@@ -10,18 +21,80 @@ const formatted = (value: string | null): string => value
 
 export const App = () => {
   const [automation, setAutomation] = useState<AutomationStatus | null>(null);
+  const [member, setMember] = useState<AuthMe | null>(null);
+  const [organizationId, setOrganizationId] = useState('');
+  const [connections, setConnections] = useState<OrganizationConnections | null>(null);
+  const [lineChannelAccessToken, setLineChannelAccessToken] = useState('');
+  const [lineChannelSecret, setLineChannelSecret] = useState('');
+  const [aiProvider, setAiProvider] = useState('OpenAI');
+  const [aiApiKey, setAiApiKey] = useState('');
+  const [aiModel, setAiModel] = useState('');
+  const [aiBaseUrl, setAiBaseUrl] = useState('');
   const [summary, setSummary] = useState<AutomationSummary | null>(null);
   const [busy, setBusy] = useState(false);
+  const [passkeyEmail, setPasskeyEmail] = useState('');
+  const [settingsBusy, setSettingsBusy] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
   const [error, setError] = useState(new URLSearchParams(window.location.search).get('error') ?? '');
   const refresh = async () => {
-    try { setAutomation(await api.currentAutomation()); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : '状態を取得できませんでした。'); }
+    try {
+      const [currentAutomation, currentMember] = await Promise.all([api.currentAutomation(), api.currentMember()]);
+      setAutomation(currentAutomation);
+      setMember(currentMember);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : '状態を取得できませんでした。'); }
+    finally { setAuthChecked(true); }
   };
   useEffect(() => { void refresh(); if (window.location.search) window.history.replaceState({}, '', window.location.pathname); }, []);
+  useEffect(() => {
+    const organizations = member?.organizations ?? [];
+    if (!organizations.some((organization) => organization.organizationId === organizationId)) {
+      setOrganizationId(organizations[0]?.organizationId ?? '');
+    }
+  }, [member, organizationId]);
+  useEffect(() => {
+    if (!organizationId) { setConnections(null); return; }
+    void api.organizationConnections(organizationId).then((value) => {
+      setConnections(value);
+      setAiProvider(value.ai.provider || 'OpenAI');
+      setAiModel(value.ai.model);
+      setAiBaseUrl(value.ai.baseUrl);
+      setLineChannelAccessToken('');
+      setLineChannelSecret('');
+      setAiApiKey('');
+    }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : '接続設定を取得できませんでした。'));
+  }, [organizationId]);
   const login = async () => {
     setBusy(true); setError('');
     try { window.location.assign((await api.googleLogin()).authorizationUrl); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Google ログインを開始できませんでした。'); setBusy(false); }
+  };
+  const loginWithPasskey = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true); setError('');
+    try {
+      const options = await api.passkeyOptions(passkeyEmail);
+      const credential = await navigator.credentials.get({ publicKey: {
+        challenge: toBuffer(options.challenge),
+        rpId: options.rpId,
+        timeout: options.timeout,
+        userVerification: options.userVerification,
+        allowCredentials: options.allowCredentials.map((value) => ({ type: value.type, id: toBuffer(value.id) })),
+      } });
+      if (!(credential instanceof PublicKeyCredential)) throw new Error('パスキーの認証がキャンセルされました。');
+      const response = credential.response as AuthenticatorAssertionResponse;
+      await api.verifyPasskey({
+        id: credential.id,
+        rawId: toBase64Url(credential.rawId),
+        type: credential.type,
+        response: {
+          clientDataJSON: toBase64Url(response.clientDataJSON),
+          authenticatorData: toBase64Url(response.authenticatorData),
+          signature: toBase64Url(response.signature),
+        },
+      });
+      await refresh();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'パスキーでログインできませんでした。'); }
+    finally { setBusy(false); }
   };
   const run = async () => {
     setBusy(true); setError('');
@@ -35,29 +108,47 @@ export const App = () => {
     catch (cause) { setError(cause instanceof Error ? cause.message : '自動化を更新できませんでした。'); }
     finally { setBusy(false); }
   };
+  const saveConnections = async () => {
+    if (!organizationId) return;
+    setSettingsBusy(true); setError('');
+    try {
+      const saved = await api.saveOrganizationConnections(organizationId, {
+        line: { channelAccessToken: lineChannelAccessToken || undefined, channelSecret: lineChannelSecret || undefined },
+        ai: { provider: aiProvider, apiKey: aiApiKey || undefined, model: aiModel, baseUrl: aiBaseUrl || undefined },
+      });
+      setConnections(saved);
+      setLineChannelAccessToken(''); setLineChannelSecret(''); setAiApiKey('');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : '接続設定を保存できませんでした。'); }
+    finally { setSettingsBusy(false); }
+  };
   const logout = async () => {
     setBusy(true);
-    try { await api.logout(); setAutomation(null); setSummary(null); }
+    try { await api.logout(); setAutomation(null); setMember(null); setOrganizationId(''); setConnections(null); setSummary(null); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'ログアウトできませんでした。'); }
     finally { setBusy(false); }
   };
-  if (!automation) return <main className="setup-shell"><section className="setup-card login-card">
+  if (!authChecked) return <main className="setup-shell"><section className="setup-card login-card"><div className="loading"><RefreshCw className="spin" size={18} />読み込み中…</div></section></main>;
+  if (!automation && !member?.organizations.length) return <main className="setup-shell"><section className="setup-card login-card">
     <div className="setup-brand"><span><Mail size={22} /></span><div><strong>Mail Automation</strong><small>GMAIL TO CALENDAR</small></div></div>
     <p className="eyebrow">START WITH GOOGLE</p><h1>メールを予定にする</h1>
     <p className="setup-copy">Googleでログインすると、Gmailの新着メールを読み取り、日付と開始・終了時刻が書かれた案内をあなたのGoogleカレンダーへ自動登録します。</p>
     {error && <p className="setup-error">{error}</p>}
     <button className="primary google-login" onClick={() => void login()} disabled={busy}><ShieldCheck size={18} />{busy ? 'Googleへ接続中…' : 'Googleでログインして始める'}</button>
-    <p className="login-note">初回のみ、Gmailの読取とGoogle Calendarへの予定作成を許可します。組織名やパスキーの入力は不要です。</p>
+    <div className="login-divider"><span>組織メンバーの方</span></div>
+    <form className="passkey-login" onSubmit={(event) => void loginWithPasskey(event)}><label>登録メールアドレス<input type="email" value={passkeyEmail} onChange={(event) => setPasskeyEmail(event.target.value)} placeholder="you@example.com" autoComplete="username" required /></label><button className="secondary" disabled={busy}><KeyRound size={16} />パスキーでログイン</button></form>
+    <p className="login-note">Googleログインは個人の簡易自動化用、パスキーログインは組織設定用です。</p>
   </section></main>;
+  const organization = member?.organizations.find((value) => value.organizationId === organizationId) ?? null;
   return <main className="setup-shell"><section className="setup-card dashboard-card">
     <div className="dashboard-top"><div className="setup-brand"><span><Mail size={22} /></span><div><strong>Mail Automation</strong><small>GMAIL TO CALENDAR</small></div></div><button className="quiet-button" onClick={() => void logout()} disabled={busy}><LogOut size={15} />ログアウト</button></div>
-    <p className="eyebrow">GOOGLE AUTOMATION</p><h1>自動化は{automation.enabled ? '有効です' : '停止中です'}</h1>
-    <p className="setup-copy"><strong>{automation.displayName}</strong>（{automation.email}）の Gmail と primary Calendar を接続しています。</p>
-    {error && <p className="setup-error">{error}</p>}{automation.lastError && <p className="setup-error"><CircleAlert size={16} />{automation.lastError}</p>}
-    <div className="automation-status"><span className={automation.enabled ? 'status-dot active' : 'status-dot'} /><div><strong>{automation.enabled ? '新着メールを自動確認します' : '自動確認を停止しています'}</strong><small>前回の確認: {formatted(automation.lastSyncedAt)}</small></div><label className="switch"><input type="checkbox" checked={automation.enabled} onChange={(event) => void setEnabled(event.target.checked)} disabled={busy} /><span /></label></div>
+    {automation && <><p className="eyebrow">GOOGLE AUTOMATION</p><h1>自動化は{automation.enabled ? '有効です' : '停止中です'}</h1>
+    <p className="setup-copy"><strong>{automation.displayName}</strong>（{automation.email}）の Gmail と primary Calendar を接続しています。</p></>}
+    {error && <p className="setup-error">{error}</p>}{automation?.lastError && <p className="setup-error"><CircleAlert size={16} />{automation.lastError}</p>}
+    {automation && <><div className="automation-status"><span className={automation.enabled ? 'status-dot active' : 'status-dot'} /><div><strong>{automation.enabled ? '新着メールを自動確認します' : '自動確認を停止しています'}</strong><small>前回の確認: {formatted(automation.lastSyncedAt)}</small></div><label className="switch"><input type="checkbox" checked={automation.enabled} onChange={(event) => void setEnabled(event.target.checked)} disabled={busy} /><span /></label></div>
     <button className="primary google-login" onClick={() => void run()} disabled={busy || !automation.enabled}>{busy ? <RefreshCw className="spin" size={18} /> : <Play size={18} />}{busy ? '新着メールを確認中…' : '今すぐ新着メールを確認'}</button>
     {summary && <div className="run-result"><CheckCircle2 size={18} /><span>今回: {summary.created}件を予定化、{summary.skipped}件を保留、{summary.exceptions}件でエラー</span></div>}
     <div className="automation-guide"><CalendarDays size={19} /><div><strong>予定として認識する書式</strong><p>メールの件名または本文に <code>2026/08/03 19:00-21:00</code> または <code>2026年8月3日 19:00〜21:00</code> のように、日付と開始・終了時刻を含めてください。</p></div></div>
-    <div className="automation-counts"><span><b>{automation.created}</b> 予定を作成</span><span><b>{automation.skipped}</b> 書式不足</span><span><b>{automation.exceptions}</b> エラー</span></div>
+    <div className="automation-counts"><span><b>{automation.created}</b> 予定を作成</span><span><b>{automation.skipped}</b> 書式不足</span><span><b>{automation.exceptions}</b> エラー</span></div></>}
+    {organization && <section className="organization-settings"><div className="settings-heading"><div><p className="eyebrow">ORGANIZATION SETTINGS</p><h2>{organization.name} の接続設定</h2></div>{member && member.organizations.length > 1 && <select value={organizationId} onChange={(event) => setOrganizationId(event.target.value)}><option value="">組織を選択</option>{member.organizations.map((value) => <option key={value.organizationId} value={value.organizationId}>{value.name}</option>)}</select>}</div><p className="settings-description">組織ごとに異なる LINE Messaging API と AI API を登録します。秘密情報は暗号化して保存され、画面には再表示されません。</p>{connections && <div className="settings-form"><div className="settings-section"><div className="settings-section-title"><KeyRound size={17} /><strong>LINE Messaging API</strong></div><label>チャネルアクセストークン<input type="password" value={lineChannelAccessToken} onChange={(event) => setLineChannelAccessToken(event.target.value)} placeholder={connections.line.channelAccessTokenConfigured ? '登録済み（変更する場合のみ入力）' : 'チャネルアクセストークン'} autoComplete="new-password" /></label><label>チャネルシークレット<input type="password" value={lineChannelSecret} onChange={(event) => setLineChannelSecret(event.target.value)} placeholder={connections.line.channelSecretConfigured ? '登録済み（変更する場合のみ入力）' : 'チャネルシークレット'} autoComplete="new-password" /></label></div><div className="settings-section"><div className="settings-section-title"><KeyRound size={17} /><strong>AI API</strong></div><label>プロバイダー<select value={aiProvider} onChange={(event) => setAiProvider(event.target.value)}><option>OpenAI</option><option>Anthropic</option><option>Google</option><option>Other</option></select></label><label>APIキー<input type="password" value={aiApiKey} onChange={(event) => setAiApiKey(event.target.value)} placeholder={connections.ai.apiKeyConfigured ? '登録済み（変更する場合のみ入力）' : 'APIキー'} autoComplete="new-password" /></label><label>モデル<input value={aiModel} onChange={(event) => setAiModel(event.target.value)} placeholder="例: gpt-4.1-mini" /></label><label>Base URL（任意）<input value={aiBaseUrl} onChange={(event) => setAiBaseUrl(event.target.value)} placeholder="既定のAPIエンドポイントを使う場合は空欄" /></label></div><button className="primary" onClick={() => void saveConnections()} disabled={settingsBusy}><Save size={16} />{settingsBusy ? '保存中…' : '接続設定を保存'}</button></div>}</section>}
   </section></main>;
 };

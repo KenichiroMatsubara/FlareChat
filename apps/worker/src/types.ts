@@ -53,6 +53,26 @@ export interface SessionRow {
   display_name: string;
 }
 
+export interface OrganizationRow {
+  id: string;
+  name: string;
+  status: 'provisioning' | 'active' | 'suspended' | 'failed';
+  database_id: string | null;
+  binding_name: string;
+}
+
+export interface ConnectionRow {
+  id: string;
+  kind: 'line' | 'ai';
+  label: string;
+  credential: string;
+  status: 'active' | 'disconnected';
+}
+
+export interface OrganizationConnectionRow extends ConnectionRow {
+  organization_id: string;
+}
+
 export interface GoogleAutomationRow {
   id: string;
   identity_id: string;
