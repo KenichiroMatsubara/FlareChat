@@ -968,6 +968,49 @@ app.post('/api/organizations/:organizationId/recipients', async (context) => {
   }
 });
 
+app.patch('/api/organizations/:organizationId/recipients/:recipientId', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Recipient Profiles can only be changed by an Owner, Admin, or Operator.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ name?: string; email?: string; tags?: unknown; state?: string }>();
+    const updates: Array<{ column: string; value: string }> = [];
+    if (input.name !== undefined) {
+      const name = input.name.trim();
+      if (!name) return failure(context, 'Recipient name cannot be empty.');
+      updates.push({ column: 'name', value: name });
+    }
+    if (input.email !== undefined) {
+      const email = input.email.trim().toLowerCase();
+      if (!email.includes('@')) return failure(context, 'A valid Recipient email address is required.');
+      updates.push({ column: 'email', value: email });
+    }
+    let tags: string[] | undefined;
+    if (input.tags !== undefined) {
+      if (!Array.isArray(input.tags) || input.tags.some((tag) => typeof tag !== 'string' || !tag.trim())) return failure(context, 'Recipient tags must be non-empty strings.');
+      tags = input.tags.map((tag) => tag.trim());
+      updates.push({ column: 'tags', value: JSON.stringify(tags) });
+    }
+    if (input.state !== undefined) {
+      if (!['active', 'inactive'].includes(input.state)) return failure(context, 'Unsupported Recipient state.');
+      updates.push({ column: 'state', value: input.state });
+    }
+    if (!updates.length) return failure(context, 'At least one Recipient field is required.');
+    const result = await access.database.prepare(`UPDATE recipient_profiles SET ${updates.map((update) => `${update.column} = ?`).join(', ')}, updated_at = ? WHERE id = ?`)
+      .bind(...updates.map((update) => update.value), now(), context.req.param('recipientId')).run();
+    if (result.meta.changes === 0) return failure(context, 'Recipient Profile was not found.', 404);
+    return json(context, {
+      id: context.req.param('recipientId'),
+      ...(input.name === undefined ? {} : { name: input.name.trim() }),
+      ...(input.email === undefined ? {} : { email: input.email.trim().toLowerCase() }),
+      ...(tags === undefined ? {} : { tags }),
+      ...(input.state === undefined ? {} : { state: input.state }),
+    });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Recipient Profile could not be updated.', 409);
+  }
+});
+
 app.post('/api/organizations/:organizationId/recipients/import/preview', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));

@@ -323,6 +323,26 @@ describe('Recipient Profiles', () => {
     expect(writes[0]).toContain('organization-1');
     expect(writes[0]).toContain('alice@example.com');
   });
+
+  it('lets an Operator update Recipient tags and deactivate a Profile in the current Organization', async () => {
+    const writes: Array<{ sql: string; values: unknown[] }> = [];
+    const controlDatabase = {
+      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
+        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'operator-identity', email: 'operator@example.com', display_name: 'Operator' };
+        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'operator' };
+        return null;
+      } }) }),
+    } as unknown as D1Database;
+    const organizationDatabase = { prepare: (sql: string) => ({ bind: (...values: unknown[]) => ({ run: async () => { writes.push({ sql, values }); return { meta: { changes: 1 } }; } }) }) } as unknown as D1Database;
+    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/recipients/recipient-1', {
+      method: 'PATCH', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ tags: ['staff', 'priority'], state: 'inactive' }),
+    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ data: { id: 'recipient-1', state: 'inactive', tags: ['staff', 'priority'] } });
+    expect(writes[0]).toMatchObject({ sql: expect.stringContaining('UPDATE recipient_profiles SET') });
+    expect(writes[0]?.values).toContain('recipient-1');
+  });
 });
 
 describe('Organization dashboard', () => {
