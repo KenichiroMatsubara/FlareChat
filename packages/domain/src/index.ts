@@ -112,3 +112,5 @@ export { batchLineMessages } from './line';
 export type { LineBatch, LineMessage } from './line';
 export { canUpdateAttendance } from './attendance';
 export type { AttendanceLinkCheck } from './attendance';
+export { MAX_ATTACHMENT_BYTES, MAX_SOURCE_MESSAGE_ATTACHMENT_BYTES, validateAttachmentIntake } from './attachments';
+export type { AttachmentIntakeResult } from './attachments';
