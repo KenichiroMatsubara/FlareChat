@@ -776,6 +776,127 @@ app.post('/api/organizations/:organizationId/connections/gemini/test', async (co
   }
 });
 
+app.get('/api/organizations/:organizationId/lists', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const rows = await access.database.prepare(
+      'SELECT id, kind, name, description, created_at, updated_at FROM lists ORDER BY name',
+    ).all<{ id: string; kind: string; name: string; description: string; created_at: string; updated_at: string }>();
+    return json(context, rows.results.map((row) => ({
+      id: row.id,
+      organizationId: access.organization.id,
+      kind: row.kind,
+      name: row.name,
+      description: row.description,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    })));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Typed Lists could not be loaded.', 403);
+  }
+});
+
+app.post('/api/organizations/:organizationId/lists', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Typed Lists can only be changed by an Owner or Admin.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ kind?: string; name?: string; description?: string }>();
+    const kind = input.kind?.trim();
+    const name = input.name?.trim();
+    if (!kind || !['source', 'label', 'calendar_recipient', 'line_destination'].includes(kind)) return failure(context, 'Unsupported Typed List kind.');
+    if (!name) return failure(context, 'Typed List name is required.');
+    const id = crypto.randomUUID();
+    const timestamp = now();
+    const description = input.description?.trim() ?? '';
+    await access.database.prepare(
+      'INSERT INTO lists (id, organization_id, kind, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).bind(id, access.organization.id, kind, name, description, timestamp, timestamp).run();
+    return json(context, {
+      id,
+      organizationId: access.organization.id,
+      kind,
+      name,
+      description,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Typed List could not be created.', 409);
+  }
+});
+
+app.post('/api/organizations/:organizationId/lists/:listId/items', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'List Items can only be changed by an Owner or Admin.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ value?: string; label?: string }>();
+    const value = input.value?.trim();
+    if (!value) return failure(context, 'List Item value is required.');
+    const id = crypto.randomUUID();
+    await access.database.prepare('INSERT INTO list_items (id, list_id, value, label, enabled) VALUES (?, ?, ?, ?, 1)')
+      .bind(id, context.req.param('listId'), value, input.label?.trim() ?? '').run();
+    return json(context, { id, listId: context.req.param('listId'), value, label: input.label?.trim() ?? '', enabled: true }, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'List Item could not be created.', 409);
+  }
+});
+
+app.patch('/api/organizations/:organizationId/lists/:listId/items/:itemId', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'List Items can only be changed by an Owner or Admin.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ enabled?: boolean }>();
+    if (typeof input.enabled !== 'boolean') return failure(context, 'enabled must be a boolean.');
+    const result = await access.database.prepare('UPDATE list_items SET enabled = ? WHERE id = ? AND list_id = ?')
+      .bind(input.enabled ? 1 : 0, context.req.param('itemId'), context.req.param('listId')).run();
+    if (result.meta.changes === 0) return failure(context, 'List Item was not found.', 404);
+    return json(context, { id: context.req.param('itemId'), enabled: input.enabled });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'List Item could not be updated.', 409);
+  }
+});
+
+app.post('/api/organizations/:organizationId/rules', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Rules can only be changed by an Owner or Admin.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ name?: string; state?: string }>();
+    const name = input.name?.trim();
+    const state = input.state ?? 'draft';
+    if (!name) return failure(context, 'Rule name is required.');
+    if (!['draft', 'active', 'suspended', 'archived'].includes(state)) return failure(context, 'Unsupported Rule State.');
+    const id = crypto.randomUUID();
+    const timestamp = now();
+    await access.database.prepare(
+      'INSERT INTO rules (id, organization_id, name, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+    ).bind(id, access.organization.id, name, state, timestamp, timestamp).run();
+    return json(context, { id, organizationId: access.organization.id, name, state, createdAt: timestamp, updatedAt: timestamp }, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Rule could not be created.', 409);
+  }
+});
+
+app.patch('/api/organizations/:organizationId/rules/:ruleId', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Rules can only be changed by an Owner or Admin.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ state?: string }>();
+    if (!input.state || !['draft', 'active', 'suspended', 'archived'].includes(input.state)) return failure(context, 'Unsupported Rule State.');
+    const result = await access.database.prepare('UPDATE rules SET status = ?, updated_at = ? WHERE id = ?')
+      .bind(input.state, now(), context.req.param('ruleId')).run();
+    if (result.meta.changes === 0) return failure(context, 'Rule was not found.', 404);
+    return json(context, { id: context.req.param('ruleId'), state: input.state });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Rule could not be updated.', 409);
+  }
+});
+
 app.all('/api/*', async (context) => {
   const session = await sessionFromRequest(context.req.raw, context.env);
   if (!session) return failure(context, 'Authentication is required.', 401);

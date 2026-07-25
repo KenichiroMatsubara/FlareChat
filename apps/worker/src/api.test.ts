@@ -82,3 +82,138 @@ describe('Organization setup', () => {
     });
   });
 });
+
+describe('Organization lists', () => {
+  it('returns Typed Lists only from the signed-in member\'s Organization database', async () => {
+    const controlDatabase = {
+      prepare: (sql: string) => ({
+        bind: (..._values: unknown[]) => ({
+          first: async () => {
+            if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'identity-1', email: 'owner@example.com', display_name: 'Owner' };
+            if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'owner' };
+            return null;
+          },
+        }),
+      }),
+    } as unknown as D1Database;
+    const organizationDatabase = {
+      prepare: (_sql: string) => ({ all: async () => ({ results: [{ id: 'list-1', kind: 'source', name: 'Members', description: '', created_at: '2026-07-25T00:00:00.000Z', updated_at: '2026-07-25T00:00:00.000Z' }] }) }),
+    } as unknown as D1Database;
+    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/lists', {
+      headers: { Cookie: 'mail_session=session-1' },
+    }), {
+      ...setupEnvironment(),
+      CONTROL_DB: controlDatabase,
+      ORG_ORGANIZATION1: organizationDatabase,
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ data: [{ id: 'list-1', kind: 'source', name: 'Members' }] });
+  });
+
+  it('allows an Owner to create a Typed List in that Organization database', async () => {
+    const inserted: unknown[][] = [];
+    const controlDatabase = {
+      prepare: (sql: string) => ({
+        bind: (..._values: unknown[]) => ({
+          first: async () => {
+            if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'identity-1', email: 'owner@example.com', display_name: 'Owner' };
+            if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'owner' };
+            return null;
+          },
+        }),
+      }),
+    } as unknown as D1Database;
+    const organizationDatabase = {
+      prepare: (_sql: string) => ({
+        bind: (...values: unknown[]) => ({ run: async () => { inserted.push(values); return { meta: { changes: 1 } }; } }),
+      }),
+    } as unknown as D1Database;
+    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/lists', {
+      method: 'POST',
+      headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'source', name: 'Members', description: 'Verified senders' }),
+    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({ data: { organizationId: 'organization-1', kind: 'source', name: 'Members' } });
+    expect(inserted[0]).toContain('organization-1');
+  });
+
+  it('allows an Admin to add and later disable a List Item without exposing another Organization', async () => {
+    const writes: Array<{ sql: string; values: unknown[] }> = [];
+    const controlDatabase = {
+      prepare: (sql: string) => ({
+        bind: (..._values: unknown[]) => ({
+          first: async () => {
+            if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'identity-1', email: 'admin@example.com', display_name: 'Admin' };
+            if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'admin' };
+            return null;
+          },
+        }),
+      }),
+    } as unknown as D1Database;
+    const organizationDatabase = {
+      prepare: (sql: string) => ({
+        bind: (...values: unknown[]) => ({ run: async () => { writes.push({ sql, values }); return { meta: { changes: 1 } }; } }),
+      }),
+    } as unknown as D1Database;
+    const environment = { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase };
+    const created = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/lists/list-1/items', {
+      method: 'POST', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ value: 'member@example.com', label: 'Member' }),
+    }), environment);
+    const disabled = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/lists/list-1/items/item-1', {
+      method: 'PATCH', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: false }),
+    }), environment);
+
+    expect(created.status).toBe(201);
+    expect(disabled.status).toBe(200);
+    expect(writes.some((write) => write.sql.includes('INSERT INTO list_items'))).toBe(true);
+    expect(writes.some((write) => write.sql.includes('UPDATE list_items SET enabled'))).toBe(true);
+  });
+});
+
+describe('Automation Rules', () => {
+  it('creates an Organization-scoped Draft Rule for an Owner', async () => {
+    const writes: unknown[][] = [];
+    const controlDatabase = {
+      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
+        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'identity-1', email: 'owner@example.com', display_name: 'Owner' };
+        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'owner' };
+        return null;
+      } }) }),
+    } as unknown as D1Database;
+    const organizationDatabase = {
+      prepare: (_sql: string) => ({
+        bind: (...values: unknown[]) => ({
+          run: async () => { writes.push(values); return { meta: { changes: 1 } }; },
+        }),
+      }),
+    } as unknown as D1Database;
+    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/rules', {
+      method: 'POST', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Announcements', state: 'draft' }),
+    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({ data: { organizationId: 'organization-1', name: 'Announcements', state: 'draft' } });
+    expect(writes[0]).toContain('organization-1');
+  });
+
+  it('moves a Rule through its explicit lifecycle states', async () => {
+    const writes: Array<{ sql: string; values: unknown[] }> = [];
+    const controlDatabase = {
+      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
+        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'identity-1', email: 'owner@example.com', display_name: 'Owner' };
+        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'owner' };
+        return null;
+      } }) }),
+    } as unknown as D1Database;
+    const organizationDatabase = { prepare: (sql: string) => ({ bind: (...values: unknown[]) => ({ run: async () => { writes.push({ sql, values }); return { meta: { changes: 1 } }; } }) }) } as unknown as D1Database;
+    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/rules/rule-1', {
+      method: 'PATCH', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ state: 'active' }),
+    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
+
+    expect(response.status).toBe(200);
+    expect(writes[0]).toMatchObject({ sql: expect.stringContaining('UPDATE rules SET status'), values: ['active', expect.any(String), 'rule-1'] });
+  });
+});
