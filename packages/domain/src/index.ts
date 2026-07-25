@@ -120,3 +120,4 @@ export { CAPACITY_CRITICAL_THRESHOLD, CAPACITY_WARNING_THRESHOLD, capacityWarnin
 export type { CapacityWarning } from './capacity';
 export { canConsumeRecipientLink } from './recipient-links';
 export type { RecipientLinkCheck } from './recipient-links';
+export { ATTENDANCE_REMINDER_DAYS, shouldSendAttendanceReminder } from './reminders';
