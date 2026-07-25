@@ -16,18 +16,14 @@
       "database_id": "00000000-0000-0000-0000-000000000001",
       "migrations_dir": "migrations/control"
     },
-    {
-      "binding": "ORG_DB",
-      "database_name": "mail-automation-development",
-      "database_id": "00000000-0000-0000-0000-000000000002",
-      "migrations_dir": "migrations/organization"
-    }
   ],
   "triggers": {
     "crons": ["* * * * *"]
   },
   "vars": {
     "APP_URL": "http://localhost:8787",
+    "WEB_ORIGIN": "http://localhost:5173",
+    "RP_ID": "localhost",
     "GOOGLE_CLIENT_ID": "",
     "ACTIVE_ORGANIZATION_LIMIT": "10"
   },

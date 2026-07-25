@@ -1,61 +1,54 @@
 export interface Bindings {
   CONTROL_DB: D1Database;
-  ORG_DB: D1Database;
   ASSETS: Fetcher;
   APP_URL: string;
+  WEB_ORIGIN: string;
+  RP_ID: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
-  LINE_CHANNEL_ACCESS_TOKEN: string;
-  AI_API_KEY: string;
+  CREDENTIAL_MASTER_KEY: string;
+  CREDENTIAL_MASTER_KEY_VERSION: string;
+  CLOUDFLARE_ACCOUNT_ID: string;
+  CLOUDFLARE_API_TOKEN: string;
+  CLOUDFLARE_WORKER_NAME: string;
   ACTIVE_ORGANIZATION_LIMIT: string;
 }
 
-export interface ListRow {
+export interface SetupRow {
   id: string;
-  organization_id: string;
-  kind: 'source' | 'recipient' | 'line';
   name: string;
-  description: string;
-  item_count: number;
+  state: 'awaiting_google' | 'awaiting_passkey' | 'provisioning' | 'active' | 'expired' | 'failed';
+  oauth_state_hash: string;
+  pkce_verifier_envelope: string;
+  passkey_challenge_hash: string | null;
+  inbox_address: string | null;
+  google_subject: string | null;
+  granted_scopes: string | null;
+  credential_envelope: string | null;
+  history_id: string | null;
+  owner_identity_id: string | null;
+  organization_id: string | null;
+  database_id: string | null;
+  binding_name: string | null;
+  provisioning_key: string | null;
+  error_message: string | null;
+  expires_at: string;
+  provisioning_expires_at: string | null;
   created_at: string;
   updated_at: string;
 }
 
-export interface RuleRow {
+export interface PasskeyRow {
   id: string;
-  organization_id: string;
-  name: string;
-  status: 'draft' | 'active' | 'suspended' | 'archived';
-  source_list_id: string | null;
-  recipient_list_id: string | null;
-  line_list_id: string | null;
-  schedule_minutes: number;
-  require_attendance: number;
-  deadline_days_before: number | null;
-  created_at: string;
-  updated_at: string;
+  identity_id: string;
+  credential_id: string;
+  public_key_jwk: string;
+  sign_count: number;
 }
 
-export interface EventRow {
+export interface SessionRow {
   id: string;
-  organization_id: string;
-  title: string;
-  starts_at: string;
-  ends_at: string;
-  location: string;
-  status: 'draft' | 'scheduled' | 'cancelled' | 'exception';
-  source_subject: string | null;
-  attendance_deadline: string | null;
-  attending: number;
-  not_attending: number;
-  unanswered: number;
-  updated_at: string;
-}
-
-export interface CountRow {
-  count: number;
-}
-
-export interface SettingRow {
-  value: string;
+  identity_id: string;
+  email: string;
+  display_name: string;
 }

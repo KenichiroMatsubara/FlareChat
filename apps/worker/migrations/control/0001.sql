@@ -4,7 +4,7 @@ CREATE TABLE organizations (
   inbox_address TEXT NOT NULL UNIQUE,
   status TEXT NOT NULL CHECK (status IN ('provisioning', 'active', 'suspended', 'failed')),
   database_id TEXT,
-  binding_name TEXT NOT NULL DEFAULT 'ORG_DB',
+  binding_name TEXT NOT NULL DEFAULT 'UNBOUND',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

@@ -7,7 +7,7 @@
     "dev": "wrangler dev --port 8787",
     "build": "tsc -p tsconfig.json && wrangler deploy --dry-run",
     "typecheck": "tsc -p tsconfig.json",
-    "db:local": "wrangler d1 migrations apply CONTROL_DB --local && wrangler d1 migrations apply ORG_DB --local",
+    "db:local": "wrangler d1 migrations apply CONTROL_DB --local",
     "deploy": "wrangler deploy"
   },
   "dependencies": {

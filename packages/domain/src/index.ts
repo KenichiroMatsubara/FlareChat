@@ -75,5 +75,38 @@ export interface ApiResult<T> {
   data: T;
 }
 
+export type OrganizationRole = 'owner' | 'admin' | 'operator' | 'viewer';
+export type SetupStatus =
+  | 'awaiting_google'
+  | 'awaiting_passkey'
+  | 'provisioning'
+  | 'active'
+  | 'expired'
+  | 'failed';
+
+/** The non-secret state shown while an Organization is being created. */
+export interface OrganizationSetup {
+  id: string;
+  name: string;
+  inboxAddress: string | null;
+  status: SetupStatus;
+  expiresAt: string;
+  provisioningExpiresAt: string | null;
+  error: string | null;
+}
+
+export interface PasskeyCreationOptions {
+  challenge: string;
+  rp: { id: string; name: string };
+  user: { id: string; name: string; displayName: string };
+  pubKeyCredParams: Array<{ type: 'public-key'; alg: number }>;
+  timeout: number;
+  authenticatorSelection: {
+    residentKey: 'required';
+    userVerification: 'required';
+  };
+  attestation: 'none';
+}
+
 export { batchLineMessages } from './line';
 export type { LineBatch, LineMessage } from './line';
