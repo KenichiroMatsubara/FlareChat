@@ -55,3 +55,35 @@ export const deliverCalendarInvitation = async (input: {
     });
   }
 };
+
+/** Sends one LINE push batch (at most five message objects) and records every intended notification. */
+export const deliverLineBatch = async (input: {
+  database: D1Database;
+  accessToken: string;
+  eventId: string;
+  destinationId: string;
+  messages: string[];
+}): Promise<DeliveryAttempt[]> => {
+  if (!input.messages.length || input.messages.length > 5) throw new Error('A LINE batch must contain between one and five messages.');
+  let outcome: DeliveryAttempt['outcome'] = 'failed';
+  let externalId: string | null = null;
+  try {
+    const response = await fetch('https://api.line.me/v2/bot/message/push', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${input.accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: input.destinationId, messages: input.messages.map((text) => ({ type: 'text', text })) }),
+    });
+    if (!response.ok) throw new Error('LINE push failed.');
+    outcome = 'succeeded';
+    externalId = response.headers.get('x-line-request-id');
+  } catch {
+    // Every failed intended message still receives its own retryable record below.
+  }
+  return Promise.all(input.messages.map(() => recordDeliveryAttempt(input.database, {
+    eventId: input.eventId,
+    destination: input.destinationId,
+    channel: 'line',
+    outcome,
+    externalId,
+  })));
+};

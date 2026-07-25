@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { deliverCalendarInvitation, recordDeliveryAttempt } from './delivery';
+import { deliverCalendarInvitation, deliverLineBatch, recordDeliveryAttempt } from './delivery';
 
 describe('Delivery Records', () => {
   it('records each recipient delivery outcome independently so partial success is preserved', async () => {
@@ -36,6 +36,22 @@ describe('Delivery Records', () => {
 
     expect(record).toMatchObject({ outcome: 'failed', externalId: null });
     expect(writes[0]).toContain('failed');
+    vi.unstubAllGlobals();
+  });
+
+  it('sends at most five ordered LINE messages to one destination and preserves one record per message', async () => {
+    const writes: unknown[][] = [];
+    const database = { prepare: (_sql: string) => ({ bind: (...values: unknown[]) => ({ run: async () => { writes.push(values); return { meta: { changes: 1 } }; } }) }) } as unknown as D1Database;
+    const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 200, headers: { 'x-line-request-id': 'line-request-1' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const records = await deliverLineBatch({ database, accessToken: 'line-token', eventId: 'event-1', destinationId: 'user-1', messages: ['first', 'second'] });
+
+    expect(records).toHaveLength(2);
+    expect(records.every((record) => record.outcome === 'succeeded' && record.externalId === 'line-request-1')).toBe(true);
+    const body = JSON.parse(fetchMock.mock.calls[0]?.[1].body as string) as { to: string; messages: Array<{ text: string }> };
+    expect(body).toEqual({ to: 'user-1', messages: [{ type: 'text', text: 'first' }, { type: 'text', text: 'second' }] });
+    expect(writes).toHaveLength(2);
     vi.unstubAllGlobals();
   });
 });
