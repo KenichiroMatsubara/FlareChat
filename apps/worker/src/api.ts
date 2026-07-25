@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 
-import { canUpdateAttendance, displayRecipientIdentifier } from '@mail/domain';
+import { canUpdateAttendance, discoveredLineDestinations, displayRecipientIdentifier, verifyLineWebhookSignature } from '@mail/domain';
 import type { OrganizationSetup, PasskeyCreationOptions } from '@mail/domain';
 
 import { runAutomationForIdentity } from './automation';
@@ -1162,6 +1162,40 @@ app.get('/api/organizations/:organizationId/audit/deliveries', async (context) =
     })));
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Delivery audit could not be loaded.', 403);
+  }
+});
+
+app.post('/api/public/organizations/:organizationId/line/webhook', async (context) => {
+  try {
+    const organizationId = context.req.param('organizationId');
+    const organization = await context.env.CONTROL_DB.prepare(
+      "SELECT id, status, binding_name FROM organizations WHERE id = ? AND status = 'active'",
+    ).bind(organizationId).first<{ id: string; status: string; binding_name: string }>();
+    const database = organization ? organizationDatabase(context.env, organization.binding_name) : null;
+    if (!database) return failure(context, 'LINE webhook was not found.', 404);
+    const connection = await database.prepare("SELECT * FROM connections WHERE kind = 'line' AND status = 'active' LIMIT 1")
+      .first<ConnectionRow>();
+    if (!connection) return failure(context, 'LINE webhook was not found.', 404);
+    const keyRecord = await context.env.CONTROL_DB.prepare('SELECT master_key_version, wrapped_key_envelope FROM organization_keys WHERE organization_id = ?')
+      .bind(organizationId).first<{ master_key_version: string; wrapped_key_envelope: string }>();
+    if (!keyRecord) throw new Error('Organization encryption key is missing.');
+    const organizationKey = await unwrapOrganizationKey(
+      { masterKeyVersion: keyRecord.master_key_version, envelope: JSON.parse(keyRecord.wrapped_key_envelope) },
+      await masterKey(context.env.CREDENTIAL_MASTER_KEY),
+      organizationId,
+    );
+    const credential = await connectionCredential(connection, organizationKey, organizationId, 'line');
+    const rawBody = await context.req.text();
+    const signature = context.req.header('x-line-signature') ?? '';
+    if (!credential.channelSecret || !await verifyLineWebhookSignature(credential.channelSecret, rawBody, signature)) return failure(context, 'Invalid LINE webhook signature.', 401);
+    const destinations = discoveredLineDestinations(JSON.parse(rawBody) as { events?: Array<{ source?: { type?: string; userId?: string; groupId?: string; roomId?: string } }> });
+    const timestamp = now();
+    await Promise.all(destinations.map((destination) => database.prepare(
+      "INSERT OR IGNORE INTO line_destinations (id, connection_id, destination_id, kind, status, discovered_at, updated_at) VALUES (?, ?, ?, ?, 'discovered', ?, ?)",
+    ).bind(crypto.randomUUID(), connection.id, destination.destinationId, destination.kind, timestamp, timestamp).run()));
+    return json(context, { discovered: destinations.length });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'LINE webhook could not be processed.', 400);
   }
 });
 

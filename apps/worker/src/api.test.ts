@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { app, DEFAULT_GEMINI_MODEL, generatedText } from './api';
+import { createOrganizationKey, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
 
 const ownerSetup = {
   id: 'setup-1',
@@ -497,5 +498,42 @@ describe('Organization delivery audit', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ data: [{ id: 'delivery-1', eventId: 'event-1', destination: '***', outcome: 'succeeded' }] });
+  });
+});
+
+describe('LINE destination webhook', () => {
+  it('verifies the Organization LINE signature before recording distinct discovered destinations', async () => {
+    const keyMaterial = btoa(String.fromCharCode(...new Uint8Array(32).fill(7))).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '');
+    const deploymentKey = await masterKey(keyMaterial);
+    const wrappedKey = await createOrganizationKey(deploymentKey, 'v1', 'organization-1');
+    const organizationKey = await unwrapOrganizationKey(wrappedKey, deploymentKey, 'organization-1');
+    const credential = JSON.stringify(await encrypt(JSON.stringify({ channelSecret: 'line-secret' }), organizationKey, 'organization-connection:organization-1:line'));
+    const body = JSON.stringify({ events: [{ source: { type: 'user', userId: 'user-1' } }, { source: { type: 'group', groupId: 'group-1' } }, { source: { type: 'group', groupId: 'group-1' } }] });
+    const hmacKey = await crypto.subtle.importKey('raw', new TextEncoder().encode('line-secret'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const signature = btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.sign('HMAC', hmacKey, new TextEncoder().encode(body)))));
+    const writes: unknown[][] = [];
+    const controlDatabase = {
+      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
+        if (sql.includes('FROM organizations')) return { id: 'organization-1', status: 'active', binding_name: 'ORG_ORGANIZATION1' };
+        if (sql.includes('FROM organization_keys')) return { master_key_version: wrappedKey.masterKeyVersion, wrapped_key_envelope: JSON.stringify(wrappedKey.envelope) };
+        return null;
+      } }) }),
+    } as unknown as D1Database;
+    const organizationDatabase = {
+      prepare: (sql: string) => ({
+        first: async () => sql.includes('FROM connections') ? { id: 'line-connection-1', kind: 'line', label: 'LINE', credential, status: 'active' } : null,
+        bind: (...values: unknown[]) => ({
+          run: async () => { writes.push(values); return { meta: { changes: 1 } }; },
+        }),
+      }),
+    } as unknown as D1Database;
+    const response = await app.fetch(new Request('https://app.example.com/api/public/organizations/organization-1/line/webhook', {
+      method: 'POST', headers: { 'x-line-signature': signature, 'Content-Type': 'application/json' }, body,
+    }), { ...setupEnvironment(), CREDENTIAL_MASTER_KEY: keyMaterial, CREDENTIAL_MASTER_KEY_VERSION: 'v1', CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ data: { discovered: 2 } });
+    expect(writes).toHaveLength(2);
+    expect(writes.flat()).toEqual(expect.arrayContaining(['user-1', 'group-1']));
   });
 });
