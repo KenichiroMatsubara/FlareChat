@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 
-import { displayRecipientIdentifier } from '@mail/domain';
+import { canUpdateAttendance, displayRecipientIdentifier } from '@mail/domain';
 import type { OrganizationSetup, PasskeyCreationOptions } from '@mail/domain';
 
 import { runAutomationForIdentity } from './automation';
@@ -1034,6 +1034,37 @@ app.patch('/api/organizations/:organizationId/members/:identityId', async (conte
     return json(context, { identityId: context.req.param('identityId'), role: input.role });
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Member could not be updated.', 409);
+  }
+});
+
+app.post('/api/public/organizations/:organizationId/attendance/:token', async (context) => {
+  try {
+    const organizationId = context.req.param('organizationId');
+    const organization = await context.env.CONTROL_DB.prepare(
+      "SELECT id, status, binding_name FROM organizations WHERE id = ? AND status = 'active'",
+    ).bind(organizationId).first<{ id: string; status: string; binding_name: string }>();
+    const database = organization ? organizationDatabase(context.env, organization.binding_name) : null;
+    if (!database) return failure(context, 'Attendance link was not found.', 404);
+    const input = await context.req.json<{ eventId?: string; status?: string; comment?: string }>();
+    if (!input.eventId || !['attending', 'not_attending'].includes(input.status ?? '')) return failure(context, 'A response status is required.');
+    const comment = input.comment?.trim() ?? '';
+    if (comment.length > 1_000) return failure(context, 'Attendance comment is too long.');
+    const link = await database.prepare(
+      `SELECT a.event_id, a.event_id AS link_event_id, a.revoked_at, e.attendance_deadline
+       FROM attendance a JOIN events e ON e.id = a.event_id WHERE a.token = ?`,
+    ).bind(context.req.param('token')).first<{ event_id: string; link_event_id: string; revoked_at: string | null; attendance_deadline: string | null }>();
+    if (!link || !link.attendance_deadline || !canUpdateAttendance({
+      eventId: input.eventId,
+      linkEventId: link.link_event_id,
+      revokedAt: link.revoked_at,
+      deadline: link.attendance_deadline,
+      now: now(),
+    })) return failure(context, 'Attendance link is no longer available.', 410);
+    await database.prepare('UPDATE attendance SET status = ?, comment = ?, updated_at = ? WHERE token = ? AND event_id = ?')
+      .bind(input.status, comment, now(), context.req.param('token'), input.eventId).run();
+    return json(context, { eventId: input.eventId, status: input.status });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Attendance response could not be saved.', 409);
   }
 });
 

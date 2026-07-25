@@ -377,3 +377,52 @@ describe('Organization membership', () => {
     expect(writes[0]).toContain('organization-1');
   });
 });
+
+describe('Public attendance', () => {
+  it('records an attendance response only for a live, matching Event link', async () => {
+    const writes: unknown[][] = [];
+    const controlDatabase = {
+      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
+        if (sql.includes('FROM organizations')) return { id: 'organization-1', status: 'active', binding_name: 'ORG_ORGANIZATION1' };
+        return null;
+      } }) }),
+    } as unknown as D1Database;
+    const organizationDatabase = {
+      prepare: (sql: string) => ({
+        bind: (...values: unknown[]) => ({
+          first: async () => sql.includes('FROM attendance') ? { event_id: 'event-1', link_event_id: 'event-1', revoked_at: null, attendance_deadline: '2099-01-01T00:00:00.000Z' } : null,
+          run: async () => { writes.push(values); return { meta: { changes: 1 } }; },
+        }),
+      }),
+    } as unknown as D1Database;
+    const response = await app.fetch(new Request('https://app.example.com/api/public/organizations/organization-1/attendance/link-token', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ eventId: 'event-1', status: 'attending', comment: '参加します' }),
+    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ data: { eventId: 'event-1', status: 'attending' } });
+    expect(writes[0]).toContain('attending');
+    expect(writes[0]).toContain('参加します');
+  });
+
+  it('rejects an expired or revoked public attendance link without writing a response', async () => {
+    const controlDatabase = {
+      prepare: (_sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => ({ id: 'organization-1', status: 'active', binding_name: 'ORG_ORGANIZATION1' }) }) }),
+    } as unknown as D1Database;
+    let wrote = false;
+    const organizationDatabase = {
+      prepare: (sql: string) => ({
+        bind: (..._values: unknown[]) => ({
+          first: async () => sql.includes('FROM attendance') ? { event_id: 'event-1', link_event_id: 'event-1', revoked_at: '2026-07-24T00:00:00.000Z', attendance_deadline: '2099-01-01T00:00:00.000Z' } : null,
+          run: async () => { wrote = true; return { meta: { changes: 1 } }; },
+        }),
+      }),
+    } as unknown as D1Database;
+    const response = await app.fetch(new Request('https://app.example.com/api/public/organizations/organization-1/attendance/revoked-token', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ eventId: 'event-1', status: 'not_attending' }),
+    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
+
+    expect(response.status).toBe(410);
+    expect(wrote).toBe(false);
+  });
+});
