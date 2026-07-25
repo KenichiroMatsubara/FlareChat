@@ -1094,12 +1094,17 @@ app.patch('/api/organizations/:organizationId/members/:identityId', async (conte
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
     if (access.role !== 'owner') return failure(context, 'Only an Owner can change member roles.', 403);
-    const input = await context.req.json<{ role?: string }>();
-    if (!input.role || !['owner', 'admin', 'operator', 'viewer'].includes(input.role)) return failure(context, 'Unsupported member role.');
-    const result = await context.env.CONTROL_DB.prepare('UPDATE members SET role = ?, updated_at = ? WHERE organization_id = ? AND identity_id = ? AND state = \'active\'')
-      .bind(input.role, now(), access.organization.id, context.req.param('identityId')).run();
+    const input = await context.req.json<{ role?: string; state?: string }>();
+    if (input.role !== undefined && !['owner', 'admin', 'operator', 'viewer'].includes(input.role)) return failure(context, 'Unsupported member role.');
+    if (input.state !== undefined && !['active', 'suspended'].includes(input.state)) return failure(context, 'Unsupported member state.');
+    if (input.role === undefined && input.state === undefined) return failure(context, 'A member role or state is required.');
+    const updates: Array<{ column: string; value: string }> = [];
+    if (input.role !== undefined) updates.push({ column: 'role', value: input.role });
+    if (input.state !== undefined) updates.push({ column: 'state', value: input.state });
+    const result = await context.env.CONTROL_DB.prepare(`UPDATE members SET ${updates.map((update) => `${update.column} = ?`).join(', ')}, updated_at = ? WHERE organization_id = ? AND identity_id = ?`)
+      .bind(...updates.map((update) => update.value), now(), access.organization.id, context.req.param('identityId')).run();
     if (result.meta.changes === 0) return failure(context, 'Member was not found.', 404);
-    return json(context, { identityId: context.req.param('identityId'), role: input.role });
+    return json(context, { identityId: context.req.param('identityId'), ...(input.role === undefined ? {} : { role: input.role }), ...(input.state === undefined ? {} : { state: input.state }) });
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Member could not be updated.', 409);
   }
