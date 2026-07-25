@@ -426,3 +426,26 @@ describe('Public attendance', () => {
     expect(wrote).toBe(false);
   });
 });
+
+describe('Manual Event overrides', () => {
+  it('lets an Operator record a scoped manual Event change with an immutable audit entry', async () => {
+    const writes: Array<{ sql: string; values: unknown[] }> = [];
+    const controlDatabase = {
+      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
+        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'operator-identity', email: 'operator@example.com', display_name: 'Operator' };
+        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'operator' };
+        return null;
+      } }) }),
+    } as unknown as D1Database;
+    const organizationDatabase = { prepare: (sql: string) => ({ bind: (...values: unknown[]) => ({ run: async () => { writes.push({ sql, values }); return { meta: { changes: 1 } }; } }) }) } as unknown as D1Database;
+    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/events/event-1', {
+      method: 'PATCH', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ startsAt: '2026-08-01T10:00:00+09:00', reason: '会場都合' }),
+    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ data: { id: 'event-1', updatedFields: ['startsAt'] } });
+    expect(writes.some((write) => write.sql.includes('UPDATE events SET starts_at'))).toBe(true);
+    expect(writes.some((write) => write.sql.includes('INSERT INTO event_overrides'))).toBe(true);
+    expect(writes.flatMap((write) => write.values)).toContain('operator-identity');
+  });
+});

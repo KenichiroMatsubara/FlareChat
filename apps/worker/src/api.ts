@@ -1068,6 +1068,39 @@ app.post('/api/public/organizations/:organizationId/attendance/:token', async (c
   }
 });
 
+app.patch('/api/organizations/:organizationId/events/:eventId', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Events can only be changed by an Owner, Admin, or Operator.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ title?: string; startsAt?: string; endsAt?: string; location?: string; description?: string; status?: string; reason?: string }>();
+    const candidates: Array<{ key: string; column: string; value: string | undefined }> = [
+      { key: 'title', column: 'title', value: input.title?.trim() },
+      { key: 'startsAt', column: 'starts_at', value: input.startsAt?.trim() },
+      { key: 'endsAt', column: 'ends_at', value: input.endsAt?.trim() },
+      { key: 'location', column: 'location', value: input.location?.trim() },
+      { key: 'description', column: 'description', value: input.description?.trim() },
+      { key: 'status', column: 'status', value: input.status?.trim() },
+    ];
+    const updates = candidates.filter((candidate) => candidate.value !== undefined);
+    if (!updates.length || updates.some((candidate) => candidate.value === '')) return failure(context, 'At least one non-empty Event field is required.');
+    const status = updates.find((candidate) => candidate.key === 'status')?.value;
+    if (status && !['draft', 'scheduled', 'cancelled', 'exception'].includes(status)) return failure(context, 'Unsupported Event status.');
+    const timestamp = now();
+    const result = await access.database.prepare(
+      `UPDATE events SET ${updates.map((candidate) => `${candidate.column} = ?`).join(', ')}, updated_at = ? WHERE id = ?`,
+    ).bind(...updates.map((candidate) => candidate.value), timestamp, context.req.param('eventId')).run();
+    if (result.meta.changes === 0) return failure(context, 'Event was not found.', 404);
+    const changeSet = Object.fromEntries(updates.map((candidate) => [candidate.key, candidate.value]));
+    await access.database.prepare(
+      'INSERT INTO event_overrides (id, event_id, actor_identity_id, changes_json, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    ).bind(crypto.randomUUID(), context.req.param('eventId'), access.session.identity_id, JSON.stringify(changeSet), input.reason?.trim() ?? '', timestamp).run();
+    return json(context, { id: context.req.param('eventId'), updatedFields: updates.map((candidate) => candidate.key) });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Event could not be updated.', 409);
+  }
+});
+
 app.all('/api/*', async (context) => {
   const session = await sessionFromRequest(context.req.raw, context.env);
   if (!session) return failure(context, 'Authentication is required.', 401);
