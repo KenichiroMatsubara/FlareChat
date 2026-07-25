@@ -51,13 +51,14 @@ export const googleAuthorizationUrl = (input: {
   redirectUri: string;
   state: string;
   challenge: string;
+  scopes?: readonly string[];
 }): string => {
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   url.search = new URLSearchParams({
     client_id: input.clientId,
     redirect_uri: input.redirectUri,
     response_type: 'code',
-    scope: GOOGLE_SCOPES.join(' '),
+    scope: (input.scopes ?? GOOGLE_SCOPES).join(' '),
     state: input.state,
     code_challenge: input.challenge,
     code_challenge_method: 'S256',

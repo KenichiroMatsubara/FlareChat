@@ -45,6 +45,10 @@ export interface OrganizationConnections {
     provider: string;
     model: string;
     baseUrl: string;
+    authMode: string;
+    gcpProjectId: string;
+    gcpLocation: string;
+    oauthConfigured: boolean;
   };
 }
 
@@ -88,10 +92,22 @@ export const api = {
   organizationConnections: (organizationId: string): Promise<OrganizationConnections> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections`),
   saveOrganizationConnections: (organizationId: string, input: {
     line: { channelAccessToken?: string | undefined; channelSecret?: string | undefined };
-    ai: { provider?: string | undefined; apiKey?: string | undefined; model?: string | undefined; baseUrl?: string | undefined };
+    ai: {
+      provider?: string | undefined;
+      apiKey?: string | undefined;
+      model?: string | undefined;
+      baseUrl?: string | undefined;
+      authMode?: string | undefined;
+      gcpProjectId?: string | undefined;
+      gcpLocation?: string | undefined;
+    };
   }): Promise<OrganizationConnections> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections`, {
     method: 'PUT',
     body: JSON.stringify(input),
+  }),
+  testGeminiConnection: (organizationId: string, prompt: string): Promise<{ text: string; model: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections/gemini/test`, {
+    method: 'POST',
+    body: JSON.stringify({ prompt }),
   }),
   runAutomation: (): Promise<AutomationSummary> => request('/api/automation/run', { method: 'POST' }),
   setEnabled: (enabled: boolean): Promise<{ enabled: boolean }> => request('/api/automation/enabled', { method: 'POST', body: JSON.stringify({ enabled }) }),

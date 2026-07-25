@@ -1,4 +1,4 @@
-import { CalendarDays, CheckCircle2, CircleAlert, KeyRound, LogOut, Mail, Play, RefreshCw, Save, ShieldCheck } from 'lucide-react';
+import { CalendarDays, CheckCircle2, CircleAlert, Eye, EyeOff, KeyRound, LogOut, Mail, Play, RefreshCw, Save, ShieldCheck } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { api } from './api';
@@ -19,6 +19,18 @@ const formatted = (value: string | null): string => value
   ? new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
   : 'まだ実行していません';
 
+interface SecretInputProps {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  label: string;
+}
+
+const SecretInput = ({ value, onChange, placeholder, label }: SecretInputProps) => {
+  const [revealed, setRevealed] = useState(false);
+  return <div className="secret-input"><input type="text" className={revealed ? '' : 'secret-input-masked'} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} aria-label={`${label}（シークレット）`} autoComplete="off" autoCapitalize="none" spellCheck={false} data-1p-ignore="true" data-bwignore="true" data-lpignore="true" data-protonpass-ignore="true" /><button type="button" className="secret-toggle" onClick={() => setRevealed((current) => !current)} aria-label={revealed ? `${label}を隠す` : `${label}を表示`} title={revealed ? '隠す' : '表示'}>{revealed ? <EyeOff size={16} /> : <Eye size={16} />}</button></div>;
+};
+
 export const App = () => {
   const [automation, setAutomation] = useState<AutomationStatus | null>(null);
   const [member, setMember] = useState<AuthMe | null>(null);
@@ -26,10 +38,12 @@ export const App = () => {
   const [connections, setConnections] = useState<OrganizationConnections | null>(null);
   const [lineChannelAccessToken, setLineChannelAccessToken] = useState('');
   const [lineChannelSecret, setLineChannelSecret] = useState('');
-  const [aiProvider, setAiProvider] = useState('OpenAI');
-  const [aiApiKey, setAiApiKey] = useState('');
-  const [aiModel, setAiModel] = useState('');
-  const [aiBaseUrl, setAiBaseUrl] = useState('');
+  const [geminiApiKey, setGeminiApiKey] = useState('');
+  const [aiProvider, setAiProvider] = useState('Google Gemini API');
+  const [aiModel, setAiModel] = useState('gemini-3.5-flash-lite');
+  const [geminiTestPrompt, setGeminiTestPrompt] = useState('日本の首都を一文で教えてください。');
+  const [geminiTestResult, setGeminiTestResult] = useState('');
+  const [geminiTestBusy, setGeminiTestBusy] = useState(false);
   const [summary, setSummary] = useState<AutomationSummary | null>(null);
   const [busy, setBusy] = useState(false);
   const [passkeyEmail, setPasskeyEmail] = useState('');
@@ -55,12 +69,10 @@ export const App = () => {
     if (!organizationId) { setConnections(null); return; }
     void api.organizationConnections(organizationId).then((value) => {
       setConnections(value);
-      setAiProvider(value.ai.provider || 'OpenAI');
-      setAiModel(value.ai.model);
-      setAiBaseUrl(value.ai.baseUrl);
+      setAiProvider('Google Gemini API');
+      setAiModel('gemini-3.5-flash-lite');
       setLineChannelAccessToken('');
       setLineChannelSecret('');
-      setAiApiKey('');
     }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : '接続設定を取得できませんでした。'));
   }, [organizationId]);
   const login = async () => {
@@ -114,12 +126,26 @@ export const App = () => {
     try {
       const saved = await api.saveOrganizationConnections(organizationId, {
         line: { channelAccessToken: lineChannelAccessToken || undefined, channelSecret: lineChannelSecret || undefined },
-        ai: { provider: aiProvider, apiKey: aiApiKey || undefined, model: aiModel, baseUrl: aiBaseUrl || undefined },
+        ai: {
+          provider: aiProvider,
+          apiKey: geminiApiKey || undefined,
+          model: aiModel,
+        },
       });
       setConnections(saved);
-      setLineChannelAccessToken(''); setLineChannelSecret(''); setAiApiKey('');
+      setLineChannelAccessToken(''); setLineChannelSecret(''); setGeminiApiKey('');
     } catch (cause) { setError(cause instanceof Error ? cause.message : '接続設定を保存できませんでした。'); }
     finally { setSettingsBusy(false); }
+  };
+  const testGeminiConnection = async () => {
+    if (!organizationId) return;
+    setGeminiTestBusy(true); setGeminiTestResult(''); setError('');
+    try {
+      const result = await api.testGeminiConnection(organizationId, geminiTestPrompt);
+      setGeminiTestResult(result.text);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Gemini API の接続テストに失敗しました。');
+    } finally { setGeminiTestBusy(false); }
   };
   const logout = async () => {
     setBusy(true);
@@ -149,6 +175,6 @@ export const App = () => {
     {summary && <div className="run-result"><CheckCircle2 size={18} /><span>今回: {summary.created}件を予定化、{summary.skipped}件を保留、{summary.exceptions}件でエラー</span></div>}
     <div className="automation-guide"><CalendarDays size={19} /><div><strong>予定として認識する書式</strong><p>メールの件名または本文に <code>2026/08/03 19:00-21:00</code> または <code>2026年8月3日 19:00〜21:00</code> のように、日付と開始・終了時刻を含めてください。</p></div></div>
     <div className="automation-counts"><span><b>{automation.created}</b> 予定を作成</span><span><b>{automation.skipped}</b> 書式不足</span><span><b>{automation.exceptions}</b> エラー</span></div></>}
-    {organization && <section className="organization-settings"><div className="settings-heading"><div><p className="eyebrow">ORGANIZATION SETTINGS</p><h2>{organization.name} の接続設定</h2></div>{member && member.organizations.length > 1 && <select value={organizationId} onChange={(event) => setOrganizationId(event.target.value)}><option value="">組織を選択</option>{member.organizations.map((value) => <option key={value.organizationId} value={value.organizationId}>{value.name}</option>)}</select>}</div><p className="settings-description">組織ごとに異なる LINE Messaging API と AI API を登録します。秘密情報は暗号化して保存され、画面には再表示されません。</p>{connections && <div className="settings-form"><div className="settings-section"><div className="settings-section-title"><KeyRound size={17} /><strong>LINE Messaging API</strong></div><label>チャネルアクセストークン<input type="password" value={lineChannelAccessToken} onChange={(event) => setLineChannelAccessToken(event.target.value)} placeholder={connections.line.channelAccessTokenConfigured ? '登録済み（変更する場合のみ入力）' : 'チャネルアクセストークン'} autoComplete="new-password" /></label><label>チャネルシークレット<input type="password" value={lineChannelSecret} onChange={(event) => setLineChannelSecret(event.target.value)} placeholder={connections.line.channelSecretConfigured ? '登録済み（変更する場合のみ入力）' : 'チャネルシークレット'} autoComplete="new-password" /></label></div><div className="settings-section"><div className="settings-section-title"><KeyRound size={17} /><strong>AI API</strong></div><label>プロバイダー<select value={aiProvider} onChange={(event) => setAiProvider(event.target.value)}><option>OpenAI</option><option>Anthropic</option><option>Google</option><option>Other</option></select></label><label>APIキー<input type="password" value={aiApiKey} onChange={(event) => setAiApiKey(event.target.value)} placeholder={connections.ai.apiKeyConfigured ? '登録済み（変更する場合のみ入力）' : 'APIキー'} autoComplete="new-password" /></label><label>モデル<input value={aiModel} onChange={(event) => setAiModel(event.target.value)} placeholder="例: gpt-4.1-mini" /></label><label>Base URL（任意）<input value={aiBaseUrl} onChange={(event) => setAiBaseUrl(event.target.value)} placeholder="既定のAPIエンドポイントを使う場合は空欄" /></label></div><button className="primary" onClick={() => void saveConnections()} disabled={settingsBusy}><Save size={16} />{settingsBusy ? '保存中…' : '接続設定を保存'}</button></div>}</section>}
+    {organization && <section className="organization-settings"><div className="settings-heading"><div><p className="eyebrow">ORGANIZATION SETTINGS</p><h2>{organization.name} の接続設定</h2></div>{member && member.organizations.length > 1 && <select value={organizationId} onChange={(event) => setOrganizationId(event.target.value)}><option value="">組織を選択</option>{member.organizations.map((value) => <option key={value.organizationId} value={value.organizationId}>{value.name}</option>)}</select>}</div><p className="settings-description">組織ごとに異なる LINE Messaging API と Gemini API を登録します。秘密情報は暗号化して保存され、画面には再表示されません。</p>{connections && <div className="settings-form"><div className="settings-section"><div className="settings-section-title"><KeyRound size={17} /><strong>LINE Messaging API</strong></div><label>チャネルアクセストークン<SecretInput label="チャネルアクセストークン" value={lineChannelAccessToken} onChange={setLineChannelAccessToken} placeholder={connections.line.channelAccessTokenConfigured ? '登録済み（変更する場合のみ入力）' : 'チャネルアクセストークン'} /></label><label>チャネルシークレット<SecretInput label="チャネルシークレット" value={lineChannelSecret} onChange={setLineChannelSecret} placeholder={connections.line.channelSecretConfigured ? '登録済み（変更する場合のみ入力）' : 'チャネルシークレット'} /></label></div><div className="settings-section"><div className="settings-section-title"><KeyRound size={17} /><strong>Gemini API</strong></div><p className="gemini-note"><a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">Google AI Studio で Gemini API キーを作成</a>し、ここに貼り付けてください。キーは暗号化して保存され、画面には再表示されません。</p><label>Gemini API キー<SecretInput label="Gemini API キー" value={geminiApiKey} onChange={setGeminiApiKey} placeholder={connections.ai.apiKeyConfigured ? '登録済み（変更する場合のみ入力）' : 'AIza…'} /></label><p className="gemini-status">モデル: gemini-3.5-flash-lite（自動選択）</p>{connections.ai.apiKeyConfigured && <div className="gemini-test"><label>Gemini への質問<textarea value={geminiTestPrompt} onChange={(event) => setGeminiTestPrompt(event.target.value)} maxLength={10000} /></label><button className="secondary" onClick={() => void testGeminiConnection()} disabled={geminiTestBusy}>{geminiTestBusy ? "Gemini に問い合わせ中…" : "質問して接続をテスト"}</button>{geminiTestResult && <pre>{geminiTestResult}</pre>}</div>}</div><button className="primary" onClick={() => void saveConnections()} disabled={settingsBusy || (!geminiApiKey && !connections.ai.apiKeyConfigured)}><Save size={16} />{settingsBusy ? '保存中…' : 'Gemini API キーを保存'}</button></div>}</section>}
   </section></main>;
 };

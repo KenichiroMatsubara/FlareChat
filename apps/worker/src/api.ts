@@ -31,6 +31,7 @@ const PROVISIONING_WINDOW_MS = 24 * 60 * 60 * 1_000;
 const SESSION_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
 const PASSKEY_WINDOW_MS = 5 * 60 * 1_000;
 const GOOGLE_LOGIN_WINDOW_MS = 10 * 60 * 1_000;
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
 
 type OrganizationCredential = Record<string, string>;
 
@@ -45,6 +46,11 @@ interface OrganizationConnectionInput {
     model?: string;
     baseUrl?: string;
   };
+}
+
+interface GeminiGenerateContentResponse {
+  candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  error?: { message?: string };
 }
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -179,8 +185,15 @@ const connectionView = (line: OrganizationCredential, ai: OrganizationCredential
     provider: ai.provider ?? '',
     model: ai.model ?? '',
     baseUrl: ai.baseUrl ?? '',
+    authMode: ai.authMode ?? 'api_key',
+    gcpProjectId: ai.gcpProjectId ?? '',
+    gcpLocation: ai.gcpLocation ?? '',
+    oauthConfigured: Boolean(ai.oauthRefreshToken),
   },
 });
+
+export const generatedText = (response: GeminiGenerateContentResponse): string =>
+  response.candidates?.flatMap((candidate) => candidate.content?.parts ?? []).map((part) => part.text ?? '').join('').trim() ?? '';
 
 app.get('/api/health', (context) => json(context, { status: 'ok', service: 'mail-automation', time: now() }));
 
@@ -559,10 +572,11 @@ app.put('/api/organizations/:organizationId/connections', async (context) => {
       connectionCredential(existingLine ?? null, organizationKey, organizationId, 'line'),
       connectionCredential(existingAi ?? null, organizationKey, organizationId, 'ai'),
     ]);
-    const nextLine = { ...lineCredential, ...input.line };
-    const nextAi = { ...aiCredential, ...input.ai };
-    if (!nextLine.channelAccessToken || !nextLine.channelSecret) return failure(context, 'LINEのチャネルアクセストークンとチャネルシークレットを入力してください。');
-    if (!nextAi.apiKey || !nextAi.provider || !nextAi.model) return failure(context, 'AIのプロバイダー、APIキー、モデルを入力してください。');
+    const nextLine: OrganizationCredential = { ...lineCredential, ...input.line };
+    const nextAi: OrganizationCredential = { ...aiCredential, ...input.ai };
+    const updatingLine = Boolean(input.line?.channelAccessToken || input.line?.channelSecret);
+    if (updatingLine && (!nextLine.channelAccessToken || !nextLine.channelSecret)) return failure(context, 'LINEのチャネルアクセストークンとチャネルシークレットを両方入力してください。');
+    if (nextAi.provider !== 'Google Gemini API' || !nextAi.apiKey || !nextAi.model) return failure(context, 'Gemini API キーを入力してください。');
     const timestamp = now();
     const lineEnvelope = await encrypt(JSON.stringify(nextLine), organizationKey, connectionContext(organizationId, 'line'));
     const aiEnvelope = await encrypt(JSON.stringify(nextAi), organizationKey, connectionContext(organizationId, 'ai'));
@@ -593,6 +607,167 @@ app.put('/api/organizations/:organizationId/connections', async (context) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : '接続設定を保存できませんでした。';
     return failure(context, message, message === 'Authentication is required.' ? 401 : 403);
+  }
+});
+
+app.post('/api/organizations/:organizationId/connections/gemini-oauth', async (context) => {
+  return failure(context, 'Google Cloud OAuth 接続は廃止されました。Google AI Studio の Gemini API キーを設定してください。', 410);
+  /*
+  try {
+    const organizationId = context.req.param('organizationId');
+    const access = await organizationForRequest(context.req.raw, context.env, organizationId);
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, '接続設定を変更できる権限がありません。', 403);
+    const invalid = configurationError(context.env);
+    if (invalid) return failure(context, invalid, 503);
+    const input = await context.req.json<GeminiOAuthInput>();
+    const projectId = input.projectId?.trim() ?? '';
+    if (!validProjectId(projectId)) return failure(context, 'Gemini を利用する GCP プロジェクト ID を入力してください。');
+    const id = crypto.randomUUID();
+    const state = randomToken();
+    const pkce = await createPkce();
+    const key = await masterKey(context.env.CREDENTIAL_MASTER_KEY);
+    const [verifierEnvelope, configurationEnvelope] = await Promise.all([
+      encrypt(pkce.verifier, key, `gemini-oauth-pkce:${id}`),
+      encrypt(JSON.stringify({ projectId }), key, `gemini-oauth-configuration:${id}`),
+    ]);
+    await context.env.CONTROL_DB.prepare(
+      'INSERT INTO gemini_oauth_states (id, organization_id, identity_id, state_hash, pkce_verifier_envelope, configuration_envelope, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    ).bind(id, organizationId, access.session.identity_id, await sha256(state), JSON.stringify(verifierEnvelope), JSON.stringify(configurationEnvelope), expiresIn(GEMINI_OAUTH_WINDOW_MS), now()).run();
+    return json(context, {
+      authorizationUrl: googleAuthorizationUrl({
+        clientId: context.env.GOOGLE_CLIENT_ID,
+        redirectUri: geminiOAuthRedirectUri(context.env),
+        state,
+        challenge: pkce.challenge,
+        scopes: GEMINI_AGENT_PLATFORM_SCOPES,
+      }),
+    }, 201);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Gemini Enterprise Agent Platform OAuth を開始できませんでした。';
+    return failure(context, message, message === 'Authentication is required.' ? 401 : 403);
+  }
+  */
+});
+
+app.get('/oauth/gemini/callback', async (context) => {
+  const discontinuedTarget = new URL('/', context.env.WEB_ORIGIN || context.env.APP_URL);
+  discontinuedTarget.searchParams.set('error', 'Google Cloud OAuth 接続は廃止されました。Google AI Studio の Gemini API キーを設定してください。');
+  return context.redirect(discontinuedTarget.toString());
+  /*
+  const target = new URL('/', context.env.WEB_ORIGIN || context.env.APP_URL);
+  const code = context.req.query('code');
+  const state = context.req.query('state');
+  if (!code || !state) {
+    target.searchParams.set('error', 'Gemini Enterprise Agent Platform の Google Cloud 認可がキャンセルされました。');
+    return context.redirect(target.toString());
+  }
+  const grant = await context.env.CONTROL_DB.prepare(
+    'SELECT * FROM gemini_oauth_states WHERE state_hash = ? AND expires_at > ?',
+  ).bind(await sha256(state), now()).first<GeminiOAuthStateRow>();
+  if (!grant) {
+    target.searchParams.set('error', 'Gemini Enterprise Agent Platform OAuth の有効期限が切れました。設定画面からもう一度接続してください。');
+    return context.redirect(target.toString());
+  }
+  try {
+    const key = await masterKey(context.env.CREDENTIAL_MASTER_KEY);
+    const [verifier, configurationText] = await Promise.all([
+      decrypt(JSON.parse(grant.pkce_verifier_envelope), key, `gemini-oauth-pkce:${grant.id}`),
+      decrypt(JSON.parse(grant.configuration_envelope), key, `gemini-oauth-configuration:${grant.id}`),
+    ]);
+    const configuration = JSON.parse(configurationText) as Required<GeminiOAuthInput>;
+    const tokenSet = await exchangeGoogleCode({
+      code,
+      verifier,
+      clientId: context.env.GOOGLE_CLIENT_ID,
+      clientSecret: context.env.GOOGLE_CLIENT_SECRET,
+      redirectUri: geminiOAuthRedirectUri(context.env),
+    });
+    if (!tokenSet.scopes.includes(GEMINI_AGENT_PLATFORM_SCOPES[0])) throw new Error('Gemini Enterprise Agent Platform に必要な cloud-platform 権限が承認されませんでした。');
+    const membership = await context.env.CONTROL_DB.prepare(
+      `SELECT m.role, o.id, o.status, o.binding_name
+       FROM members m JOIN organizations o ON o.id = m.organization_id
+       WHERE m.identity_id = ? AND m.organization_id = ? AND m.state = 'active'`,
+    ).bind(grant.identity_id, grant.organization_id).first<{ role: string; id: string; status: string; binding_name: string }>();
+    if (!membership || membership.status !== 'active' || (membership.role !== 'owner' && membership.role !== 'admin')) throw new Error('この組織の Gemini Enterprise Agent Platform 接続を保存する権限がありません。');
+    const keyRecord = await context.env.CONTROL_DB.prepare('SELECT master_key_version, wrapped_key_envelope FROM organization_keys WHERE organization_id = ?')
+      .bind(grant.organization_id).first<{ master_key_version: string; wrapped_key_envelope: string }>();
+    if (!keyRecord) throw new Error('組織暗号鍵が見つかりません。');
+    const organizationKey = await unwrapOrganizationKey(
+      { masterKeyVersion: keyRecord.master_key_version, envelope: JSON.parse(keyRecord.wrapped_key_envelope) },
+      key,
+      grant.organization_id,
+    );
+    const credential: OrganizationCredential = {
+      provider: 'Google Gemini Enterprise Agent Platform', authMode: 'oauth', model: DEFAULT_GEMINI_MODEL,
+      gcpProjectId: configuration.projectId, gcpLocation: 'global',
+      oauthAccessToken: tokenSet.accessToken, oauthRefreshToken: tokenSet.refreshToken,
+      oauthExpiresAt: tokenSet.expiresAt, oauthScopes: tokenSet.scopes.join(' '),
+    };
+    const envelope = JSON.stringify(await encrypt(JSON.stringify(credential), organizationKey, connectionContext(grant.organization_id, 'ai')));
+    const timestamp = now();
+    const database = organizationDatabase(context.env, membership.binding_name);
+    const existing = database
+      ? await database.prepare("SELECT * FROM connections WHERE kind = 'ai' AND status = 'active' LIMIT 1").first<ConnectionRow>()
+      : await context.env.CONTROL_DB.prepare("SELECT id, organization_id, kind, label, credential, status FROM organization_connections WHERE organization_id = ? AND kind = 'ai' AND status = 'active' LIMIT 1")
+        .bind(grant.organization_id).first<OrganizationConnectionRow>();
+    if (existing) {
+      if (database) await database.prepare("UPDATE connections SET label = ?, credential = ?, status = 'active', updated_at = ? WHERE id = ?")
+        .bind('Google Gemini Enterprise Agent Platform (OAuth)', envelope, timestamp, existing.id).run();
+      else await context.env.CONTROL_DB.prepare("UPDATE organization_connections SET label = ?, credential = ?, status = 'active', updated_at = ? WHERE id = ?")
+        .bind('Google Gemini Enterprise Agent Platform (OAuth)', envelope, timestamp, existing.id).run();
+    } else if (database) {
+      await database.prepare("INSERT INTO connections (id, kind, label, credential, status, created_at, updated_at) VALUES (?, 'ai', ?, ?, 'active', ?, ?)")
+        .bind(crypto.randomUUID(), 'Google Gemini Enterprise Agent Platform (OAuth)', envelope, timestamp, timestamp).run();
+    } else {
+      await context.env.CONTROL_DB.prepare("INSERT INTO organization_connections (id, organization_id, kind, label, credential, status, created_at, updated_at) VALUES (?, ?, 'ai', ?, ?, 'active', ?, ?)")
+        .bind(crypto.randomUUID(), grant.organization_id, 'Google Gemini Enterprise Agent Platform (OAuth)', envelope, timestamp, timestamp).run();
+    }
+    await context.env.CONTROL_DB.prepare('DELETE FROM gemini_oauth_states WHERE id = ?').bind(grant.id).run();
+    target.searchParams.set('gemini', 'connected');
+  } catch (error) {
+    await context.env.CONTROL_DB.prepare('DELETE FROM gemini_oauth_states WHERE id = ?').bind(grant.id).run();
+    target.searchParams.set('error', error instanceof Error ? error.message : 'Gemini Enterprise Agent Platform OAuth 接続に失敗しました。');
+  }
+  return context.redirect(target.toString());
+  */
+});
+
+app.post('/api/organizations/:organizationId/connections/gemini/test', async (context) => {
+  try {
+    const organizationId = context.req.param('organizationId');
+    const access = await organizationForRequest(context.req.raw, context.env, organizationId);
+    const input = await context.req.json<{ prompt?: string }>();
+    const prompt = input.prompt?.trim() ?? '';
+    if (!prompt || prompt.length > 10_000) return failure(context, 'テスト用の質問は 1〜10,000 文字で入力してください。');
+    const existing = access.database
+      ? await access.database.prepare("SELECT * FROM connections WHERE kind = 'ai' AND status = 'active' LIMIT 1").first<ConnectionRow>()
+      : await context.env.CONTROL_DB.prepare("SELECT id, organization_id, kind, label, credential, status FROM organization_connections WHERE organization_id = ? AND kind = 'ai' AND status = 'active' LIMIT 1")
+        .bind(organizationId).first<OrganizationConnectionRow>();
+    if (!existing) return failure(context, 'Gemini Enterprise Agent Platform の OAuth 接続がありません。', 409);
+    const keyRecord = await context.env.CONTROL_DB.prepare('SELECT master_key_version, wrapped_key_envelope FROM organization_keys WHERE organization_id = ?')
+      .bind(organizationId).first<{ master_key_version: string; wrapped_key_envelope: string }>();
+    if (!keyRecord) throw new Error('組織暗号鍵が見つかりません。');
+    const deploymentKey = await masterKey(context.env.CREDENTIAL_MASTER_KEY);
+    const organizationKey = await unwrapOrganizationKey(
+      { masterKeyVersion: keyRecord.master_key_version, envelope: JSON.parse(keyRecord.wrapped_key_envelope) },
+      deploymentKey,
+      organizationId,
+    );
+    const credential = await connectionCredential(existing, organizationKey, organizationId, 'ai');
+    if (credential.provider !== 'Google Gemini API' || !credential.apiKey) return failure(context, 'Gemini API キーを設定してください。', 409);
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(credential.model || DEFAULT_GEMINI_MODEL)}:generateContent`, {
+      method: 'POST',
+      headers: { 'x-goog-api-key': credential.apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] }),
+    });
+    const body = await response.json() as GeminiGenerateContentResponse;
+    if (!response.ok) throw new Error(body.error?.message ?? 'Gemini API が応答しませんでした。');
+    const text = generatedText(body);
+    if (!text) throw new Error('Gemini API からテキスト応答を受け取れませんでした。');
+    return json(context, { text, model: credential.model || DEFAULT_GEMINI_MODEL });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Gemini API の接続テストに失敗しました。';
+    return failure(context, message, message === 'Authentication is required.' ? 401 : 500);
   }
 });
 

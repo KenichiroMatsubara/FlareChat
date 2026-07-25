@@ -35,4 +35,5 @@ describe('Automation Inbox Google grant', () => {
     expect(url.searchParams.get('prompt')).toBe('consent');
     expect(url.searchParams.get('scope')).toContain('https://www.googleapis.com/auth/gmail.readonly');
   });
+
 });
