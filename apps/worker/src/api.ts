@@ -1150,6 +1150,15 @@ app.post('/api/public/organizations/:organizationId/attendance/:token', async (c
   }
 });
 
+app.get('/api/public/organizations/:organizationId/attendance/:token', async (context) => {
+  const organization = await context.env.CONTROL_DB.prepare("SELECT binding_name FROM organizations WHERE id = ? AND status = 'active'").bind(context.req.param('organizationId')).first<{ binding_name: string }>();
+  const database = organization ? organizationDatabase(context.env, organization.binding_name) : null;
+  if (!database) return failure(context, 'Attendance link was not found.', 404);
+  const row = await database.prepare('SELECT event_id, status, comment FROM attendance WHERE token = ? AND revoked_at IS NULL').bind(context.req.param('token')).first<{ event_id: string; status: string; comment: string }>();
+  if (!row) return failure(context, 'Attendance link was not found.', 404);
+  return json(context, { eventId: row.event_id, status: row.status, comment: row.comment });
+});
+
 app.patch('/api/organizations/:organizationId/events/:eventId', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
