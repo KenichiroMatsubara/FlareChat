@@ -475,6 +475,12 @@ describe('Organization membership', () => {
 });
 
 describe('Public attendance', () => {
+  it('shows only the linked attendance state and comment to the public token holder', async () => {
+    const controlDatabase={prepare:(_s:string)=>({bind:(..._v:unknown[])=>({first:async()=>({binding_name:'ORG_ORGANIZATION1'})})})} as unknown as D1Database;
+    const organizationDatabase={prepare:(_s:string)=>({bind:(..._v:unknown[])=>({first:async()=>({event_id:'event-1',status:'attending',comment:'参加します'})})})} as unknown as D1Database;
+    const response=await app.fetch(new Request('https://app.example.com/api/public/organizations/organization-1/attendance/token-1'),{...setupEnvironment(),CONTROL_DB:controlDatabase,ORG_ORGANIZATION1:organizationDatabase});
+    await expect(response.json()).resolves.toMatchObject({data:{eventId:'event-1',status:'attending',comment:'参加します'}});
+  });
   it('lets an Operator issue an opaque Event-scoped attendance link for one Recipient', async () => {
     const writes: unknown[][] = [];
     const controlDatabase = {
