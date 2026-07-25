@@ -946,6 +946,21 @@ app.get('/api/organizations/:organizationId/dashboard', async (context) => {
   }
 });
 
+app.patch('/api/organizations/:organizationId/members/:identityId', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner') return failure(context, 'Only an Owner can change member roles.', 403);
+    const input = await context.req.json<{ role?: string }>();
+    if (!input.role || !['owner', 'admin', 'operator', 'viewer'].includes(input.role)) return failure(context, 'Unsupported member role.');
+    const result = await context.env.CONTROL_DB.prepare('UPDATE members SET role = ?, updated_at = ? WHERE organization_id = ? AND identity_id = ? AND state = \'active\'')
+      .bind(input.role, now(), access.organization.id, context.req.param('identityId')).run();
+    if (result.meta.changes === 0) return failure(context, 'Member was not found.', 404);
+    return json(context, { identityId: context.req.param('identityId'), role: input.role });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Member could not be updated.', 409);
+  }
+});
+
 app.all('/api/*', async (context) => {
   const session = await sessionFromRequest(context.req.raw, context.env);
   if (!session) return failure(context, 'Authentication is required.', 401);

@@ -285,3 +285,28 @@ describe('Organization dashboard', () => {
     await expect(response.json()).resolves.toMatchObject({ data: { activeRules: 2, upcomingEvents: 3, pendingJobs: 4, exceptions: 5, lastSyncedAt: '2026-07-25T00:00:00.000Z' } });
   });
 });
+
+describe('Organization membership', () => {
+  it('lets an Owner change a member role without touching another Organization', async () => {
+    const writes: unknown[][] = [];
+    const controlDatabase = {
+      prepare: (sql: string) => ({
+        bind: (...values: unknown[]) => ({
+          first: async () => {
+            if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'owner-identity', email: 'owner@example.com', display_name: 'Owner' };
+            if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'owner' };
+            return null;
+          },
+          run: async () => { writes.push(values); return { meta: { changes: 1 } }; },
+        }),
+      }),
+    } as unknown as D1Database;
+    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/members/member-identity', {
+      method: 'PATCH', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ role: 'operator' }),
+    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ data: { identityId: 'member-identity', role: 'operator' } });
+    expect(writes[0]).toContain('organization-1');
+  });
+});
