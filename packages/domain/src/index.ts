@@ -114,3 +114,5 @@ export { canUpdateAttendance } from './attendance';
 export type { AttendanceLinkCheck } from './attendance';
 export { MAX_ATTACHMENT_BYTES, MAX_SOURCE_MESSAGE_ATTACHMENT_BYTES, validateAttachmentIntake } from './attachments';
 export type { AttachmentIntakeResult } from './attachments';
+export { MAX_DELIVERY_ATTEMPTS, MAX_RETRY_WINDOW_MS, nextRetry } from './retry';
+export type { RetryDecision } from './retry';
