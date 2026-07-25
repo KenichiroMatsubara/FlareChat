@@ -110,3 +110,5 @@ export interface PasskeyCreationOptions {
 
 export { batchLineMessages } from './line';
 export type { LineBatch, LineMessage } from './line';
+export { canUpdateAttendance } from './attendance';
+export type { AttendanceLinkCheck } from './attendance';
