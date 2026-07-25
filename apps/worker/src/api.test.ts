@@ -582,4 +582,41 @@ describe('LINE destination webhook', () => {
     expect(writes).toHaveLength(2);
     expect(writes.flat()).toEqual(expect.arrayContaining(['user-1', 'group-1']));
   });
+
+  it('issues a short-lived link and consumes it only once to associate a discovered destination', async () => {
+    const writes: Array<{ sql: string; values: unknown[] }> = [];
+    const controlDatabase = {
+      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
+        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'operator-identity', email: 'operator@example.com', display_name: 'Operator' };
+        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'operator' };
+        if (sql.includes('FROM organizations')) return { id: 'organization-1', status: 'active', binding_name: 'ORG_ORGANIZATION1' };
+        return null;
+      } }) }),
+    } as unknown as D1Database;
+    let issuedToken = '';
+    const organizationDatabase = {
+      prepare: (sql: string) => ({ bind: (...values: unknown[]) => ({
+        first: async () => {
+          if (sql.includes('FROM recipient_link_tokens')) return { recipient_profile_id: 'recipient-1', expires_at: '2099-01-01T00:00:00.000Z', used_at: null };
+          if (sql.includes('FROM line_destinations')) return { id: 'destination-1' };
+          return null;
+        },
+        run: async () => { writes.push({ sql, values }); if (sql.includes('INSERT INTO recipient_link_tokens')) issuedToken = values[0] as string; return { meta: { changes: 1 } }; },
+      }) }),
+    } as unknown as D1Database;
+    const environment = { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase };
+    const issued = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/recipients/recipient-1/line-links', {
+      method: 'POST', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+    }), environment);
+
+    expect(issued.status).toBe(201);
+    expect(issuedToken.length).toBeGreaterThan(20);
+    const consumed = await app.fetch(new Request(`https://app.example.com/api/public/organizations/organization-1/line-links/${issuedToken}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ destinationId: 'user-1' }),
+    }), environment);
+
+    expect(consumed.status).toBe(200);
+    expect(writes.some((write) => write.sql.includes('INSERT OR IGNORE INTO recipient_line_destinations'))).toBe(true);
+    expect(writes.some((write) => write.sql.includes('UPDATE recipient_link_tokens SET used_at'))).toBe(true);
+  });
 });

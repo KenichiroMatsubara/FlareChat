@@ -33,6 +33,7 @@ const PROVISIONING_WINDOW_MS = 24 * 60 * 60 * 1_000;
 const SESSION_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
 const PASSKEY_WINDOW_MS = 5 * 60 * 1_000;
 const GOOGLE_LOGIN_WINDOW_MS = 10 * 60 * 1_000;
+const RECIPIENT_LINK_WINDOW_MS = 15 * 60 * 1_000;
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
 
 type OrganizationCredential = Record<string, string>;
@@ -1011,6 +1012,30 @@ app.patch('/api/organizations/:organizationId/recipients/:recipientId', async (c
   }
 });
 
+app.post('/api/organizations/:organizationId/recipients/:recipientId/line-links', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Recipient Links can only be issued by an Owner, Admin, or Operator.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const token = randomToken(24);
+    const timestamp = now();
+    const expiresAt = expiresIn(RECIPIENT_LINK_WINDOW_MS);
+    await access.database.prepare('UPDATE recipient_link_tokens SET used_at = ? WHERE recipient_profile_id = ? AND used_at IS NULL')
+      .bind(timestamp, context.req.param('recipientId')).run();
+    await access.database.prepare(
+      'INSERT INTO recipient_link_tokens (token, recipient_profile_id, expires_at, used_at, created_at) VALUES (?, ?, ?, NULL, ?)',
+    ).bind(token, context.req.param('recipientId'), expiresAt, timestamp).run();
+    return json(context, {
+      recipientProfileId: context.req.param('recipientId'),
+      token,
+      expiresAt,
+      linkUrl: `${context.env.APP_URL.replace(/\/$/u, '')}/api/public/organizations/${encodeURIComponent(access.organization.id)}/line-links/${encodeURIComponent(token)}`,
+    }, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Recipient Link could not be issued.', 409);
+  }
+});
+
 app.post('/api/organizations/:organizationId/recipients/import/preview', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
@@ -1244,6 +1269,36 @@ app.post('/api/public/organizations/:organizationId/line/webhook', async (contex
     return json(context, { discovered: destinations.length });
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'LINE webhook could not be processed.', 400);
+  }
+});
+
+app.post('/api/public/organizations/:organizationId/line-links/:token', async (context) => {
+  try {
+    const organizationId = context.req.param('organizationId');
+    const organization = await context.env.CONTROL_DB.prepare(
+      "SELECT id, status, binding_name FROM organizations WHERE id = ? AND status = 'active'",
+    ).bind(organizationId).first<{ id: string; status: string; binding_name: string }>();
+    const database = organization ? organizationDatabase(context.env, organization.binding_name) : null;
+    if (!database) return failure(context, 'Recipient Link was not found.', 404);
+    const input = await context.req.json<{ destinationId?: string }>();
+    if (!input.destinationId?.trim()) return failure(context, 'A discovered LINE Destination is required.');
+    const link = await database.prepare(
+      'SELECT recipient_profile_id, expires_at, used_at FROM recipient_link_tokens WHERE token = ? AND used_at IS NULL AND expires_at > ?',
+    ).bind(context.req.param('token'), now()).first<{ recipient_profile_id: string; expires_at: string; used_at: string | null }>();
+    if (!link) return failure(context, 'Recipient Link has expired or was already used.', 410);
+    const destination = await database.prepare("SELECT id FROM line_destinations WHERE destination_id = ? AND status = 'discovered' LIMIT 1")
+      .bind(input.destinationId.trim()).first<{ id: string }>();
+    if (!destination) return failure(context, 'LINE Destination was not found.', 404);
+    const timestamp = now();
+    await database.prepare(
+      'INSERT OR IGNORE INTO recipient_line_destinations (recipient_profile_id, line_destination_id, created_at) VALUES (?, ?, ?)',
+    ).bind(link.recipient_profile_id, destination.id, timestamp).run();
+    const consumed = await database.prepare('UPDATE recipient_link_tokens SET used_at = ? WHERE token = ? AND used_at IS NULL')
+      .bind(timestamp, context.req.param('token')).run();
+    if (consumed.meta.changes === 0) return failure(context, 'Recipient Link was already used.', 410);
+    return json(context, { recipientProfileId: link.recipient_profile_id, destinationId: input.destinationId.trim() });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Recipient Link could not be consumed.', 409);
   }
 });
 
