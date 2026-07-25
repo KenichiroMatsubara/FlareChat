@@ -118,3 +118,5 @@ export { MAX_DELIVERY_ATTEMPTS, MAX_RETRY_WINDOW_MS, nextRetry } from './retry';
 export type { RetryDecision } from './retry';
 export { CAPACITY_CRITICAL_THRESHOLD, CAPACITY_WARNING_THRESHOLD, capacityWarning } from './capacity';
 export type { CapacityWarning } from './capacity';
+export { canConsumeRecipientLink } from './recipient-links';
+export type { RecipientLinkCheck } from './recipient-links';
