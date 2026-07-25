@@ -1,0 +1,28 @@
+{
+  "name": "mail-automation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n worker,web -c cyan,magenta \"npm run dev -w @mail/worker\" \"npm run dev -w @mail/web\"",
+    "build": "npm run build -w @mail/domain && npm run build -w @mail/web && npm run build -w @mail/worker",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "db:local": "npm run db:local -w @mail/worker",
+    "deploy": "npm run build && npm run deploy -w @mail/worker"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260722.1",
+    "concurrently": "^9.2.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.26.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

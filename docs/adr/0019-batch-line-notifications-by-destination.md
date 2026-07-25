@@ -1,0 +1,3 @@
+# Batch LINE notifications by destination
+
+Pending LINE notifications for the same LINE Connection and LINE Destination wait for at most 60 seconds, then are ordered and packed into Delivery Batches of at most five message objects per Messaging API request; overflow is split into additional requests. Each notification keeps its own Delivery Record, while the batch stores the shared LINE request ID and retry key. LINE counts recipients rather than message objects, so packing up to five objects avoids additional message-count usage for the same recipient. Notifications explicitly marked urgent bypass the batching delay.

@@ -1,0 +1,17 @@
+{
+  "name": "@mail/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "build": "tsc -p tsconfig.json && wrangler deploy --dry-run",
+    "typecheck": "tsc -p tsconfig.json",
+    "db:local": "wrangler d1 migrations apply CONTROL_DB --local && wrangler d1 migrations apply ORG_DB --local",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@mail/domain": "*",
+    "hono": "^4.8.12"
+  }
+}

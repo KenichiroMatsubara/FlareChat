@@ -1,0 +1,37 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "mail-automation",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-24",
+  "assets": {
+    "directory": "../web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/oauth/*", "/attendance/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "CONTROL_DB",
+      "database_name": "mail-automation-control",
+      "database_id": "00000000-0000-0000-0000-000000000001",
+      "migrations_dir": "migrations/control"
+    },
+    {
+      "binding": "ORG_DB",
+      "database_name": "mail-automation-development",
+      "database_id": "00000000-0000-0000-0000-000000000002",
+      "migrations_dir": "migrations/organization"
+    }
+  ],
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+  "vars": {
+    "APP_URL": "http://localhost:8787",
+    "GOOGLE_CLIENT_ID": "",
+    "ACTIVE_ORGANIZATION_LIMIT": "10"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
