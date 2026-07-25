@@ -124,3 +124,4 @@ export { ATTENDANCE_REMINDER_DAYS, shouldSendAttendanceReminder } from './remind
 export { classifyEventChange } from './event-changes';
 export type { EventChangeKind } from './event-changes';
 export { shouldWriteRecoveryReceipt } from './recovery';
+export { displayRecipientIdentifier } from './privacy';

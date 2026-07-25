@@ -265,7 +265,7 @@ describe('Recipient Profiles', () => {
     const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/recipients', { headers: { Cookie: 'mail_session=session-1' } }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ data: [{ id: 'recipient-1', email: 'guest@example.com' }] });
+    await expect(response.json()).resolves.toMatchObject({ data: [{ id: 'recipient-1', email: '***' }] });
   });
 
   it('lets an Operator create a separate Recipient Profile in the Organization database', async () => {

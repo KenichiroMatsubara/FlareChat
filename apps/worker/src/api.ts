@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 
+import { displayRecipientIdentifier } from '@mail/domain';
 import type { OrganizationSetup, PasskeyCreationOptions } from '@mail/domain';
 
 import { runAutomationForIdentity } from './automation';
@@ -936,7 +937,7 @@ app.get('/api/organizations/:organizationId/recipients', async (context) => {
       id: row.id,
       organizationId: access.organization.id,
       name: row.name,
-      email: row.email,
+      email: displayRecipientIdentifier(access.role as 'owner' | 'admin' | 'operator' | 'viewer', row.email),
       state: row.state,
       tags: JSON.parse(row.tags) as string[],
       createdAt: row.created_at,
