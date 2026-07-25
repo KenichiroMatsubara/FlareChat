@@ -1,4 +1,5 @@
 import { retryProvisioning } from './api';
+import { enqueueDueOrganizationAttendanceReminders } from './attendance-reminders';
 import { runEnabledAutomations } from './automation';
 import type { Bindings } from './types';
 import { nextRetry } from '@mail/domain';
@@ -97,6 +98,7 @@ export const recoverDueOrganizationJobs = async (env: Bindings, dueAt: string): 
 
 export const runDueJobs = async (env: Bindings): Promise<void> => {
   await retryProvisioning(env);
+  await enqueueDueOrganizationAttendanceReminders(env, new Date().toISOString());
   await recoverDueOrganizationJobs(env, new Date().toISOString());
   await runEnabledAutomations(env);
 };
