@@ -1,6 +1,7 @@
 import { decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
 import { fromBase64Url } from './encoding';
 import { extractGeminiEventDetails } from './event-details';
+import { publishDriveAttachment } from './drive-attachments';
 import { refreshGoogleToken } from './google';
 import type { GoogleTokenSet } from './google';
 import type { Bindings, ConnectionRow, GoogleAutomationRow } from './types';
@@ -98,6 +99,15 @@ export const sourceAttachmentSizes = (part: GmailPart | undefined): number[] => 
   if (!part) return [];
   const own = (part.filename || part.body?.attachmentId) && Number.isFinite(part.body?.size) ? [part.body?.size ?? 0] : [];
   return [...own, ...(part.parts?.flatMap(sourceAttachmentSizes) ?? [])];
+};
+
+/** Lists only Gmail file parts that can be copied safely after intake validation. */
+export const sourceAttachments = (part: GmailPart | undefined): Array<{ attachmentId: string; filename: string; mimeType: string; size: number }> => {
+  if (!part) return [];
+  const own = part.filename && part.body?.attachmentId
+    ? [{ attachmentId: part.body.attachmentId, filename: part.filename, mimeType: part.mimeType ?? 'application/octet-stream', size: part.body.size ?? 0 }]
+    : [];
+  return [...own, ...(part.parts?.flatMap(sourceAttachments) ?? [])];
 };
 
 const subjectOf = (part: GmailPart | undefined): string =>
@@ -277,11 +287,35 @@ const processOrganizationMessage = async (
     }),
   });
   if (!event.id) throw new Error('Google Calendar did not return an event ID.');
+  const eventId = crypto.randomUUID();
   await database.prepare(
     "INSERT INTO events (id, organization_id, rule_id, source_message_id, google_event_id, title, starts_at, ends_at, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?)",
-  ).bind(crypto.randomUUID(), organizationId, rule.id, sourceMessageId, event.id, candidate.title, candidate.startsAt, candidate.endsAt, now(), now()).run();
-  await database.prepare("UPDATE source_messages SET state = 'processed', processed_at = ? WHERE id = ?")
-    .bind(now(), sourceMessageId).run();
+  ).bind(eventId, organizationId, rule.id, sourceMessageId, event.id, candidate.title, candidate.startsAt, candidate.endsAt, now(), now()).run();
+  const attachments = sourceAttachments(message.payload);
+  const publications = await Promise.all(attachments.map(async (attachment) => ({
+    attachment,
+    publication: await publishDriveAttachment({ accessToken, gmailMessageId, attachment }),
+  })));
+  for (const { attachment, publication } of publications) {
+    await database.prepare(
+      'INSERT INTO event_attachments (id, event_id, gmail_attachment_id, filename, mime_type, byte_size, drive_file_id, public_url, outcome, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).bind(crypto.randomUUID(), eventId, attachment.attachmentId, attachment.filename, attachment.mimeType, attachment.size, publication.driveFileId, publication.publicUrl, publication.outcome, now()).run();
+    await database.prepare('INSERT INTO deliveries (id, event_id, channel, destination, outcome, external_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .bind(crypto.randomUUID(), eventId, 'drive', attachment.filename, publication.outcome, publication.driveFileId, now()).run();
+  }
+  const publicUrls = publications.flatMap(({ publication }) => publication.publicUrl ? [publication.publicUrl] : []);
+  if (publicUrls.length) {
+    await googleFetch(accessToken, `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(event.id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ description: `Mail Automation が Gmail メッセージ ${gmailMessageId} から作成しました。\n\n添付ファイル:\n${publicUrls.join('\n')}` }),
+    });
+  }
+  if (publications.some(({ publication }) => publication.outcome === 'failed')) {
+    await database.prepare("INSERT INTO exceptions (id, source_message_id, code, message, state, created_at) VALUES (?, ?, 'drive_attachment_publish_failed', ?, 'open', ?)")
+      .bind(crypto.randomUUID(), sourceMessageId, '一部の添付ファイルを公開できませんでした。', now()).run();
+  }
+  await database.prepare("UPDATE source_messages SET state = ?, processed_at = ? WHERE id = ?")
+    .bind(publications.some(({ publication }) => publication.outcome === 'failed') ? 'exception' : 'processed', now(), sourceMessageId).run();
 };
 
 const runOrganizationInbox = async (

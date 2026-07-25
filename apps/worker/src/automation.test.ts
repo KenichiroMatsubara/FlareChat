@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { extractEventCandidate, sourceAttachmentSizes, selectActiveRule, runEnabledAutomations } from './automation';
+import { extractEventCandidate, sourceAttachments, sourceAttachmentSizes, selectActiveRule, runEnabledAutomations } from './automation';
 import { createOrganizationKey, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
 
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -33,6 +33,13 @@ describe('mail event extraction', () => {
       { filename: 'agenda.pdf', body: { size: 20 * 1024 * 1024 } },
       { filename: 'map.png', body: { size: 3 } },
     ] })).toEqual([20 * 1024 * 1024, 3]);
+  });
+
+  it('retains attachment identifiers and MIME metadata for Drive publication', () => {
+    expect(sourceAttachments({ parts: [
+      { filename: 'agenda.pdf', mimeType: 'application/pdf', body: { attachmentId: 'file-1', size: 12 } },
+      { body: { data: 'inline-text', size: 100 } },
+    ] })).toEqual([{ attachmentId: 'file-1', filename: 'agenda.pdf', mimeType: 'application/pdf', size: 12 }]);
   });
 });
 
