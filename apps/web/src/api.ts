@@ -1,3 +1,5 @@
+import type { OrganizationSetup, PasskeyCreationOptions } from '@mail/domain';
+
 interface ApiResult<T> {
   data: T;
 }
@@ -84,6 +86,10 @@ const currentMember = async (): Promise<AuthMe | null> => {
 };
 
 export const api = {
+  startOrganizationSetup: (name: string): Promise<{ authorizationUrl: string }> => request('/api/setup', { method: 'POST', body: JSON.stringify({ name }) }),
+  currentOrganizationSetup: (): Promise<OrganizationSetup | null> => request('/api/setup/current'),
+  setupPasskeyOptions: (ownerEmail: string): Promise<PasskeyCreationOptions> => request('/api/setup/passkey/options', { method: 'POST', body: JSON.stringify({ ownerEmail }) }),
+  verifySetupPasskey: (credential: unknown): Promise<OrganizationSetup> => request('/api/setup/passkey/verify', { method: 'POST', body: JSON.stringify(credential) }),
   googleLogin: (): Promise<{ authorizationUrl: string }> => request('/api/auth/google', { method: 'POST' }),
   passkeyOptions: (email: string): Promise<PasskeyAuthenticationOptions> => request('/api/auth/passkey/options', { method: 'POST', body: JSON.stringify({ email }) }),
   verifyPasskey: (credential: unknown): Promise<{ authenticated: boolean }> => request('/api/auth/passkey/verify', { method: 'POST', body: JSON.stringify(credential) }),

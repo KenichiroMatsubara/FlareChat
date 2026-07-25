@@ -414,13 +414,17 @@ app.post('/api/setup/passkey/options', async (context) => {
   try {
     const setup = validSetup(await setupFromRequest(context.req.raw, context.env), 'awaiting_passkey');
     if (!setup.inbox_address) throw new Error('Setup is missing the Automation Inbox.');
+    const input = await context.req.json<{ ownerEmail?: string }>();
+    const ownerEmail = input.ownerEmail?.trim().toLowerCase();
+    if (!ownerEmail || !ownerEmail.includes('@')) throw new Error('Initial Owner email is required.');
+    if (ownerEmail === setup.inbox_address.toLowerCase()) throw new Error('Initial Owner must be a separate Identity from the Automation Inbox.');
     const challenge = randomToken();
-    await context.env.CONTROL_DB.prepare('UPDATE organization_setups SET passkey_challenge_hash = ?, updated_at = ? WHERE id = ?')
-      .bind(await sha256(challenge), now(), setup.id).run();
+    await context.env.CONTROL_DB.prepare('UPDATE organization_setups SET owner_email = ?, passkey_challenge_hash = ?, updated_at = ? WHERE id = ?')
+      .bind(ownerEmail, await sha256(challenge), now(), setup.id).run();
     const options: PasskeyCreationOptions = {
       challenge,
       rp: { id: context.env.RP_ID, name: 'Mail Automation' },
-      user: { id: randomToken(16), name: setup.inbox_address, displayName: setup.inbox_address },
+      user: { id: randomToken(16), name: ownerEmail, displayName: ownerEmail },
       pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
       timeout: PASSKEY_WINDOW_MS,
       authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
@@ -435,15 +439,16 @@ app.post('/api/setup/passkey/options', async (context) => {
 app.post('/api/setup/passkey/verify', async (context) => {
   try {
     const setup = validSetup(await setupFromRequest(context.req.raw, context.env), 'awaiting_passkey');
-    if (!setup.passkey_challenge_hash || !setup.inbox_address || !setup.google_subject) throw new Error('Passkey registration was not started.');
+    if (!setup.passkey_challenge_hash || !setup.inbox_address || !setup.google_subject || !setup.owner_email) throw new Error('Passkey registration was not started.');
     const credential = await verifyRegistration(await context.req.json(), setup.passkey_challenge_hash, context.env.RP_ID, context.env.WEB_ORIGIN);
     const organizationId = crypto.randomUUID();
-    const identityId = crypto.randomUUID();
+    const existingOwner = await context.env.CONTROL_DB.prepare('SELECT id FROM identities WHERE email = ?').bind(setup.owner_email).first<{ id: string }>();
+    const identityId = existingOwner?.id ?? crypto.randomUUID();
     const bindingName = `ORG_${organizationId.replaceAll('-', '')}`;
     const createdAt = now();
     await context.env.CONTROL_DB.batch([
       context.env.CONTROL_DB.prepare('INSERT INTO organizations (id, name, inbox_address, status, binding_name, created_at, updated_at) VALUES (?, ?, ?, \'provisioning\', ?, ?, ?)').bind(organizationId, setup.name, setup.inbox_address, bindingName, createdAt, createdAt),
-      context.env.CONTROL_DB.prepare('INSERT INTO identities (id, email, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').bind(identityId, setup.inbox_address, setup.inbox_address, createdAt, createdAt),
+      context.env.CONTROL_DB.prepare('INSERT OR IGNORE INTO identities (id, email, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').bind(identityId, setup.owner_email, setup.owner_email, createdAt, createdAt),
       context.env.CONTROL_DB.prepare("INSERT INTO members (organization_id, identity_id, role, state, created_at, updated_at) VALUES (?, ?, 'owner', 'pending', ?, ?)").bind(organizationId, identityId, createdAt, createdAt),
       context.env.CONTROL_DB.prepare('INSERT INTO passkeys (id, identity_id, credential_id, public_key_jwk, sign_count, transports, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(crypto.randomUUID(), identityId, credential.credentialId, JSON.stringify(credential.publicKeyJwk), credential.signCount, JSON.stringify(credential.transports), createdAt),
       context.env.CONTROL_DB.prepare("UPDATE organization_setups SET state = 'provisioning', owner_identity_id = ?, organization_id = ?, binding_name = ?, provisioning_key = ?, provisioning_expires_at = ?, passkey_challenge_hash = NULL, updated_at = ? WHERE id = ?").bind(identityId, organizationId, bindingName, crypto.randomUUID(), expiresIn(PROVISIONING_WINDOW_MS), createdAt, setup.id),
