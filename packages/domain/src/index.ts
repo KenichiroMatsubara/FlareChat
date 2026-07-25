@@ -108,8 +108,8 @@ export interface PasskeyCreationOptions {
   attestation: 'none';
 }
 
-export { batchLineMessages } from './line';
-export type { LineBatch, LineMessage } from './line';
+export { batchLineMessages, discoveredLineDestinations, verifyLineWebhookSignature } from './line';
+export type { LineBatch, LineDestination, LineMessage } from './line';
 export { canUpdateAttendance } from './attendance';
 export type { AttendanceLinkCheck } from './attendance';
 export { MAX_ATTACHMENT_BYTES, MAX_SOURCE_MESSAGE_ATTACHMENT_BYTES, validateAttachmentIntake } from './attachments';

@@ -9,6 +9,15 @@ export interface LineBatch {
   messages: LineMessage[];
 }
 
+export interface LineDestination {
+  kind: 'user' | 'group' | 'room';
+  destinationId: string;
+}
+
+interface LineWebhookEvent {
+  source?: { type?: string; userId?: string; groupId?: string; roomId?: string };
+}
+
 const LINE_MESSAGE_LIMIT = 5;
 
 /** Verifies LINE's HMAC-SHA256 webhook signature without parsing untrusted JSON first. */
@@ -25,6 +34,22 @@ export const verifyLineWebhookSignature = async (channelSecret: string, rawBody:
   } catch {
     return false;
   }
+};
+
+/** Extracts destinations from an already signature-verified LINE webhook body. */
+export const discoveredLineDestinations = (payload: { events?: LineWebhookEvent[] }): LineDestination[] => {
+  const destinations: LineDestination[] = [];
+  const seen = new Set<string>();
+  for (const event of payload.events ?? []) {
+    const source = event.source;
+    if (!source || !['user', 'group', 'room'].includes(source.type ?? '')) continue;
+    const kind = source.type as LineDestination['kind'];
+    const destinationId = kind === 'user' ? source.userId : kind === 'group' ? source.groupId : source.roomId;
+    if (!destinationId || seen.has(`${kind}:${destinationId}`)) continue;
+    seen.add(`${kind}:${destinationId}`);
+    destinations.push({ kind, destinationId });
+  }
+  return destinations;
 };
 
 export const batchLineMessages = (messages: LineMessage[]): LineBatch[] => {

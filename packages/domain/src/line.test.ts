@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { batchLineMessages, verifyLineWebhookSignature } from './line';
+import { batchLineMessages, discoveredLineDestinations, verifyLineWebhookSignature } from './line';
 
 describe('batchLineMessages', () => {
   it('同じ宛先の通知を最大5件まで1回の送信にまとめる', () => {
@@ -49,5 +49,21 @@ describe('LINE webhook signatures', () => {
 
     await expect(verifyLineWebhookSignature(secret, body, signature)).resolves.toBe(true);
     await expect(verifyLineWebhookSignature(secret, `${body} `, signature)).resolves.toBe(false);
+  });
+});
+
+describe('LINE webhook destinations', () => {
+  it('extracts only distinct user, group, and room sources from verified webhook events', () => {
+    expect(discoveredLineDestinations({ events: [
+      { source: { type: 'user', userId: 'user-1' } },
+      { source: { type: 'group', groupId: 'group-1' } },
+      { source: { type: 'group', groupId: 'group-1' } },
+      { source: { type: 'room', roomId: 'room-1' } },
+      { source: { type: 'user' } },
+    ] })).toEqual([
+      { kind: 'user', destinationId: 'user-1' },
+      { kind: 'group', destinationId: 'group-1' },
+      { kind: 'room', destinationId: 'room-1' },
+    ]);
   });
 });
