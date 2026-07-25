@@ -1101,6 +1101,27 @@ app.patch('/api/organizations/:organizationId/events/:eventId', async (context) 
   }
 });
 
+app.get('/api/organizations/:organizationId/audit/deliveries', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const rows = await access.database.prepare(
+      'SELECT id, event_id, channel, destination, outcome, external_id, created_at FROM deliveries ORDER BY created_at DESC LIMIT 100',
+    ).all<{ id: string; event_id: string | null; channel: string; destination: string; outcome: string; external_id: string | null; created_at: string }>();
+    return json(context, rows.results.map((row) => ({
+      id: row.id,
+      eventId: row.event_id,
+      channel: row.channel,
+      destination: displayRecipientIdentifier(access.role as 'owner' | 'admin' | 'operator' | 'viewer', row.destination),
+      outcome: row.outcome,
+      externalId: row.external_id,
+      createdAt: row.created_at,
+    })));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Delivery audit could not be loaded.', 403);
+  }
+});
+
 app.all('/api/*', async (context) => {
   const session = await sessionFromRequest(context.req.raw, context.env);
   if (!session) return failure(context, 'Authentication is required.', 401);
