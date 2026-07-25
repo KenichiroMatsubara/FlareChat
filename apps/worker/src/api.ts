@@ -18,6 +18,7 @@ import {
 } from './google';
 import { loginReturnOrigin } from './origin';
 import { createSetupOrganizationKey, provisionSetup } from './provisioning';
+import { previewRecipientCsv } from './recipients';
 import { failure, json } from './response';
 import type { Bindings, ConnectionRow, GoogleAutomationRow, OrganizationConnectionRow, OrganizationRow, PasskeyRow, SessionRow, SetupRow } from './types';
 import { verifyAuthentication, verifyRegistration } from './webauthn';
@@ -920,6 +921,18 @@ app.post('/api/organizations/:organizationId/recipients', async (context) => {
     return json(context, { id, organizationId: access.organization.id, name, email, state: 'active', tags: [], createdAt: timestamp, updatedAt: timestamp }, 201);
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Recipient Profile could not be created.', 409);
+  }
+});
+
+app.post('/api/organizations/:organizationId/recipients/import/preview', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Recipient imports can only be previewed by an Owner, Admin, or Operator.', 403);
+    const input = await context.req.json<{ csv?: string }>();
+    if (typeof input.csv !== 'string') return failure(context, 'CSV content is required.');
+    return json(context, previewRecipientCsv(input.csv));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Recipient import could not be previewed.', 409);
   }
 });
 

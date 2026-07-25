@@ -256,6 +256,22 @@ describe('Recipient Profiles', () => {
     await expect(response.json()).resolves.toMatchObject({ data: { organizationId: 'organization-1', name: 'Guest', email: 'guest@example.com', state: 'active' } });
     expect(writes[0]).toContain('organization-1');
   });
+
+  it('previews Recipient CSV imports without persisting malformed or duplicate rows', async () => {
+    const controlDatabase = {
+      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
+        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'operator-identity', email: 'operator@example.com', display_name: 'Operator' };
+        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'operator' };
+        return null;
+      } }) }),
+    } as unknown as D1Database;
+    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/recipients/import/preview', {
+      method: 'POST', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ csv: 'Alice,alice@example.com\nAgain,ALICE@example.com\nBroken' }),
+    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ data: { accepted: [{ email: 'alice@example.com' }], duplicates: ['alice@example.com'], invalid: [{ row: 3 }] } });
+  });
 });
 
 describe('Organization dashboard', () => {
