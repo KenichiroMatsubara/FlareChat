@@ -154,4 +154,43 @@ describe('Organization Automation Inbox scheduling', () => {
     expect(writes.some((write) => write.sql.includes('INSERT INTO events'))).toBe(true);
     expect(writes.find((write) => write.sql.includes('INSERT INTO events'))?.values).toContain('organization-1');
   });
+
+  it('creates an Exception instead of a Scheduled Event when configured Gemini output is unsafe', async () => {
+    const master = await masterKey('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+    const wrappedKey = await createOrganizationKey(master, 'v1', 'organization-1');
+    const organizationKey = await unwrapOrganizationKey(wrappedKey, master, 'organization-1');
+    const inbox = {
+      id: 'inbox-1', kind: 'automation_inbox', google_subject: 'subject-1', inbox_address: 'automation@example.com', granted_scopes: '[]',
+      token_envelope: JSON.stringify(await encrypt(JSON.stringify({ accessToken: 'access-token', refreshToken: 'refresh-token', expiresAt: '2099-01-01T00:00:00.000Z', scopes: [], tokenType: 'Bearer' }), organizationKey, 'google-connection:organization-1:automation-inbox')),
+      gmail_history_id: 'history-before-connection', status: 'active',
+    };
+    const aiConnection = { id: 'ai-1', kind: 'ai', label: 'Gemini', credential: JSON.stringify(await encrypt(JSON.stringify({ provider: 'Google Gemini API', apiKey: 'api-key', model: 'gemini-3.5-flash-lite' }), organizationKey, 'organization-connection:organization-1:ai')), status: 'active' };
+    const writes: Array<{ sql: string; values: unknown[] }> = [];
+    const controlDatabase = {
+      prepare: (sql: string) => ({
+        all: async () => ({ results: sql.includes('FROM organizations') ? [{ id: 'organization-1', binding_name: 'ORG_ORGANIZATION1', database_id: 'database-1' }] : [] }),
+        bind: (..._values: unknown[]) => ({ first: async () => sql.includes('FROM organization_keys') ? { master_key_version: wrappedKey.masterKeyVersion, wrapped_key_envelope: JSON.stringify(wrappedKey.envelope) } : null }),
+      }),
+    } as unknown as D1Database;
+    const organizationDatabase = {
+      prepare: (sql: string) => ({
+        all: async () => ({ results: sql.includes('FROM google_connections') ? [inbox] : sql.includes('FROM rules') ? [{ id: 'rule-1', priority: 0, selection_policy: '{}' }] : [] }),
+        bind: (...values: unknown[]) => ({
+          first: async () => sql.includes('FROM source_messages') ? null : sql.includes('FROM connections') ? aiConnection : null,
+          run: async () => { writes.push({ sql, values }); return { meta: { changes: 1 } }; },
+        }),
+      }),
+    } as unknown as D1Database;
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('/history')) return new Response(JSON.stringify({ historyId: 'history-after-connection', history: [{ messagesAdded: [{ message: { id: 'gmail-message-1' } }] }] }), { status: 200 });
+      if (url.includes('/messages/gmail-message-1')) return new Response(JSON.stringify({ payload: { headers: [{ name: 'Subject', value: '例会' }, { name: 'From', value: 'member@example.com' }], body: { data: btoa(String.fromCharCode(...new TextEncoder().encode('日時: 2026年8月3日 19:00〜21:30'))).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '') } } }), { status: 200 });
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"title":"日時未定"}' }] } }] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await runEnabledAutomations({ CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase, CREDENTIAL_MASTER_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', CREDENTIAL_MASTER_KEY_VERSION: 'v1', GOOGLE_CLIENT_ID: 'client-id', GOOGLE_CLIENT_SECRET: 'client-secret' } as unknown as Parameters<typeof runEnabledAutomations>[0]);
+
+    expect(writes.some((write) => write.sql.includes('INSERT INTO exceptions'))).toBe(true);
+    expect(writes.some((write) => write.sql.includes('INSERT INTO events'))).toBe(false);
+  });
 });
