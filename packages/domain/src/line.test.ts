@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { batchLineMessages } from './line';
+import { batchLineMessages, verifyLineWebhookSignature } from './line';
 
 describe('batchLineMessages', () => {
   it('同じ宛先の通知を最大5件まで1回の送信にまとめる', () => {
@@ -37,5 +37,17 @@ describe('batchLineMessages', () => {
         messages: [{ destinationId: 'person-1', messageId: '2', body: 'B' }],
       },
     ]);
+  });
+});
+
+describe('LINE webhook signatures', () => {
+  it('accepts an HMAC-SHA256 signature only for the original webhook body', async () => {
+    const secret = 'line-channel-secret';
+    const body = '{"events":[]}';
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const signature = btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(body)))));
+
+    await expect(verifyLineWebhookSignature(secret, body, signature)).resolves.toBe(true);
+    await expect(verifyLineWebhookSignature(secret, `${body} `, signature)).resolves.toBe(false);
   });
 });
