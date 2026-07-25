@@ -19,7 +19,7 @@ import {
 } from './google';
 import { loginReturnOrigin } from './origin';
 import { createSetupOrganizationKey, provisionSetup } from './provisioning';
-import { previewRecipientCsv } from './recipients';
+import { exportRecipientCsv, previewRecipientCsv } from './recipients';
 import { failure, json } from './response';
 import type { Bindings, ConnectionRow, GoogleAutomationRow, OrganizationConnectionRow, OrganizationRow, PasskeyRow, SessionRow, SetupRow } from './types';
 import { verifyAuthentication, verifyRegistration } from './webauthn';
@@ -947,6 +947,15 @@ app.get('/api/organizations/:organizationId/recipients', async (context) => {
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Recipient Profiles could not be loaded.', 403);
   }
+});
+
+app.get('/api/organizations/:organizationId/recipients/export', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const rows = await access.database.prepare("SELECT name, email FROM recipient_profiles WHERE state = 'active' ORDER BY name").all<{ name: string; email: string }>();
+    return new Response(exportRecipientCsv(rows.results), { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="recipients.csv"' } });
+  } catch (error) { return failure(context, error instanceof Error ? error.message : 'Recipient export could not be created.', 403); }
 });
 
 app.post('/api/organizations/:organizationId/recipients', async (context) => {

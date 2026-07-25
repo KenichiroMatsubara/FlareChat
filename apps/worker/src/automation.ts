@@ -247,7 +247,7 @@ const processOrganizationMessage = async (
   const rule = selectActiveRule(rules.results.flatMap((row) => {
     try { return [{ id: row.id, priority: row.priority, selectionPolicy: JSON.parse(row.selection_policy) as Record<string, unknown> }]; }
     catch { return []; }
-  }), { sender: senderOf(message.payload), subject, body, labels: message.labelIds });
+  }), { sender: senderOf(message.payload), subject, body, ...(message.labelIds === undefined ? {} : { labels: message.labelIds }) });
   if (!rule) {
     await database.prepare("UPDATE source_messages SET state = 'skipped', processed_at = ? WHERE id = ?")
       .bind(now(), sourceMessageId).run();
