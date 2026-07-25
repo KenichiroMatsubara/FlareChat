@@ -1144,6 +1144,32 @@ app.patch('/api/organizations/:organizationId/events/:eventId', async (context) 
   }
 });
 
+app.post('/api/organizations/:organizationId/events/:eventId/attendance-links', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Attendance links can only be issued by an Owner, Admin, or Operator.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ recipientItemId?: string }>();
+    if (!input.recipientItemId?.trim()) return failure(context, 'A Recipient is required.');
+    const eventId = context.req.param('eventId');
+    const token = randomToken(32);
+    const timestamp = now();
+    await access.database.prepare(
+      `INSERT INTO attendance (event_id, recipient_item_id, status, comment, token, revoked_at, updated_at)
+       VALUES (?, ?, 'unanswered', '', ?, NULL, ?)
+       ON CONFLICT(event_id, recipient_item_id) DO UPDATE SET token = excluded.token, status = 'unanswered', comment = '', revoked_at = NULL, updated_at = excluded.updated_at`,
+    ).bind(eventId, input.recipientItemId.trim(), token, timestamp).run();
+    return json(context, {
+      eventId,
+      recipientItemId: input.recipientItemId.trim(),
+      token,
+      attendanceUrl: `${context.env.APP_URL.replace(/\/$/u, '')}/api/public/organizations/${encodeURIComponent(access.organization.id)}/attendance/${encodeURIComponent(token)}`,
+    }, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Attendance link could not be issued.', 409);
+  }
+});
+
 app.get('/api/organizations/:organizationId/audit/deliveries', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));

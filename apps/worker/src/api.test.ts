@@ -400,6 +400,28 @@ describe('Organization membership', () => {
 });
 
 describe('Public attendance', () => {
+  it('lets an Operator issue an opaque Event-scoped attendance link for one Recipient', async () => {
+    const writes: unknown[][] = [];
+    const controlDatabase = {
+      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
+        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'operator-identity', email: 'operator@example.com', display_name: 'Operator' };
+        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'operator' };
+        return null;
+      } }) }),
+    } as unknown as D1Database;
+    const organizationDatabase = { prepare: (_sql: string) => ({ bind: (...values: unknown[]) => ({ run: async () => { writes.push(values); return { meta: { changes: 1 } }; } }) }) } as unknown as D1Database;
+    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/events/event-1/attendance-links', {
+      method: 'POST', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ recipientItemId: 'recipient-item-1' }),
+    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
+
+    expect(response.status).toBe(201);
+    const body = await response.json() as { data: { token: string; eventId: string; recipientItemId: string } };
+    expect(body.data).toMatchObject({ eventId: 'event-1', recipientItemId: 'recipient-item-1' });
+    expect(body.data.token.length).toBeGreaterThan(20);
+    expect(writes[0]).toContain('event-1');
+    expect(writes[0]).toContain('recipient-item-1');
+  });
+
   it('records an attendance response only for a live, matching Event link', async () => {
     const writes: unknown[][] = [];
     const controlDatabase = {
