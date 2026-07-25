@@ -52,3 +52,16 @@ export interface SessionRow {
   email: string;
   display_name: string;
 }
+
+export interface GoogleAutomationRow {
+  id: string;
+  identity_id: string;
+  google_subject: string;
+  email: string;
+  display_name: string;
+  token_envelope: string;
+  gmail_history_id: string;
+  enabled: number;
+  last_synced_at: string | null;
+  last_error: string | null;
+}

@@ -22,3 +22,9 @@ GUIは `http://localhost:5173`、APIは `http://localhost:8787` で起動しま�
 
 Google OAuthやLINE Messaging APIの値は `apps/worker/.dev.vars.example` を
 `apps/worker/.dev.vars` にコピーして設定します。
+
+Google OAuth の承認済みリダイレクト URI には
+`http://localhost:8787/oauth/google/login/callback` を登録してください。初回画面は
+Google ログインだけです。同意後、受信した新着メールに `2026/08/03 19:00-21:00` または
+`2026年8月3日 19:00〜21:00` のような日付と時刻範囲があれば、primary Calendar に予定を
+作成します。ログイン時点より前のメールは処理しません。

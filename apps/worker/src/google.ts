@@ -5,10 +5,16 @@ export const GOOGLE_SCOPES = [
   'email',
   'profile',
   'https://www.googleapis.com/auth/gmail.readonly',
-  'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/calendar.events.owned',
-  'https://www.googleapis.com/auth/drive.file',
 ] as const;
+
+const GOOGLE_SCOPE_ALIASES: Record<string, string> = {
+  'https://www.googleapis.com/auth/userinfo.email': 'email',
+  'https://www.googleapis.com/auth/userinfo.profile': 'profile',
+};
+
+const normalizedGoogleScopes = (scopes: Iterable<string>): Set<string> =>
+  new Set(Array.from(scopes, (scope) => GOOGLE_SCOPE_ALIASES[scope] ?? scope));
 
 export interface GoogleTokenSet {
   accessToken: string;
@@ -31,12 +37,12 @@ export const createPkce = async (): Promise<{ verifier: string; challenge: strin
 };
 
 export const hasCompleteGoogleGrant = (scopes: Iterable<string>): boolean => {
-  const granted = new Set(scopes);
+  const granted = normalizedGoogleScopes(scopes);
   return GOOGLE_SCOPES.every((scope) => granted.has(scope));
 };
 
 export const missingGoogleScopes = (scopes: Iterable<string>): string[] => {
-  const granted = new Set(scopes);
+  const granted = normalizedGoogleScopes(scopes);
   return GOOGLE_SCOPES.filter((scope) => !granted.has(scope));
 };
 
@@ -100,6 +106,34 @@ export const exchangeGoogleCode = async (input: {
     refreshToken: body.refresh_token,
     expiresAt: new Date(Date.now() + body.expires_in * 1_000).toISOString(),
     scopes: body.scope.split(' ').filter(Boolean),
+    tokenType: body.token_type ?? 'Bearer',
+  };
+};
+
+export const refreshGoogleToken = async (input: {
+  refreshToken: string;
+  clientId: string;
+  clientSecret: string;
+}): Promise<GoogleTokenSet> => {
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      refresh_token: input.refreshToken,
+      client_id: input.clientId,
+      client_secret: input.clientSecret,
+      grant_type: 'refresh_token',
+    }),
+  });
+  const body = await response.json() as GoogleTokenResponse;
+  if (!response.ok || !body.access_token || !body.expires_in) {
+    throw new Error(body.error_description ?? body.error ?? 'Google token refresh failed.');
+  }
+  return {
+    accessToken: body.access_token,
+    refreshToken: body.refresh_token ?? input.refreshToken,
+    expiresAt: new Date(Date.now() + body.expires_in * 1_000).toISOString(),
+    scopes: body.scope?.split(' ').filter(Boolean) ?? [...GOOGLE_SCOPES],
     tokenType: body.token_type ?? 'Bearer',
   };
 };

@@ -1,99 +1,63 @@
-import { CheckCircle2, KeyRound, Mail, ShieldCheck } from 'lucide-react';
+import { CalendarDays, CheckCircle2, CircleAlert, LogOut, Mail, Play, RefreshCw, ShieldCheck } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
-import type { OrganizationSetup, PasskeyCreationOptions } from '@mail/domain';
-
 import { api } from './api';
+import type { AutomationStatus, AutomationSummary } from './api';
 
-const toBuffer = (value: string): ArrayBuffer => {
-  const padded = value.replaceAll('-', '+').replaceAll('_', '/') + '='.repeat((4 - (value.length % 4)) % 4);
-  const bytes = Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
-  return bytes.buffer;
-};
-
-const toBase64Url = (value: ArrayBuffer): string => {
-  const binary = String.fromCharCode(...new Uint8Array(value));
-  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '');
-};
-
-const publicKeyOptions = (options: PasskeyCreationOptions): PublicKeyCredentialCreationOptions => ({
-  challenge: toBuffer(options.challenge),
-  rp: options.rp,
-  user: { ...options.user, id: toBuffer(options.user.id) },
-  pubKeyCredParams: options.pubKeyCredParams,
-  timeout: options.timeout,
-  authenticatorSelection: options.authenticatorSelection,
-  attestation: options.attestation,
-});
+const formatted = (value: string | null): string => value
+  ? new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
+  : 'まだ実行していません';
 
 export const App = () => {
-  const [setup, setSetup] = useState<OrganizationSetup | null>(null);
-  const [name, setName] = useState('');
+  const [automation, setAutomation] = useState<AutomationStatus | null>(null);
+  const [summary, setSummary] = useState<AutomationSummary | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(new URLSearchParams(window.location.search).get('error') ?? '');
-
   const refresh = async () => {
-    try { setSetup(await api.currentSetup()); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'セットアップ状態を取得できませんでした。'); }
+    try { setAutomation(await api.currentAutomation()); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : '状態を取得できませんでした。'); }
   };
-
-  useEffect(() => { void refresh(); }, []);
-  useEffect(() => {
-    if (setup?.status !== 'provisioning') return undefined;
-    const timer = window.setInterval(() => void refresh(), 5_000);
-    return () => window.clearInterval(timer);
-  }, [setup?.status]);
-
-  const start = async (event: React.FormEvent) => {
-    event.preventDefault();
+  useEffect(() => { void refresh(); if (window.location.search) window.history.replaceState({}, '', window.location.pathname); }, []);
+  const login = async () => {
     setBusy(true); setError('');
-    try { window.location.assign((await api.startSetup(name)).authorizationUrl); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'Google接続を開始できませんでした。'); setBusy(false); }
+    try { window.location.assign((await api.googleLogin()).authorizationUrl); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'Google ログインを開始できませんでした。'); setBusy(false); }
   };
-
-  const registerPasskey = async () => {
+  const run = async () => {
     setBusy(true); setError('');
-    try {
-      const options = await api.passkeyOptions();
-      const credential = await navigator.credentials.create({ publicKey: publicKeyOptions(options) });
-      if (!(credential instanceof PublicKeyCredential)) throw new Error('パスキーの登録がキャンセルされました。');
-      const response = credential.response as AuthenticatorAttestationResponse;
-      await api.verifyPasskey({
-        id: credential.id,
-        rawId: toBase64Url(credential.rawId),
-        type: credential.type,
-        response: {
-          clientDataJSON: toBase64Url(response.clientDataJSON),
-          attestationObject: toBase64Url(response.attestationObject),
-          transports: response.getTransports?.() ?? [],
-        },
-      });
-      await refresh();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'パスキーを登録できませんでした。'); }
+    try { setSummary(await api.runAutomation()); await refresh(); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : '自動化を実行できませんでした。'); }
     finally { setBusy(false); }
   };
-
-  return <main className="setup-shell">
-    <section className="setup-card">
-      <div className="setup-brand"><span><Mail size={22} /></span><div><strong>Postman</strong><small>MAIL AUTOMATION</small></div></div>
-      <p className="eyebrow">PRIVATE PILOT SETUP</p>
-      <h1>{setup?.status === 'active' ? '組織を準備しました' : '自動化を安全に始める'}</h1>
-      <p className="setup-copy">Automation Inbox、管理者パスキー、組織専用データベースを順に設定します。Gmailの管理権限と管理者のログイン情報は分離されています。</p>
-      {error && <p className="setup-error">{error}</p>}
-      {!setup && <form className="form-stack" onSubmit={(event) => void start(event)}>
-        <label>組織名<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例: 岡崎ローターアクトクラブ" required /></label>
-        <button className="primary" disabled={busy}>{busy ? 'Googleへ移動中…' : 'Google Automation Inboxを接続'}</button>
-      </form>}
-      {setup?.status === 'awaiting_google' && <SetupStep icon={Mail} title="Googleの承認を待っています" text="開いたGoogle画面で、必要なすべての権限を許可してください。" />}
-      {setup?.status === 'awaiting_passkey' && <>
-        <SetupStep icon={ShieldCheck} title="Automation Inboxを確認しました" text={`${setup.inboxAddress ?? ''} はメール処理専用です。次に管理者用パスキーを登録します。`} done />
-        <button className="primary" onClick={() => void registerPasskey()} disabled={busy}><KeyRound size={17} />{busy ? 'パスキーを登録中…' : '初期Ownerのパスキーを登録'}</button>
-      </>}
-      {setup?.status === 'provisioning' && <SetupStep icon={ShieldCheck} title="組織専用データベースを準備中" text="Cloudflare上でD1の作成・スキーマ適用・Workerバインドを検証しています。失敗時は24時間まで安全に再試行します。" />}
-      {setup?.status === 'active' && <SetupStep icon={CheckCircle2} title="準備完了" text="認証済みの組織スコープと暗号化されたAutomation Inbox資格情報が利用可能です。次の実装単位で管理機能を有効化します。" done />}
-      {setup?.status === 'expired' && <p className="setup-error">セットアップの有効期限が切れました。最初からやり直してください。</p>}
-    </section>
-  </main>;
+  const setEnabled = async (enabled: boolean) => {
+    setBusy(true); setError('');
+    try { await api.setEnabled(enabled); await refresh(); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : '自動化を更新できませんでした。'); }
+    finally { setBusy(false); }
+  };
+  const logout = async () => {
+    setBusy(true);
+    try { await api.logout(); setAutomation(null); setSummary(null); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'ログアウトできませんでした。'); }
+    finally { setBusy(false); }
+  };
+  if (!automation) return <main className="setup-shell"><section className="setup-card login-card">
+    <div className="setup-brand"><span><Mail size={22} /></span><div><strong>Mail Automation</strong><small>GMAIL TO CALENDAR</small></div></div>
+    <p className="eyebrow">START WITH GOOGLE</p><h1>メールを予定にする</h1>
+    <p className="setup-copy">Googleでログインすると、Gmailの新着メールを読み取り、日付と開始・終了時刻が書かれた案内をあなたのGoogleカレンダーへ自動登録します。</p>
+    {error && <p className="setup-error">{error}</p>}
+    <button className="primary google-login" onClick={() => void login()} disabled={busy}><ShieldCheck size={18} />{busy ? 'Googleへ接続中…' : 'Googleでログインして始める'}</button>
+    <p className="login-note">初回のみ、Gmailの読取とGoogle Calendarへの予定作成を許可します。組織名やパスキーの入力は不要です。</p>
+  </section></main>;
+  return <main className="setup-shell"><section className="setup-card dashboard-card">
+    <div className="dashboard-top"><div className="setup-brand"><span><Mail size={22} /></span><div><strong>Mail Automation</strong><small>GMAIL TO CALENDAR</small></div></div><button className="quiet-button" onClick={() => void logout()} disabled={busy}><LogOut size={15} />ログアウト</button></div>
+    <p className="eyebrow">GOOGLE AUTOMATION</p><h1>自動化は{automation.enabled ? '有効です' : '停止中です'}</h1>
+    <p className="setup-copy"><strong>{automation.displayName}</strong>（{automation.email}）の Gmail と primary Calendar を接続しています。</p>
+    {error && <p className="setup-error">{error}</p>}{automation.lastError && <p className="setup-error"><CircleAlert size={16} />{automation.lastError}</p>}
+    <div className="automation-status"><span className={automation.enabled ? 'status-dot active' : 'status-dot'} /><div><strong>{automation.enabled ? '新着メールを自動確認します' : '自動確認を停止しています'}</strong><small>前回の確認: {formatted(automation.lastSyncedAt)}</small></div><label className="switch"><input type="checkbox" checked={automation.enabled} onChange={(event) => void setEnabled(event.target.checked)} disabled={busy} /><span /></label></div>
+    <button className="primary google-login" onClick={() => void run()} disabled={busy || !automation.enabled}>{busy ? <RefreshCw className="spin" size={18} /> : <Play size={18} />}{busy ? '新着メールを確認中…' : '今すぐ新着メールを確認'}</button>
+    {summary && <div className="run-result"><CheckCircle2 size={18} /><span>今回: {summary.created}件を予定化、{summary.skipped}件を保留、{summary.exceptions}件でエラー</span></div>}
+    <div className="automation-guide"><CalendarDays size={19} /><div><strong>予定として認識する書式</strong><p>メールの件名または本文に <code>2026/08/03 19:00-21:00</code> または <code>2026年8月3日 19:00〜21:00</code> のように、日付と開始・終了時刻を含めてください。</p></div></div>
+    <div className="automation-counts"><span><b>{automation.created}</b> 予定を作成</span><span><b>{automation.skipped}</b> 書式不足</span><span><b>{automation.exceptions}</b> エラー</span></div>
+  </section></main>;
 };
-
-const SetupStep = ({ icon: Icon, title, text, done = false }: { icon: typeof Mail; title: string; text: string; done?: boolean }) => <div className="setup-step"><span className={done ? 'done' : ''}><Icon size={19} /></span><div><strong>{title}</strong><p>{text}</p></div></div>;

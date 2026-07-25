@@ -5,13 +5,21 @@ import { GOOGLE_SCOPES, googleAuthorizationUrl, hasCompleteGoogleGrant, missingG
 describe('Automation Inbox Google grant', () => {
   it('requires the entire Automation Inbox scope set', () => {
     expect(hasCompleteGoogleGrant(GOOGLE_SCOPES)).toBe(true);
-    expect(hasCompleteGoogleGrant(GOOGLE_SCOPES.filter((scope) => scope !== 'https://www.googleapis.com/auth/gmail.send'))).toBe(false);
+    expect(hasCompleteGoogleGrant(GOOGLE_SCOPES.filter((scope) => scope !== 'https://www.googleapis.com/auth/gmail.readonly'))).toBe(false);
     expect(missingGoogleScopes(['openid', 'email', 'profile'])).toEqual([
       'https://www.googleapis.com/auth/gmail.readonly',
-      'https://www.googleapis.com/auth/gmail.send',
       'https://www.googleapis.com/auth/calendar.events.owned',
-      'https://www.googleapis.com/auth/drive.file',
     ]);
+  });
+
+  it('accepts Google\'s canonical OpenID scope names', () => {
+    expect(hasCompleteGoogleGrant([
+      'openid',
+      'https://www.googleapis.com/auth/userinfo.email',
+      'https://www.googleapis.com/auth/userinfo.profile',
+      'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/calendar.events.owned',
+    ])).toBe(true);
   });
 
   it('always sends OAuth through PKCE and requests offline consent', () => {

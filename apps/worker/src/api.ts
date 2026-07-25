@@ -3,6 +3,7 @@ import { cors } from 'hono/cors';
 
 import type { OrganizationSetup, PasskeyCreationOptions } from '@mail/domain';
 
+import { runAutomationForIdentity } from './automation';
 import { decrypt, encrypt, masterKey } from './cryptography';
 import { randomToken, sha256 } from './encoding';
 import {
@@ -15,9 +16,10 @@ import {
   missingGoogleScopes,
   revokeGoogleToken,
 } from './google';
+import { loginReturnOrigin } from './origin';
 import { createSetupOrganizationKey, provisionSetup } from './provisioning';
 import { failure, json } from './response';
-import type { Bindings, PasskeyRow, SessionRow, SetupRow } from './types';
+import type { Bindings, GoogleAutomationRow, PasskeyRow, SessionRow, SetupRow } from './types';
 import { verifyAuthentication, verifyRegistration } from './webauthn';
 import type { AuthenticationResponse } from './webauthn';
 
@@ -28,6 +30,7 @@ const SETUP_WINDOW_MS = 15 * 60 * 1_000;
 const PROVISIONING_WINDOW_MS = 24 * 60 * 60 * 1_000;
 const SESSION_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
 const PASSKEY_WINDOW_MS = 5 * 60 * 1_000;
+const GOOGLE_LOGIN_WINDOW_MS = 10 * 60 * 1_000;
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -36,6 +39,7 @@ app.use('/api/*', cors({ origin: (origin) => origin || 'http://localhost:5173', 
 const now = (): string => new Date().toISOString();
 const expiresIn = (milliseconds: number): string => new Date(Date.now() + milliseconds).toISOString();
 const redirectUri = (env: Bindings): string => `${env.APP_URL.replace(/\/$/u, '')}/oauth/google/callback`;
+const googleLoginRedirectUri = (env: Bindings): string => `${env.APP_URL.replace(/\/$/u, '')}/oauth/google/login/callback`;
 const setupView = (row: SetupRow): OrganizationSetup => ({
   id: row.id,
   name: row.name,
@@ -81,6 +85,143 @@ const configurationError = (env: Bindings): string | null => {
 };
 
 app.get('/api/health', (context) => json(context, { status: 'ok', service: 'mail-automation', time: now() }));
+
+app.post('/api/auth/google', async (context) => {
+  const invalid = configurationError(context.env);
+  if (invalid) return failure(context, invalid, 503);
+  const id = crypto.randomUUID();
+  const state = randomToken();
+  const pkce = await createPkce();
+  const key = await masterKey(context.env.CREDENTIAL_MASTER_KEY);
+  const verifierEnvelope = await encrypt(pkce.verifier, key, `google-login-pkce:${id}`);
+  const returnOrigin = loginReturnOrigin(context.req.raw, context.env.APP_URL, context.env.WEB_ORIGIN);
+  await context.env.CONTROL_DB.prepare(
+    'INSERT INTO google_login_states (id, state_hash, pkce_verifier_envelope, return_origin, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+  ).bind(id, await sha256(state), JSON.stringify(verifierEnvelope), returnOrigin, expiresIn(GOOGLE_LOGIN_WINDOW_MS), now()).run();
+  return json(context, {
+    authorizationUrl: googleAuthorizationUrl({
+      clientId: context.env.GOOGLE_CLIENT_ID,
+      redirectUri: googleLoginRedirectUri(context.env),
+      state,
+      challenge: pkce.challenge,
+    }),
+  }, 201);
+});
+
+app.get('/oauth/google/login/callback', async (context) => {
+  let target = new URL('/', context.env.WEB_ORIGIN || context.env.APP_URL);
+  const code = context.req.query('code');
+  const state = context.req.query('state');
+  if (!code || !state) {
+    target.searchParams.set('error', 'Google ログインがキャンセルされました。');
+    return context.redirect(target.toString());
+  }
+  const login = await context.env.CONTROL_DB.prepare(
+    'SELECT id, pkce_verifier_envelope, return_origin FROM google_login_states WHERE state_hash = ? AND expires_at > ?',
+  ).bind(await sha256(state), now()).first<{ id: string; pkce_verifier_envelope: string; return_origin: string }>();
+  if (!login) {
+    target.searchParams.set('error', 'Google ログインの有効期限が切れました。もう一度お試しください。');
+    return context.redirect(target.toString());
+  }
+  target = new URL('/', login.return_origin || context.env.WEB_ORIGIN || context.env.APP_URL);
+  try {
+    const key = await masterKey(context.env.CREDENTIAL_MASTER_KEY);
+    const verifier = await decrypt(JSON.parse(login.pkce_verifier_envelope), key, `google-login-pkce:${login.id}`);
+    const tokenSet = await exchangeGoogleCode({
+      code,
+      verifier,
+      clientId: context.env.GOOGLE_CLIENT_ID,
+      clientSecret: context.env.GOOGLE_CLIENT_SECRET,
+      redirectUri: googleLoginRedirectUri(context.env),
+    });
+    if (!hasCompleteGoogleGrant(tokenSet.scopes)) {
+      await revokeGoogleToken(tokenSet.refreshToken);
+      throw new Error(`必要な Google 権限が不足しています: ${missingGoogleScopes(tokenSet.scopes).join(', ')}`);
+    }
+    const [identity, historyId] = await Promise.all([
+      fetchGoogleIdentity(tokenSet.accessToken),
+      fetchGmailHistoryId(tokenSet.accessToken),
+    ]);
+    const timestamp = now();
+    await context.env.CONTROL_DB.prepare(
+      `INSERT INTO identities (id, email, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(email) DO UPDATE SET display_name = excluded.display_name, updated_at = excluded.updated_at`,
+    ).bind(crypto.randomUUID(), identity.email, identity.displayName, timestamp, timestamp).run();
+    const owner = await context.env.CONTROL_DB.prepare('SELECT id FROM identities WHERE email = ?').bind(identity.email).first<{ id: string }>();
+    if (!owner) throw new Error('Google identity could not be stored.');
+    const automationId = crypto.randomUUID();
+    const envelope = await encrypt(JSON.stringify(tokenSet), key, `google-automation:${automationId}`);
+    const existing = await context.env.CONTROL_DB.prepare('SELECT id FROM google_automations WHERE identity_id = ?').bind(owner.id).first<{ id: string }>();
+    const storedId = existing?.id ?? automationId;
+    const storedEnvelope = existing
+      ? await encrypt(JSON.stringify(tokenSet), key, `google-automation:${storedId}`)
+      : envelope;
+    await context.env.CONTROL_DB.prepare(
+      `INSERT INTO google_automations
+        (id, identity_id, google_subject, email, display_name, token_envelope, gmail_history_id, enabled, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+       ON CONFLICT(identity_id) DO UPDATE SET
+         google_subject = excluded.google_subject, email = excluded.email, display_name = excluded.display_name,
+         token_envelope = excluded.token_envelope, gmail_history_id = excluded.gmail_history_id, enabled = 1,
+         last_error = NULL, updated_at = excluded.updated_at`,
+    ).bind(storedId, owner.id, identity.subject, identity.email, identity.displayName, JSON.stringify(storedEnvelope), historyId, timestamp, timestamp).run();
+    const sessionId = randomToken();
+    await context.env.CONTROL_DB.batch([
+      context.env.CONTROL_DB.prepare('DELETE FROM google_login_states WHERE id = ?').bind(login.id),
+      context.env.CONTROL_DB.prepare('INSERT INTO sessions (id, identity_id, expires_at, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)').bind(sessionId, owner.id, expiresIn(SESSION_WINDOW_MS), timestamp, timestamp),
+    ]);
+    context.header('Set-Cookie', cookie(SESSION_COOKIE, sessionId, requestIsSecure(context.req.raw), Math.floor(SESSION_WINDOW_MS / 1_000)));
+  } catch (error) {
+    target.searchParams.set('error', error instanceof Error ? error.message : 'Google ログインに失敗しました。');
+  }
+  return context.redirect(target.toString());
+});
+
+app.get('/api/automation', async (context) => {
+  const session = await sessionFromRequest(context.req.raw, context.env);
+  if (!session) return failure(context, 'Authentication is required.', 401);
+  const automation = await context.env.CONTROL_DB.prepare('SELECT * FROM google_automations WHERE identity_id = ?')
+    .bind(session.identity_id).first<GoogleAutomationRow>();
+  if (!automation) return json(context, null);
+  const counts = await context.env.CONTROL_DB.prepare(
+    `SELECT
+       SUM(CASE WHEN status = 'created' THEN 1 ELSE 0 END) AS created,
+       SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) AS skipped,
+       SUM(CASE WHEN status = 'exception' THEN 1 ELSE 0 END) AS exceptions
+     FROM automation_messages WHERE automation_id = ?`,
+  ).bind(automation.id).first<{ created: number | null; skipped: number | null; exceptions: number | null }>();
+  return json(context, {
+    email: automation.email,
+    displayName: automation.display_name,
+    enabled: automation.enabled === 1,
+    lastSyncedAt: automation.last_synced_at,
+    lastError: automation.last_error,
+    created: counts?.created ?? 0,
+    skipped: counts?.skipped ?? 0,
+    exceptions: counts?.exceptions ?? 0,
+  });
+});
+
+app.post('/api/automation/run', async (context) => {
+  const session = await sessionFromRequest(context.req.raw, context.env);
+  if (!session) return failure(context, 'Authentication is required.', 401);
+  try {
+    return json(context, await runAutomationForIdentity(context.env, session.identity_id));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : '自動化を実行できませんでした。', 409);
+  }
+});
+
+app.post('/api/automation/enabled', async (context) => {
+  const session = await sessionFromRequest(context.req.raw, context.env);
+  if (!session) return failure(context, 'Authentication is required.', 401);
+  const input = await context.req.json<{ enabled?: boolean }>();
+  if (typeof input.enabled !== 'boolean') return failure(context, 'enabled must be a boolean.');
+  const result = await context.env.CONTROL_DB.prepare('UPDATE google_automations SET enabled = ?, updated_at = ? WHERE identity_id = ?')
+    .bind(input.enabled ? 1 : 0, now(), session.identity_id).run();
+  if (result.meta.changes === 0) return failure(context, 'Google 自動化が見つかりません。', 404);
+  return json(context, { enabled: input.enabled });
+});
 
 app.post('/api/setup', async (context) => {
   const input = await context.req.json<{ name?: string }>();
