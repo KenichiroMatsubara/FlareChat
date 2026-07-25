@@ -1302,6 +1302,27 @@ app.post('/api/public/organizations/:organizationId/line-links/:token', async (c
   }
 });
 
+app.patch('/api/organizations/:organizationId/suspension', async (context) => {
+  try {
+    const session = await sessionFromRequest(context.req.raw, context.env);
+    if (!session) return failure(context, 'Authentication is required.', 401);
+    const organizationId = context.req.param('organizationId');
+    const membership = await context.env.CONTROL_DB.prepare(
+      `SELECT o.id, o.status, m.role FROM members m JOIN organizations o ON o.id = m.organization_id
+       WHERE m.identity_id = ? AND m.organization_id = ? AND m.state = 'active'`,
+    ).bind(session.identity_id, organizationId).first<{ id: string; status: string; role: string }>();
+    if (!membership || membership.role !== 'owner') return failure(context, 'Only an Owner can suspend or resume an Organization.', 403);
+    const input = await context.req.json<{ suspended?: boolean }>();
+    if (typeof input.suspended !== 'boolean') return failure(context, 'A suspension state is required.');
+    const status = input.suspended ? 'suspended' : 'active';
+    await context.env.CONTROL_DB.prepare('UPDATE organizations SET status = ?, updated_at = ? WHERE id = ?')
+      .bind(status, now(), organizationId).run();
+    return json(context, { organizationId, status });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Organization suspension could not be changed.', 409);
+  }
+});
+
 app.all('/api/*', async (context) => {
   const session = await sessionFromRequest(context.req.raw, context.env);
   if (!session) return failure(context, 'Authentication is required.', 401);

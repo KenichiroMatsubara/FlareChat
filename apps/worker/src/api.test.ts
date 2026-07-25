@@ -421,6 +421,33 @@ describe('Organization membership', () => {
     await expect(response.json()).resolves.toMatchObject({ data: { identityId: 'member-identity', role: 'operator' } });
     expect(writes[0]).toContain('organization-1');
   });
+
+  it('lets an Owner suspend and resume an Organization without losing its durable backlog', async () => {
+    const writes: unknown[][] = [];
+    const controlDatabase = {
+      prepare: (sql: string) => ({ bind: (...values: unknown[]) => ({
+        first: async () => {
+          if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'owner-identity', email: 'owner@example.com', display_name: 'Owner' };
+          if (sql.includes('FROM members')) return { id: 'organization-1', status: 'active', role: 'owner' };
+          return null;
+        },
+        run: async () => { writes.push(values); return { meta: { changes: 1 } }; },
+      }) }),
+    } as unknown as D1Database;
+    const environment = { ...setupEnvironment(), CONTROL_DB: controlDatabase };
+    const suspended = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/suspension', {
+      method: 'PATCH', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ suspended: true }),
+    }), environment);
+    const resumed = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/suspension', {
+      method: 'PATCH', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ suspended: false }),
+    }), environment);
+
+    expect(suspended.status).toBe(200);
+    expect(resumed.status).toBe(200);
+    await expect(suspended.json()).resolves.toMatchObject({ data: { status: 'suspended' } });
+    await expect(resumed.json()).resolves.toMatchObject({ data: { status: 'active' } });
+    expect(writes).toHaveLength(2);
+  });
 });
 
 describe('Public attendance', () => {
