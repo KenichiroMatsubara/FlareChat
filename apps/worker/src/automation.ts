@@ -57,6 +57,18 @@ interface EventCandidate {
   endsAt: string;
 }
 
+export interface ActiveRule {
+  id: string;
+  priority: number;
+  selectionPolicy: Record<string, unknown>;
+}
+
+export interface RuleSource {
+  sender: string;
+  subject: string;
+  body: string;
+}
+
 const now = (): string => new Date().toISOString();
 
 const googleFetch = async <T>(accessToken: string, url: string, init?: RequestInit): Promise<T> => {
@@ -106,6 +118,23 @@ export const extractEventCandidate = (subject: string, body: string, current = n
     startsAt: japanDateTime(year, month, day, startHour, startMinute),
     endsAt: japanDateTime(year, month, day, endHour, endMinute),
   };
+};
+
+/** Chooses exactly one active Rule, using descending priority after policy matching. */
+export const selectActiveRule = (rules: ActiveRule[], source: RuleSource): ActiveRule | null => {
+  const sender = source.sender.trim().toLowerCase();
+  const domain = sender.split('@')[1] ?? '';
+  const content = `${source.subject}\n${source.body}`.toLowerCase();
+  const matching = rules.filter((rule) => {
+    const policy = rule.selectionPolicy;
+    const requiredSender = typeof policy.sender === 'string' ? policy.sender.trim().toLowerCase() : '';
+    const requiredDomain = typeof policy.domain === 'string' ? policy.domain.trim().toLowerCase() : '';
+    const requiredKeyword = typeof policy.keyword === 'string' ? policy.keyword.trim().toLowerCase() : '';
+    return (!requiredSender || requiredSender === sender)
+      && (!requiredDomain || requiredDomain === domain)
+      && (!requiredKeyword || content.includes(requiredKeyword));
+  });
+  return matching.sort((left, right) => right.priority - left.priority)[0] ?? null;
 };
 
 const accessTokenFor = async (env: Bindings, automation: GoogleAutomationRow): Promise<string> => {
@@ -168,7 +197,19 @@ const processOrganizationMessage = async (
   await database.prepare(
     "INSERT INTO source_messages (id, gmail_message_id, gmail_history_id, sender, subject, received_at, processed_at, state) VALUES (?, ?, ?, ?, ?, ?, ?, 'processing')",
   ).bind(sourceMessageId, gmailMessageId, gmailHistoryId, senderOf(message.payload), subject, timestamp, timestamp).run();
-  const candidate = extractEventCandidate(subject, decodedBody(message.payload) || (message.snippet ?? ''));
+  const body = decodedBody(message.payload) || (message.snippet ?? '');
+  const rules = await database.prepare("SELECT id, priority, selection_policy FROM rules WHERE status = 'active' ORDER BY priority DESC")
+    .all<{ id: string; priority: number; selection_policy: string }>();
+  const rule = selectActiveRule(rules.results.flatMap((row) => {
+    try { return [{ id: row.id, priority: row.priority, selectionPolicy: JSON.parse(row.selection_policy) as Record<string, unknown> }]; }
+    catch { return []; }
+  }), { sender: senderOf(message.payload), subject, body });
+  if (!rule) {
+    await database.prepare("UPDATE source_messages SET state = 'skipped', processed_at = ? WHERE id = ?")
+      .bind(now(), sourceMessageId).run();
+    return;
+  }
+  const candidate = extractEventCandidate(subject, body);
   if (!candidate) {
     await database.prepare("UPDATE source_messages SET state = 'skipped', processed_at = ? WHERE id = ?")
       .bind(now(), sourceMessageId).run();
@@ -185,8 +226,8 @@ const processOrganizationMessage = async (
   });
   if (!event.id) throw new Error('Google Calendar did not return an event ID.');
   await database.prepare(
-    "INSERT INTO events (id, organization_id, source_message_id, google_event_id, title, starts_at, ends_at, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?)",
-  ).bind(crypto.randomUUID(), organizationId, sourceMessageId, event.id, candidate.title, candidate.startsAt, candidate.endsAt, now(), now()).run();
+    "INSERT INTO events (id, organization_id, rule_id, source_message_id, google_event_id, title, starts_at, ends_at, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?)",
+  ).bind(crypto.randomUUID(), organizationId, rule.id, sourceMessageId, event.id, candidate.title, candidate.startsAt, candidate.endsAt, now(), now()).run();
   await database.prepare("UPDATE source_messages SET state = 'processed', processed_at = ? WHERE id = ?")
     .bind(now(), sourceMessageId).run();
 };

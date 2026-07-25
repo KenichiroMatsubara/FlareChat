@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { extractEventCandidate, runEnabledAutomations } from './automation';
+import { extractEventCandidate, selectActiveRule, runEnabledAutomations } from './automation';
 import { createOrganizationKey, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
 
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -17,6 +17,14 @@ describe('mail event extraction', () => {
   it('does not invent an event when the mail omits a date or an end time', () => {
     expect(extractEventCandidate('お知らせ', '来週の19時から集まりましょう')).toBeNull();
     expect(extractEventCandidate('お知らせ', '2026/08/03 に集まりましょう')).toBeNull();
+  });
+
+  it('selects the highest-priority active Rule whose sender, domain, and keyword policy match', () => {
+    expect(selectActiveRule([
+      { id: 'rule-low', priority: 1, selectionPolicy: { domain: 'example.com' } },
+      { id: 'rule-high', priority: 10, selectionPolicy: { sender: 'announcer@example.com', keyword: '例会' } },
+    ], { sender: 'announcer@example.com', subject: '例会のお知らせ', body: '2026年8月3日 19:00〜21:00' })).toMatchObject({ id: 'rule-high' });
+    expect(selectActiveRule([{ id: 'rule-1', priority: 1, selectionPolicy: { domain: 'example.com' } }], { sender: 'other@invalid.test', subject: '例会', body: '' })).toBeNull();
   });
 });
 
@@ -86,7 +94,7 @@ describe('Organization Automation Inbox scheduling', () => {
     } as unknown as D1Database;
     const organizationDatabase = {
       prepare: (sql: string) => ({
-        all: async () => ({ results: sql.includes('FROM google_connections') ? [inbox] : [] }),
+        all: async () => ({ results: sql.includes('FROM google_connections') ? [inbox] : sql.includes('FROM rules') ? [{ id: 'rule-1', priority: 0, selection_policy: '{}' }] : [] }),
         bind: (...values: unknown[]) => ({
           run: async () => { updatedConnections.push(values); return { meta: { changes: 1 } }; },
         }),
@@ -126,7 +134,7 @@ describe('Organization Automation Inbox scheduling', () => {
     } as unknown as D1Database;
     const organizationDatabase = {
       prepare: (sql: string) => ({
-        all: async () => ({ results: sql.includes('FROM google_connections') ? [inbox] : [] }),
+        all: async () => ({ results: sql.includes('FROM google_connections') ? [inbox] : sql.includes('FROM rules') ? [{ id: 'rule-1', priority: 0, selection_policy: '{}' }] : [] }),
         bind: (...values: unknown[]) => ({
           first: async () => null,
           run: async () => { writes.push({ sql, values }); return { meta: { changes: 1 } }; },
