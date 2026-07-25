@@ -13,16 +13,20 @@ describe('Delivery Records', () => {
     expect(writes[0]).toContain('recipient@example.com');
   });
 
-  it('sends one Calendar invitation and records its external result without hiding another recipient failure', async () => {
+  it('adds one Calendar invitee without replacing existing attendees, then records its external result', async () => {
     const writes: unknown[][] = [];
     const database = { prepare: (_sql: string) => ({ bind: (...values: unknown[]) => ({ run: async () => { writes.push(values); return { meta: { changes: 1 } }; } }) }) } as unknown as D1Database;
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'calendar-event-1' }), { status: 200 }));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ attendees: [{ email: 'existing@example.com' }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'calendar-event-1' }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
     const record = await deliverCalendarInvitation({ database, accessToken: 'token', eventId: 'event-1', calendarEventId: 'calendar-event-1', recipientEmail: 'guest@example.com' });
 
     expect(record).toMatchObject({ eventId: 'event-1', destination: 'guest@example.com', channel: 'calendar', outcome: 'succeeded', externalId: 'calendar-event-1' });
-    expect(fetchMock).toHaveBeenCalledWith('https://www.googleapis.com/calendar/v3/calendars/primary/events/calendar-event-1?sendUpdates=all', expect.objectContaining({ method: 'PATCH' }));
+    expect(fetchMock).toHaveBeenNthCalledWith(1, 'https://www.googleapis.com/calendar/v3/calendars/primary/events/calendar-event-1', expect.anything());
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'https://www.googleapis.com/calendar/v3/calendars/primary/events/calendar-event-1?sendUpdates=all', expect.objectContaining({ method: 'PATCH' }));
+    expect(JSON.parse(fetchMock.mock.calls[1]?.[1].body as string)).toEqual({ attendees: [{ email: 'existing@example.com' }, { email: 'guest@example.com' }] });
     expect(writes[0]).toContain('succeeded');
     vi.unstubAllGlobals();
   });

@@ -28,12 +28,16 @@ export const deliverCalendarInvitation = async (input: {
   recipientEmail: string;
 }): Promise<DeliveryAttempt> => {
   try {
+    const existing = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(input.calendarEventId)}`, { headers: { Authorization: `Bearer ${input.accessToken}` } });
+    const event = existing.ok ? await existing.json() as { attendees?: Array<{ email?: string }> } : { attendees: [] };
+    const attendees = event.attendees ?? [];
+    if (!attendees.some((attendee) => attendee.email?.toLowerCase() === input.recipientEmail.toLowerCase())) attendees.push({ email: input.recipientEmail });
     const response = await fetch(
       `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(input.calendarEventId)}?sendUpdates=all`,
       {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${input.accessToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ attendees: [{ email: input.recipientEmail }] }),
+        body: JSON.stringify({ attendees }),
       },
     );
     const body = await response.json() as { id?: string; error?: { message?: string } };
