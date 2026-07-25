@@ -904,6 +904,27 @@ app.patch('/api/organizations/:organizationId/rules/:ruleId', async (context) =>
   }
 });
 
+app.get('/api/organizations/:organizationId/recipients', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const rows = await access.database.prepare('SELECT id, name, email, state, tags, created_at, updated_at FROM recipient_profiles ORDER BY name')
+      .all<{ id: string; name: string; email: string; state: string; tags: string; created_at: string; updated_at: string }>();
+    return json(context, rows.results.map((row) => ({
+      id: row.id,
+      organizationId: access.organization.id,
+      name: row.name,
+      email: row.email,
+      state: row.state,
+      tags: JSON.parse(row.tags) as string[],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    })));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Recipient Profiles could not be loaded.', 403);
+  }
+});
+
 app.post('/api/organizations/:organizationId/recipients', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));

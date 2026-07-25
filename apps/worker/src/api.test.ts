@@ -238,6 +238,21 @@ describe('Automation Rules', () => {
 });
 
 describe('Recipient Profiles', () => {
+  it('lists Recipient Profiles from only the current Organization database', async () => {
+    const controlDatabase = {
+      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
+        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'viewer-identity', email: 'viewer@example.com', display_name: 'Viewer' };
+        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'viewer' };
+        return null;
+      } }) }),
+    } as unknown as D1Database;
+    const organizationDatabase = { prepare: (_sql: string) => ({ all: async () => ({ results: [{ id: 'recipient-1', name: 'Guest', email: 'guest@example.com', state: 'active', tags: '[]', created_at: '2026-07-25T00:00:00.000Z', updated_at: '2026-07-25T00:00:00.000Z' }] }) }) } as unknown as D1Database;
+    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/recipients', { headers: { Cookie: 'mail_session=session-1' } }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ data: [{ id: 'recipient-1', email: 'guest@example.com' }] });
+  });
+
   it('lets an Operator create a separate Recipient Profile in the Organization database', async () => {
     const writes: unknown[][] = [];
     const controlDatabase = {
