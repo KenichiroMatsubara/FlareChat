@@ -1,4 +1,5 @@
-import { index, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { sql } from 'drizzle-orm';
+import { check, index, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const organizations = sqliteTable('organizations', {
   id: text('id').primaryKey(),
@@ -9,6 +10,7 @@ export const organizations = sqliteTable('organizations', {
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
+  check('organizations_status_check', sql`${table.status} in ('provisioning', 'active', 'suspended', 'failed')`),
   index('organizations_status_idx').on(table.status),
 ]);
 
@@ -29,6 +31,8 @@ export const members = sqliteTable('members', {
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
   primaryKey({ columns: [table.organizationId, table.identityId] }),
+  check('members_role_check', sql`${table.role} in ('owner', 'admin', 'operator', 'viewer')`),
+  check('members_state_check', sql`${table.state} in ('pending', 'active', 'suspended', 'removed')`),
   index('members_identity_idx').on(table.identityId, table.state),
 ]);
 
@@ -68,6 +72,8 @@ export const organizationSetups = sqliteTable('organization_setups', {
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
+  check('organization_setups_state_check', sql`${table.state} in ('awaiting_google', 'awaiting_name', 'provisioning', 'active', 'expired', 'failed')`),
+  check('organization_setups_provisioning_phase_check', sql`${table.provisioningPhase} is null or ${table.provisioningPhase} in ('allocating_database', 'applying_schema', 'storing_credentials', 'verifying_binding', 'activating_organization')`),
   index('setups_state_expiry_idx').on(table.state, table.expiresAt),
 ]);
 
@@ -112,6 +118,7 @@ export const recoveryRequests = sqliteTable('recovery_requests', {
   createdAt: text('created_at').notNull(),
   executedAt: text('executed_at'),
 }, (table) => [
+  check('recovery_requests_state_check', sql`${table.state} in ('requested', 'executing', 'completed', 'failed')`),
   uniqueIndex('recovery_requests_organization_idempotency_idx').on(table.organizationId, table.idempotencyKey),
   index('recovery_requests_org_state_idx').on(table.organizationId, table.state, table.createdAt),
 ]);

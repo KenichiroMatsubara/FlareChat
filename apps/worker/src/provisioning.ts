@@ -1,6 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm';
 
-import organizationSchemaMigration from '../drizzle/organization/0000_canonical.sql';
+import organizationSchemaMigration from '../migrations/organization/0000_initial.sql';
 import { createOrganizationKey, decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
 import { provisionOrganizationDatabase } from './organization-db';
 import { controlDatabase, organizationDatabase } from './storage/database';

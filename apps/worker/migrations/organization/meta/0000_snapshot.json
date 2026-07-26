@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "546cc4a2-e5d5-45dc-a43b-58ac9353017f",
+  "id": "79012d9a-cc37-42a7-b0b8-491405c79083",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "attendance": {
@@ -106,7 +106,12 @@
         }
       },
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "attendance_status_check": {
+          "name": "attendance_status_check",
+          "value": "\"attendance\".\"status\" in ('unanswered', 'attending', 'not_attending')"
+        }
+      }
     },
     "connections": {
       "name": "connections",
@@ -166,7 +171,16 @@
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "connections_kind_check": {
+          "name": "connections_kind_check",
+          "value": "\"connections\".\"kind\" in ('line', 'ai')"
+        },
+        "connections_status_check": {
+          "name": "connections_status_check",
+          "value": "\"connections\".\"status\" in ('active', 'disconnected')"
+        }
+      }
     },
     "deliveries": {
       "name": "deliveries",
@@ -395,7 +409,12 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "event_attachments_outcome_check": {
+          "name": "event_attachments_outcome_check",
+          "value": "\"event_attachments\".\"outcome\" in ('succeeded', 'failed')"
+        }
+      }
     },
     "event_overrides": {
       "name": "event_overrides",
@@ -696,7 +715,12 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "events_status_check": {
+          "name": "events_status_check",
+          "value": "\"events\".\"status\" in ('draft', 'scheduled', 'cancelled', 'exception')"
+        }
+      }
     },
     "exceptions": {
       "name": "exceptions",
@@ -778,7 +802,12 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "exceptions_state_check": {
+          "name": "exceptions_state_check",
+          "value": "\"exceptions\".\"state\" in ('open', 'resolved', 'retry_requested')"
+        }
+      }
     },
     "google_connections": {
       "name": "google_connections",
@@ -895,7 +924,20 @@
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "google_connections_kind_check": {
+          "name": "google_connections_kind_check",
+          "value": "\"google_connections\".\"kind\" = 'automation_inbox'"
+        },
+        "google_connections_enabled_check": {
+          "name": "google_connections_enabled_check",
+          "value": "\"google_connections\".\"enabled\" in (0, 1)"
+        },
+        "google_connections_status_check": {
+          "name": "google_connections_status_check",
+          "value": "\"google_connections\".\"status\" in ('active', 'reauthentication_required', 'disconnected')"
+        }
+      }
     },
     "jobs": {
       "name": "jobs",
@@ -993,7 +1035,12 @@
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "jobs_state_check": {
+          "name": "jobs_state_check",
+          "value": "\"jobs\".\"state\" in ('pending', 'running', 'succeeded', 'failed')"
+        }
+      }
     },
     "line_destinations": {
       "name": "line_destinations",
@@ -1076,7 +1123,16 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "line_destinations_kind_check": {
+          "name": "line_destinations_kind_check",
+          "value": "\"line_destinations\".\"kind\" in ('user', 'group', 'room')"
+        },
+        "line_destinations_status_check": {
+          "name": "line_destinations_status_check",
+          "value": "\"line_destinations\".\"status\" in ('discovered', 'disabled')"
+        }
+      }
     },
     "list_items": {
       "name": "list_items",
@@ -1146,7 +1202,12 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "list_items_enabled_check": {
+          "name": "list_items_enabled_check",
+          "value": "\"list_items\".\"enabled\" in (0, 1)"
+        }
+      }
     },
     "lists": {
       "name": "lists",
@@ -1214,7 +1275,12 @@
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "lists_kind_check": {
+          "name": "lists_kind_check",
+          "value": "\"lists\".\"kind\" in ('source', 'recipient', 'line')"
+        }
+      }
     },
     "recipient_line_destinations": {
       "name": "recipient_line_destinations",
@@ -1415,7 +1481,12 @@
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "recipient_profiles_state_check": {
+          "name": "recipient_profiles_state_check",
+          "value": "\"recipient_profiles\".\"state\" in ('active', 'inactive')"
+        }
+      }
     },
     "rule_revisions": {
       "name": "rule_revisions",
@@ -1658,7 +1729,16 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "rules_status_check": {
+          "name": "rules_status_check",
+          "value": "\"rules\".\"status\" in ('draft', 'active', 'suspended', 'archived')"
+        },
+        "rules_require_attendance_check": {
+          "name": "rules_require_attendance_check",
+          "value": "\"rules\".\"require_attendance\" in (0, 1)"
+        }
+      }
     },
     "settings": {
       "name": "settings",
@@ -1764,7 +1844,12 @@
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "source_messages_state_check": {
+          "name": "source_messages_state_check",
+          "value": "\"source_messages\".\"state\" in ('pending', 'processing', 'processed', 'skipped', 'exception')"
+        }
+      }
     }
   },
   "views": {},

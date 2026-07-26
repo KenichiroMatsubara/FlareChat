@@ -41,7 +41,9 @@ CREATE TABLE `members` (
 	`updated_at` text NOT NULL,
 	PRIMARY KEY(`organization_id`, `identity_id`),
 	FOREIGN KEY (`organization_id`) REFERENCES `organizations`(`id`) ON UPDATE no action ON DELETE cascade,
-	FOREIGN KEY (`identity_id`) REFERENCES `identities`(`id`) ON UPDATE no action ON DELETE cascade
+	FOREIGN KEY (`identity_id`) REFERENCES `identities`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "members_role_check" CHECK("members"."role" in ('owner', 'admin', 'operator', 'viewer')),
+	CONSTRAINT "members_state_check" CHECK("members"."state" in ('pending', 'active', 'suspended', 'removed'))
 );
 --> statement-breakpoint
 CREATE INDEX `members_identity_idx` ON `members` (`identity_id`,`state`);--> statement-breakpoint
@@ -77,7 +79,9 @@ CREATE TABLE `organization_setups` (
 	`created_at` text NOT NULL,
 	`updated_at` text NOT NULL,
 	FOREIGN KEY (`owner_identity_id`) REFERENCES `identities`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`organization_id`) REFERENCES `organizations`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`organization_id`) REFERENCES `organizations`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "organization_setups_state_check" CHECK("organization_setups"."state" in ('awaiting_google', 'awaiting_name', 'provisioning', 'active', 'expired', 'failed')),
+	CONSTRAINT "organization_setups_provisioning_phase_check" CHECK("organization_setups"."provisioning_phase" is null or "organization_setups"."provisioning_phase" in ('allocating_database', 'applying_schema', 'storing_credentials', 'verifying_binding', 'activating_organization'))
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `organization_setups_inbox_address_unique` ON `organization_setups` (`inbox_address`);--> statement-breakpoint
@@ -90,7 +94,8 @@ CREATE TABLE `organizations` (
 	`database_id` text,
 	`binding_name` text NOT NULL,
 	`created_at` text NOT NULL,
-	`updated_at` text NOT NULL
+	`updated_at` text NOT NULL,
+	CONSTRAINT "organizations_status_check" CHECK("organizations"."status" in ('provisioning', 'active', 'suspended', 'failed'))
 );
 --> statement-breakpoint
 CREATE INDEX `organizations_status_idx` ON `organizations` (`status`);--> statement-breakpoint
@@ -106,7 +111,8 @@ CREATE TABLE `recovery_requests` (
 	`executed_at` text,
 	FOREIGN KEY (`organization_id`) REFERENCES `organizations`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`requested_by_identity_id`) REFERENCES `identities`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`executed_by_identity_id`) REFERENCES `identities`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`executed_by_identity_id`) REFERENCES `identities`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "recovery_requests_state_check" CHECK("recovery_requests"."state" in ('requested', 'executing', 'completed', 'failed'))
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `recovery_requests_organization_idempotency_idx` ON `recovery_requests` (`organization_id`,`idempotency_key`);--> statement-breakpoint

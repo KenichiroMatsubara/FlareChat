@@ -8,7 +8,8 @@ CREATE TABLE `attendance` (
 	`updated_at` text NOT NULL,
 	PRIMARY KEY(`event_id`, `recipient_item_id`),
 	FOREIGN KEY (`event_id`) REFERENCES `events`(`id`) ON UPDATE no action ON DELETE cascade,
-	FOREIGN KEY (`recipient_item_id`) REFERENCES `list_items`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`recipient_item_id`) REFERENCES `list_items`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "attendance_status_check" CHECK("attendance"."status" in ('unanswered', 'attending', 'not_attending'))
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `attendance_token_unique` ON `attendance` (`token`);--> statement-breakpoint
@@ -19,7 +20,9 @@ CREATE TABLE `connections` (
 	`credential` text NOT NULL,
 	`status` text DEFAULT 'active' NOT NULL,
 	`created_at` text NOT NULL,
-	`updated_at` text NOT NULL
+	`updated_at` text NOT NULL,
+	CONSTRAINT "connections_kind_check" CHECK("connections"."kind" in ('line', 'ai')),
+	CONSTRAINT "connections_status_check" CHECK("connections"."status" in ('active', 'disconnected'))
 );
 --> statement-breakpoint
 CREATE TABLE `deliveries` (
@@ -52,7 +55,8 @@ CREATE TABLE `event_attachments` (
 	`public_url` text,
 	`outcome` text NOT NULL,
 	`created_at` text NOT NULL,
-	FOREIGN KEY (`event_id`) REFERENCES `events`(`id`) ON UPDATE no action ON DELETE cascade
+	FOREIGN KEY (`event_id`) REFERENCES `events`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "event_attachments_outcome_check" CHECK("event_attachments"."outcome" in ('succeeded', 'failed'))
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `event_attachments_event_gmail_idx` ON `event_attachments` (`event_id`,`gmail_attachment_id`);--> statement-breakpoint
@@ -95,7 +99,8 @@ CREATE TABLE `events` (
 	`created_at` text NOT NULL,
 	`updated_at` text NOT NULL,
 	FOREIGN KEY (`rule_id`) REFERENCES `rules`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`source_message_id`) REFERENCES `source_messages`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`source_message_id`) REFERENCES `source_messages`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "events_status_check" CHECK("events"."status" in ('draft', 'scheduled', 'cancelled', 'exception'))
 );
 --> statement-breakpoint
 CREATE INDEX `events_start_idx` ON `events` (`starts_at`);--> statement-breakpoint
@@ -107,7 +112,8 @@ CREATE TABLE `exceptions` (
 	`state` text DEFAULT 'open' NOT NULL,
 	`created_at` text NOT NULL,
 	`resolved_at` text,
-	FOREIGN KEY (`source_message_id`) REFERENCES `source_messages`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`source_message_id`) REFERENCES `source_messages`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "exceptions_state_check" CHECK("exceptions"."state" in ('open', 'resolved', 'retry_requested'))
 );
 --> statement-breakpoint
 CREATE INDEX `exceptions_state_idx` ON `exceptions` (`state`);--> statement-breakpoint
@@ -124,7 +130,10 @@ CREATE TABLE `google_connections` (
 	`last_synced_at` text,
 	`last_error` text,
 	`created_at` text NOT NULL,
-	`updated_at` text NOT NULL
+	`updated_at` text NOT NULL,
+	CONSTRAINT "google_connections_kind_check" CHECK("google_connections"."kind" = 'automation_inbox'),
+	CONSTRAINT "google_connections_enabled_check" CHECK("google_connections"."enabled" in (0, 1)),
+	CONSTRAINT "google_connections_status_check" CHECK("google_connections"."status" in ('active', 'reauthentication_required', 'disconnected'))
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `google_connections_google_subject_unique` ON `google_connections` (`google_subject`);--> statement-breakpoint
@@ -139,7 +148,8 @@ CREATE TABLE `jobs` (
 	`idempotency_key` text NOT NULL,
 	`last_error` text,
 	`created_at` text NOT NULL,
-	`updated_at` text NOT NULL
+	`updated_at` text NOT NULL,
+	CONSTRAINT "jobs_state_check" CHECK("jobs"."state" in ('pending', 'running', 'succeeded', 'failed'))
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `jobs_idempotency_key_unique` ON `jobs` (`idempotency_key`);--> statement-breakpoint
@@ -152,7 +162,9 @@ CREATE TABLE `line_destinations` (
 	`status` text DEFAULT 'discovered' NOT NULL,
 	`discovered_at` text NOT NULL,
 	`updated_at` text NOT NULL,
-	FOREIGN KEY (`connection_id`) REFERENCES `connections`(`id`) ON UPDATE no action ON DELETE cascade
+	FOREIGN KEY (`connection_id`) REFERENCES `connections`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "line_destinations_kind_check" CHECK("line_destinations"."kind" in ('user', 'group', 'room')),
+	CONSTRAINT "line_destinations_status_check" CHECK("line_destinations"."status" in ('discovered', 'disabled'))
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `line_destinations_connection_destination_idx` ON `line_destinations` (`connection_id`,`destination_id`);--> statement-breakpoint
@@ -162,7 +174,8 @@ CREATE TABLE `list_items` (
 	`value` text NOT NULL,
 	`label` text DEFAULT '' NOT NULL,
 	`enabled` integer DEFAULT true NOT NULL,
-	FOREIGN KEY (`list_id`) REFERENCES `lists`(`id`) ON UPDATE no action ON DELETE cascade
+	FOREIGN KEY (`list_id`) REFERENCES `lists`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "list_items_enabled_check" CHECK("list_items"."enabled" in (0, 1))
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `list_items_list_value_idx` ON `list_items` (`list_id`,`value`);--> statement-breakpoint
@@ -173,7 +186,8 @@ CREATE TABLE `lists` (
 	`name` text NOT NULL,
 	`description` text DEFAULT '' NOT NULL,
 	`created_at` text NOT NULL,
-	`updated_at` text NOT NULL
+	`updated_at` text NOT NULL,
+	CONSTRAINT "lists_kind_check" CHECK("lists"."kind" in ('source', 'recipient', 'line'))
 );
 --> statement-breakpoint
 CREATE INDEX `lists_kind_idx` ON `lists` (`kind`);--> statement-breakpoint
@@ -203,7 +217,8 @@ CREATE TABLE `recipient_profiles` (
 	`state` text DEFAULT 'active' NOT NULL,
 	`tags` text DEFAULT '[]' NOT NULL,
 	`created_at` text NOT NULL,
-	`updated_at` text NOT NULL
+	`updated_at` text NOT NULL,
+	CONSTRAINT "recipient_profiles_state_check" CHECK("recipient_profiles"."state" in ('active', 'inactive'))
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `recipient_profiles_email_unique` ON `recipient_profiles` (`email`);--> statement-breakpoint
@@ -236,7 +251,9 @@ CREATE TABLE `rules` (
 	`updated_at` text NOT NULL,
 	FOREIGN KEY (`source_list_id`) REFERENCES `lists`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`recipient_list_id`) REFERENCES `lists`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`line_list_id`) REFERENCES `lists`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`line_list_id`) REFERENCES `lists`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "rules_status_check" CHECK("rules"."status" in ('draft', 'active', 'suspended', 'archived')),
+	CONSTRAINT "rules_require_attendance_check" CHECK("rules"."require_attendance" in (0, 1))
 );
 --> statement-breakpoint
 CREATE INDEX `rules_status_idx` ON `rules` (`status`);--> statement-breakpoint
@@ -254,7 +271,8 @@ CREATE TABLE `source_messages` (
 	`subject` text NOT NULL,
 	`received_at` text NOT NULL,
 	`processed_at` text,
-	`state` text DEFAULT 'pending' NOT NULL
+	`state` text DEFAULT 'pending' NOT NULL,
+	CONSTRAINT "source_messages_state_check" CHECK("source_messages"."state" in ('pending', 'processing', 'processed', 'skipped', 'exception'))
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `source_messages_gmail_message_id_unique` ON `source_messages` (`gmail_message_id`);

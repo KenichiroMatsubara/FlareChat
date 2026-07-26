@@ -1,4 +1,5 @@
-import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { sql } from 'drizzle-orm';
+import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const settings = sqliteTable('settings', {
   key: text('key').primaryKey(),
@@ -15,6 +16,7 @@ export const lists = sqliteTable('lists', {
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
+  check('lists_kind_check', sql`${table.kind} in ('source', 'recipient', 'line')`),
   index('lists_kind_idx').on(table.kind),
 ]);
 
@@ -26,6 +28,7 @@ export const listItems = sqliteTable('list_items', {
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
 }, (table) => [
   uniqueIndex('list_items_list_value_idx').on(table.listId, table.value),
+  check('list_items_enabled_check', sql`${table.enabled} in (0, 1)`),
 ]);
 
 export const rules = sqliteTable('rules', {
@@ -45,6 +48,8 @@ export const rules = sqliteTable('rules', {
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
+  check('rules_status_check', sql`${table.status} in ('draft', 'active', 'suspended', 'archived')`),
+  check('rules_require_attendance_check', sql`${table.requireAttendance} in (0, 1)`),
   index('rules_status_idx').on(table.status),
 ]);
 
@@ -68,7 +73,9 @@ export const sourceMessages = sqliteTable('source_messages', {
   receivedAt: text('received_at').notNull(),
   processedAt: text('processed_at'),
   state: text('state', { enum: ['pending', 'processing', 'processed', 'skipped', 'exception'] }).notNull().default('pending'),
-});
+}, (table) => [
+  check('source_messages_state_check', sql`${table.state} in ('pending', 'processing', 'processed', 'skipped', 'exception')`),
+]);
 
 export const events = sqliteTable('events', {
   id: text('id').primaryKey(),
@@ -86,6 +93,7 @@ export const events = sqliteTable('events', {
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
+  check('events_status_check', sql`${table.status} in ('draft', 'scheduled', 'cancelled', 'exception')`),
   index('events_start_idx').on(table.startsAt),
 ]);
 
@@ -110,6 +118,7 @@ export const attendance = sqliteTable('attendance', {
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
   primaryKey({ columns: [table.eventId, table.recipientItemId] }),
+  check('attendance_status_check', sql`${table.status} in ('unanswered', 'attending', 'not_attending')`),
 ]);
 
 export const jobs = sqliteTable('jobs', {
@@ -124,6 +133,7 @@ export const jobs = sqliteTable('jobs', {
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
+  check('jobs_state_check', sql`${table.state} in ('pending', 'running', 'succeeded', 'failed')`),
   index('jobs_due_idx').on(table.state, table.availableAt),
 ]);
 
@@ -136,6 +146,7 @@ export const exceptions = sqliteTable('exceptions', {
   createdAt: text('created_at').notNull(),
   resolvedAt: text('resolved_at'),
 }, (table) => [
+  check('exceptions_state_check', sql`${table.state} in ('open', 'resolved', 'retry_requested')`),
   index('exceptions_state_idx').on(table.state),
 ]);
 
@@ -147,7 +158,10 @@ export const connections = sqliteTable('connections', {
   status: text('status', { enum: ['active', 'disconnected'] }).notNull().default('active'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
-});
+}, (table) => [
+  check('connections_kind_check', sql`${table.kind} in ('line', 'ai')`),
+  check('connections_status_check', sql`${table.status} in ('active', 'disconnected')`),
+]);
 
 export const googleConnections = sqliteTable('google_connections', {
   id: text('id').primaryKey(),
@@ -163,7 +177,11 @@ export const googleConnections = sqliteTable('google_connections', {
   lastError: text('last_error'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
-});
+}, (table) => [
+  check('google_connections_kind_check', sql`${table.kind} = 'automation_inbox'`),
+  check('google_connections_enabled_check', sql`${table.enabled} in (0, 1)`),
+  check('google_connections_status_check', sql`${table.status} in ('active', 'reauthentication_required', 'disconnected')`),
+]);
 
 export const deliveries = sqliteTable('deliveries', {
   id: text('id').primaryKey(),
@@ -192,7 +210,9 @@ export const recipientProfiles = sqliteTable('recipient_profiles', {
   tags: text('tags').notNull().default('[]'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
-});
+}, (table) => [
+  check('recipient_profiles_state_check', sql`${table.state} in ('active', 'inactive')`),
+]);
 
 export const eventRecipients = sqliteTable('event_recipients', {
   eventId: text('event_id').notNull().references(() => events.id, { onDelete: 'cascade' }),
@@ -213,6 +233,8 @@ export const lineDestinations = sqliteTable('line_destinations', {
   discoveredAt: text('discovered_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
+  check('line_destinations_kind_check', sql`${table.kind} in ('user', 'group', 'room')`),
+  check('line_destinations_status_check', sql`${table.status} in ('discovered', 'disabled')`),
   uniqueIndex('line_destinations_connection_destination_idx').on(table.connectionId, table.destinationId),
 ]);
 
@@ -244,6 +266,7 @@ export const eventAttachments = sqliteTable('event_attachments', {
   outcome: text('outcome', { enum: ['succeeded', 'failed'] }).notNull(),
   createdAt: text('created_at').notNull(),
 }, (table) => [
+  check('event_attachments_outcome_check', sql`${table.outcome} in ('succeeded', 'failed')`),
   uniqueIndex('event_attachments_event_gmail_idx').on(table.eventId, table.gmailAttachmentId),
   index('event_attachments_event_idx').on(table.eventId, table.createdAt),
 ]);

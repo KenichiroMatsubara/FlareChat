@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "d84619d5-8dc8-4bfd-86b9-6f1685b424d3",
+  "id": "b82b9c4b-e114-4553-aa3f-3ff541e8cb7c",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "gemini_oauth_states": {
@@ -319,7 +319,16 @@
         }
       },
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "members_role_check": {
+          "name": "members_role_check",
+          "value": "\"members\".\"role\" in ('owner', 'admin', 'operator', 'viewer')"
+        },
+        "members_state_check": {
+          "name": "members_state_check",
+          "value": "\"members\".\"state\" in ('pending', 'active', 'suspended', 'removed')"
+        }
+      }
     },
     "organization_keys": {
       "name": "organization_keys",
@@ -585,7 +594,16 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "organization_setups_state_check": {
+          "name": "organization_setups_state_check",
+          "value": "\"organization_setups\".\"state\" in ('awaiting_google', 'awaiting_name', 'provisioning', 'active', 'expired', 'failed')"
+        },
+        "organization_setups_provisioning_phase_check": {
+          "name": "organization_setups_provisioning_phase_check",
+          "value": "\"organization_setups\".\"provisioning_phase\" is null or \"organization_setups\".\"provisioning_phase\" in ('allocating_database', 'applying_schema', 'storing_credentials', 'verifying_binding', 'activating_organization')"
+        }
+      }
     },
     "organizations": {
       "name": "organizations",
@@ -652,7 +670,12 @@
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "organizations_status_check": {
+          "name": "organizations_status_check",
+          "value": "\"organizations\".\"status\" in ('provisioning', 'active', 'suspended', 'failed')"
+        }
+      }
     },
     "recovery_requests": {
       "name": "recovery_requests",
@@ -783,7 +806,12 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "recovery_requests_state_check": {
+          "name": "recovery_requests_state_check",
+          "value": "\"recovery_requests\".\"state\" in ('requested', 'executing', 'completed', 'failed')"
+        }
+      }
     },
     "sessions": {
       "name": "sessions",
