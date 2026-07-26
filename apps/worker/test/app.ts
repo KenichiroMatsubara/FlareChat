@@ -36,8 +36,9 @@ export const createTestApp = (
     name: 'Organization One',
   });
   control.execute(
-    'INSERT INTO identities (id, email, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+    'INSERT INTO identities (id, google_subject, email, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
     'identity-1',
+    'google-subject-1',
     'owner@example.com',
     'Owner',
     CREATED_AT,
@@ -61,6 +62,16 @@ export const createTestApp = (
     CREATED_AT,
   );
   if (options.includeAutomationInbox !== false) {
+    control.execute(
+      `INSERT INTO automation_inbox_claims
+        (google_subject, inbox_address, organization_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      'google-subject-1',
+      'owner@example.com',
+      'organization-1',
+      CREATED_AT,
+      CREATED_AT,
+    );
     organization.execute(
       `INSERT INTO google_connections
         (id, kind, google_subject, inbox_address, granted_scopes, token_envelope, gmail_history_id, enabled, status, created_at, updated_at)

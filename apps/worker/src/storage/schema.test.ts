@@ -45,11 +45,13 @@ describe('canonical D1 schemas', () => {
 
   it('creates only Control-plane tables in Control D1', () => {
     expect(tableNames('control')).toEqual([
+      'automation_inbox_claims',
       'gemini_oauth_states',
-      'google_login_states',
       'identities',
       'members',
+      'oauth_flows',
       'organization_keys',
+      'organization_provisionings',
       'organization_setups',
       'organizations',
       'recovery_requests',

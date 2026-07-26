@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { app } from './api';
-import { provisionSetup } from './provisioning';
+import { provisionOrganization } from './provisioning';
 import { createProvisioningTestApp, type ProvisioningTestApp } from '../test/provisioning';
 
 let fixture: ProvisioningTestApp | undefined;
@@ -18,7 +18,7 @@ describe('Organization provisioning', () => {
     const cloudflare = vi.fn();
     vi.stubGlobal('fetch', cloudflare);
 
-    await provisionSetup(fixture.environment, fixture.setup);
+    await provisionOrganization(fixture.environment, fixture.provisioning);
 
     const automation = await app.fetch(new Request(
       'https://app.example.com/api/organizations/organization-1/automation',
@@ -28,9 +28,9 @@ describe('Organization provisioning', () => {
       'https://app.example.com/api/auth/me',
       { headers: { Cookie: 'mail_session=session-1' } },
     ), fixture.environment);
-    const setup = await app.fetch(new Request(
-      'https://app.example.com/api/setup/current',
-      { headers: { Cookie: 'mail_setup=setup-1' } },
+    const bootstrap = await app.fetch(new Request(
+      'https://app.example.com/api/bootstrap',
+      { headers: { Cookie: 'mail_session=session-1' } },
     ), fixture.environment);
 
     await expect(automation.json()).resolves.toMatchObject({
@@ -45,8 +45,8 @@ describe('Organization provisioning', () => {
         }],
       },
     });
-    await expect(setup.json()).resolves.toMatchObject({
-      data: { status: 'active', inboxAddress: 'owner@example.com' },
+    await expect(bootstrap.json()).resolves.toMatchObject({
+      data: { kind: 'ready' },
     });
     expect(cloudflare).not.toHaveBeenCalled();
   });

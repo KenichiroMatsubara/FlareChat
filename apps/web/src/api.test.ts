@@ -1,15 +1,24 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { api } from './api';
-import { defaultOrganizationName, setupPhaseLabel, shouldShowOrganizationLoading, shouldShowOrganizationSetup } from './app';
+import { defaultOrganizationName, setupPhaseLabel, shouldShowOrganizationLoading } from './app';
 
 describe('Organization setup client', () => {
-  it('moves a signed-in user without an Organization to setup instead of showing the login screen again', () => {
-    expect(shouldShowOrganizationSetup(null, false, { email: 'owner@example.com', displayName: 'Owner', organizations: [] })).toBe(true);
-    expect(shouldShowOrganizationSetup(null, true, null)).toBe(false);
-    expect(shouldShowOrganizationSetup({ id: 'setup-1', name: 'Example', inboxAddress: 'inbox@example.com', status: 'active', expiresAt: '', provisioningExpiresAt: null, phase: null, error: null }, false, {
-      email: 'owner@example.com', displayName: 'Owner', organizations: [{ organizationId: 'organization-1', name: 'Example', role: 'owner', status: 'active' }],
-    })).toBe(false);
+  it('loads one discriminated application state from the bootstrap interface', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: {
+        kind: 'ready',
+        identity: { email: 'owner@example.com', displayName: 'Owner' },
+        organizations: [{ organizationId: 'organization-1', name: 'Example', role: 'owner', status: 'active' }],
+      },
+    }), { status: 200 })));
+
+    await expect(api.bootstrap()).resolves.toMatchObject({
+      kind: 'ready',
+      organizations: [{ organizationId: 'organization-1' }],
+    });
+
+    vi.unstubAllGlobals();
   });
 
   it('defaults the Organization name to the authenticated Google account name', () => {
@@ -20,7 +29,7 @@ describe('Organization setup client', () => {
   it('reports an empty upstream response without exposing a JSON parser exception', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 502 })));
 
-    await expect(api.currentOrganizationSetup()).rejects.toThrow('サービスに接続できません。開発サーバーが起動しているか確認してください。');
+    await expect(api.bootstrap()).rejects.toThrow('サービスに接続できません。開発サーバーが起動しているか確認してください。');
 
     vi.unstubAllGlobals();
   });

@@ -1,7 +1,7 @@
 import { attachD1Binding, createD1Database, queryD1, verifyD1Schema } from './cloudflare';
 import { and, isNotNull, ne } from 'drizzle-orm';
 import { controlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
-import { organizations, organizationSetups } from './storage/control-schema';
+import { organizationProvisionings, organizations } from './storage/control-schema';
 import { googleConnections } from './storage/organization-schema';
 
 import type { Bindings } from './types';
@@ -72,7 +72,6 @@ export interface OrganizationDatabaseProvisioning {
 
 interface ProvisionOrganizationDatabaseInput {
   organizationId: string;
-  setupId: string;
   bindingName: string;
   databaseId: string | null;
 }
@@ -93,16 +92,16 @@ const localDatabaseLocation = async (
     };
   }
   const control = controlDatabase(env.CONTROL_DB);
-  const [activeBindings, setupBindings] = await Promise.all([
+  const [activeBindings, provisioningBindings] = await Promise.all([
     control.select({ bindingName: organizations.bindingName }).from(organizations)
       .where(isNotNull(organizations.databaseId)).all(),
-    control.select({ bindingName: organizationSetups.bindingName }).from(organizationSetups).where(and(
-      isNotNull(organizationSetups.databaseId),
-      ne(organizationSetups.state, 'expired'),
-      ne(organizationSetups.id, input.setupId),
+    control.select({ bindingName: organizationProvisionings.bindingName })
+      .from(organizationProvisionings).where(and(
+      isNotNull(organizationProvisionings.databaseId),
+      ne(organizationProvisionings.organizationId, input.organizationId),
     )).all(),
   ]);
-  const used = new Set([...activeBindings, ...setupBindings].flatMap((row) => row.bindingName ? [row.bindingName] : []));
+  const used = new Set([...activeBindings, ...provisioningBindings].map((row) => row.bindingName));
   const bindingName = bindings.find((name) => !used.has(name));
   if (!bindingName) throw new Error('No local Organization database slot is available. Reset an unused local Organization or add another local D1 binding.');
   const database = boundDatabase(env, bindingName);

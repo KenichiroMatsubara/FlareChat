@@ -1,4 +1,4 @@
-import { retryProvisioning } from './api';
+import { retryProvisioning } from './onboarding';
 import { enqueueDueOrganizationAttendanceReminders } from './attendance-reminders';
 import { runEnabledAutomations } from './automation';
 import { organizationDatabase } from './organization-db';

@@ -1,6 +1,6 @@
 import { createOrganizationKey, encrypt, masterKey } from '../src/cryptography';
 import { controlDatabase } from '../src/storage/database';
-import { organizationSetups, type OrganizationSetupRecord } from '../src/storage/control-schema';
+import { organizationProvisionings, type OrganizationProvisioningRecord } from '../src/storage/control-schema';
 import type { Bindings } from '../src/types';
 import { createMigratedTestD1, createTestD1Database, type TestD1Database } from './d1';
 
@@ -11,7 +11,7 @@ export interface ProvisioningTestApp {
   control: TestD1Database;
   organization: TestD1Database;
   environment: Bindings;
-  setup: OrganizationSetupRecord;
+  provisioning: OrganizationProvisioningRecord;
   close: () => void;
 }
 
@@ -20,14 +20,15 @@ export const createProvisioningTestApp = async (): Promise<ProvisioningTestApp> 
   const organization = createTestD1Database();
   const deploymentKey = await masterKey(TEST_MASTER_KEY);
   const wrapped = await createOrganizationKey(deploymentKey, 'v1', 'organization-1');
-  const setupCredential = await encrypt(
+  const provisioningCredential = await encrypt(
     JSON.stringify({ accessToken: 'access-1', refreshToken: 'refresh-1', scopes: ['scope-1'] }),
     deploymentKey,
-    'setup-credential:setup-1',
+    'automation-inbox-token:google-subject-1',
   );
   control.execute(
-    'INSERT INTO identities (id, email, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+    'INSERT INTO identities (id, google_subject, email, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
     'identity-1',
+    'google-owner-1',
     'owner@example.com',
     'Owner',
     CREATED_AT,
@@ -69,35 +70,29 @@ export const createProvisioningTestApp = async (): Promise<ProvisioningTestApp> 
     CREATED_AT,
   );
   control.execute(
-    `INSERT INTO organization_setups
-      (id, name, state, oauth_state_hash, pkce_verifier_envelope, inbox_address, google_subject, granted_scopes,
-       credential_envelope, history_id, owner_identity_id, organization_id, binding_name, provisioning_key,
-       expires_at, provisioning_expires_at, created_at, updated_at)
-     VALUES (?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    'setup-1',
-    'Example Organization',
-    'state',
-    '{}',
+    `INSERT INTO organization_provisionings
+      (organization_id, owner_identity_id, state, inbox_address, google_subject, granted_scopes,
+       credential_envelope, history_id, binding_name, provisioning_key, expires_at, created_at, updated_at)
+     VALUES (?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    'organization-1',
+    'identity-1',
     'owner@example.com',
     'google-subject-1',
     '["scope-1"]',
-    JSON.stringify(setupCredential),
+    JSON.stringify(provisioningCredential),
     'history-1',
-    'identity-1',
-    'organization-1',
     'ORG_ORGANIZATION1',
     'provisioning-1',
-    '2099-01-01T00:00:00.000Z',
     '2099-01-02T00:00:00.000Z',
     CREATED_AT,
     CREATED_AT,
   );
-  const setup = await controlDatabase(control.binding).select().from(organizationSetups).get();
-  if (!setup) throw new Error('Provisioning test setup could not be created.');
+  const provisioning = await controlDatabase(control.binding).select().from(organizationProvisionings).get();
+  if (!provisioning) throw new Error('Provisioning test state could not be created.');
   return {
     control,
     organization,
-    setup,
+    provisioning,
     environment: {
       CONTROL_DB: control.binding,
       LOCAL_ORGANIZATION_DB_1: organization.binding,

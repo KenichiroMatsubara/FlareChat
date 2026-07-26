@@ -3,25 +3,18 @@ import { cors } from 'hono/cors';
 import { and, asc, count, desc, eq, gt, gte, inArray, isNotNull, isNull, max, ne } from 'drizzle-orm';
 
 import { canUpdateAttendance, discoveredLineDestinations, displayRecipientIdentifier, verifyLineWebhookSignature } from '@mail/domain';
-import type { OrganizationSetup } from '@mail/domain';
 
 import { createMailboxTestCalendarEvent, readMailboxTestSource, runOrganizationAutomation, searchMailboxForTest } from './automation';
 import { decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
-import { randomToken, sha256 } from './encoding';
+import { randomToken } from './encoding';
+import { beginGoogleEntry, completeGoogleEntry, entryConfigurationError } from './entry';
 import {
-  createPkce,
-  exchangeGoogleCode,
-  fetchGmailHistoryId,
-  fetchGoogleIdentity,
-  GOOGLE_IDENTITY_SCOPES,
-  googleAuthorizationUrl,
-  hasCompleteGoogleGrant,
-  missingGoogleScopes,
-  revokeGoogleToken,
-} from './google';
-import { loginReturnOrigin } from './origin';
+  applicationState,
+  cancelOrganizationOnboarding,
+  confirmOrganization,
+  retryOrganizationProvisioning,
+} from './onboarding';
 import { organizationDatabase } from './organization-db';
-import { createSetupOrganizationKey, provisionSetup } from './provisioning';
 import { readRecoveryReceipt, restoreDeliveryRecordFromReceipt } from './recovery-receipts';
 import { exportRecipientCsv, previewRecipientCsv } from './recipients';
 import { failure, json } from './response';
@@ -32,16 +25,13 @@ import type { EventDetails } from './event-details';
 import { controlDatabase as drizzleControlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
 import { createOrganizationStore } from './storage/organization-store';
 import {
-  googleLoginStates,
   identities,
   members,
   organizationKeys,
   organizations,
-  organizationSetups,
   recoveryRequests,
   sessions,
 } from './storage/control-schema';
-import type { OrganizationSetupRecord } from './storage/control-schema';
 import {
   attendance,
   connections as organizationConnections,
@@ -62,12 +52,8 @@ import {
   rules as organizationRules,
 } from './storage/organization-schema';
 
-const SETUP_COOKIE = 'mail_setup';
 const SESSION_COOKIE = 'mail_session';
-const SETUP_WINDOW_MS = 15 * 60 * 1_000;
-const PROVISIONING_WINDOW_MS = 24 * 60 * 60 * 1_000;
 const SESSION_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
-const GOOGLE_LOGIN_WINDOW_MS = 10 * 60 * 1_000;
 const RECIPIENT_LINK_WINDOW_MS = 15 * 60 * 1_000;
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
 export const GEMINI_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.6-flash'] as const;
@@ -101,19 +87,6 @@ app.use('/api/*', cors({ origin: (origin) => origin || 'http://localhost:5173', 
 
 const now = (): string => new Date().toISOString();
 const expiresIn = (milliseconds: number): string => new Date(Date.now() + milliseconds).toISOString();
-const redirectUri = (env: Bindings): string => `${env.APP_URL.replace(/\/$/u, '')}/oauth/google/callback`;
-const googleLoginRedirectUri = (env: Bindings): string => `${env.APP_URL.replace(/\/$/u, '')}/oauth/google/login/callback`;
-const setupView = (row: OrganizationSetupRecord): OrganizationSetup => ({
-  id: row.id,
-  name: row.name,
-  inboxAddress: row.inboxAddress,
-  status: row.state,
-  expiresAt: row.expiresAt,
-  provisioningExpiresAt: row.provisioningExpiresAt,
-  phase: row.provisioningPhase,
-  error: row.errorMessage,
-});
-
 const cookie = (name: string, value: string, secure: boolean, maxAge?: number): string => {
   const secureAttribute = secure ? '; Secure' : '';
   const lifetime = maxAge === undefined ? '' : `; Max-Age=${maxAge}`;
@@ -128,27 +101,6 @@ const requestCookie = (header: string | undefined, name: string): string | null 
     const [key, value] = part.trim().split('=', 2);
     if (key === name && value) return decodeURIComponent(value);
   }
-  return null;
-};
-
-const setupById = (env: Bindings, id: string): Promise<OrganizationSetupRecord | undefined> =>
-  drizzleControlDatabase(env.CONTROL_DB).select().from(organizationSetups)
-    .where(eq(organizationSetups.id, id)).get();
-
-const setupFromRequest = async (request: Request, env: Bindings): Promise<OrganizationSetupRecord | null> => {
-  const id = requestCookie(request.headers.get('Cookie') ?? undefined, SETUP_COOKIE);
-  if (!id) return null;
-  return await setupById(env, id) ?? null;
-};
-
-const validSetup = (row: OrganizationSetupRecord | null, state: OrganizationSetupRecord['state']): OrganizationSetupRecord => {
-  if (!row || row.state !== state || Date.parse(row.expiresAt) <= Date.now()) throw new Error('Setup session expired.');
-  return row;
-};
-
-const configurationError = (env: Bindings): string | null => {
-  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) return 'Google OAuth credentials are not configured.';
-  if (!env.CREDENTIAL_MASTER_KEY || !env.CREDENTIAL_MASTER_KEY_VERSION) return 'Credential encryption is not configured.';
   return null;
 };
 
@@ -272,88 +224,14 @@ export const generatedText = (response: GeminiGenerateContentResponse): string =
 
 app.get('/api/health', (context) => json(context, { status: 'ok', service: 'mail-automation', time: now() }));
 
-app.post('/api/auth/google', async (context) => {
-  const invalid = configurationError(context.env);
+app.post('/api/entry/google', async (context) => {
+  const input = await context.req.json<{ intent?: 'login' | 'organization_setup' }>();
+  if (input.intent !== 'login' && input.intent !== 'organization_setup') return failure(context, 'Unknown Google entry intent.');
+  const invalid = entryConfigurationError(context.env);
   if (invalid) return failure(context, invalid, 503);
-  const id = crypto.randomUUID();
-  const state = randomToken();
-  const pkce = await createPkce();
-  const key = await masterKey(context.env.CREDENTIAL_MASTER_KEY);
-  const verifierEnvelope = await encrypt(pkce.verifier, key, `google-login-pkce:${id}`);
-  const returnOrigin = loginReturnOrigin(context.req.raw, context.env.APP_URL, context.env.WEB_ORIGIN);
-  await drizzleControlDatabase(context.env.CONTROL_DB).insert(googleLoginStates).values({
-    id,
-    stateHash: await sha256(state),
-    pkceVerifierEnvelope: JSON.stringify(verifierEnvelope),
-    returnOrigin,
-    expiresAt: expiresIn(GOOGLE_LOGIN_WINDOW_MS),
-    createdAt: now(),
-  }).run();
   return json(context, {
-    authorizationUrl: googleAuthorizationUrl({
-      clientId: context.env.GOOGLE_CLIENT_ID,
-      redirectUri: googleLoginRedirectUri(context.env),
-      state,
-      challenge: pkce.challenge,
-      scopes: GOOGLE_IDENTITY_SCOPES,
-    }),
+    authorizationUrl: await beginGoogleEntry(context.env, context.req.raw, input.intent),
   }, 201);
-});
-
-app.get('/oauth/google/login/callback', async (context) => {
-  let target = new URL('/', context.env.WEB_ORIGIN || context.env.APP_URL);
-  const code = context.req.query('code');
-  const state = context.req.query('state');
-  if (!code || !state) {
-    target.searchParams.set('error', 'Google ログインがキャンセルされました。');
-    return context.redirect(target.toString());
-  }
-  const control = drizzleControlDatabase(context.env.CONTROL_DB);
-  const login = await control.select({
-    id: googleLoginStates.id,
-    pkceVerifierEnvelope: googleLoginStates.pkceVerifierEnvelope,
-    returnOrigin: googleLoginStates.returnOrigin,
-  }).from(googleLoginStates).where(and(eq(googleLoginStates.stateHash, await sha256(state)), gt(googleLoginStates.expiresAt, now()))).get();
-  if (!login) {
-    target.searchParams.set('error', 'Google ログインの有効期限が切れました。もう一度お試しください。');
-    return context.redirect(target.toString());
-  }
-  target = new URL('/', login.returnOrigin || context.env.WEB_ORIGIN || context.env.APP_URL);
-  try {
-    const key = await masterKey(context.env.CREDENTIAL_MASTER_KEY);
-    const verifier = await decrypt(JSON.parse(login.pkceVerifierEnvelope), key, `google-login-pkce:${login.id}`);
-    const tokenSet = await exchangeGoogleCode({
-      code,
-      verifier,
-      clientId: context.env.GOOGLE_CLIENT_ID,
-      clientSecret: context.env.GOOGLE_CLIENT_SECRET,
-      redirectUri: googleLoginRedirectUri(context.env),
-    });
-    const identity = await fetchGoogleIdentity(tokenSet.accessToken);
-    await revokeGoogleToken(tokenSet.refreshToken);
-    const timestamp = now();
-    await control.insert(identities).values({
-      id: crypto.randomUUID(),
-      email: identity.email,
-      displayName: identity.displayName,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    }).onConflictDoUpdate({
-      target: identities.email,
-      set: { displayName: identity.displayName, updatedAt: timestamp },
-    }).run();
-    const owner = await control.select({ id: identities.id }).from(identities).where(eq(identities.email, identity.email)).get();
-    if (!owner) throw new Error('Google identity could not be stored.');
-    const sessionId = randomToken();
-    await control.batch([
-      control.delete(googleLoginStates).where(eq(googleLoginStates.id, login.id)),
-      control.insert(sessions).values({ id: sessionId, identityId: owner.id, expiresAt: expiresIn(SESSION_WINDOW_MS), createdAt: timestamp, lastSeenAt: timestamp }),
-    ]);
-    context.header('Set-Cookie', cookie(SESSION_COOKIE, sessionId, requestIsSecure(context.req.raw), Math.floor(SESSION_WINDOW_MS / 1_000)));
-  } catch (error) {
-    target.searchParams.set('error', error instanceof Error ? error.message : 'Google ログインに失敗しました。');
-  }
-  return context.redirect(target.toString());
 });
 
 app.get('/api/organizations/:organizationId/automation', async (context) => {
@@ -392,174 +270,52 @@ app.post('/api/organizations/:organizationId/automation/enabled', async (context
   }
 });
 
-app.post('/api/setup', async (context) => {
-  const input = await context.req.json<{ name?: string }>();
-  const name = input.name?.trim() ?? '';
-  const invalid = configurationError(context.env);
-  if (invalid) return failure(context, invalid, 503);
-  const id = crypto.randomUUID();
-  const state = randomToken();
-  const pkce = await createPkce();
-  const key = await masterKey(context.env.CREDENTIAL_MASTER_KEY);
-  const verifierEnvelope = await encrypt(pkce.verifier, key, `setup-pkce:${id}`);
-  const createdAt = now();
-  const expiresAt = expiresIn(SETUP_WINDOW_MS);
-  await drizzleControlDatabase(context.env.CONTROL_DB).insert(organizationSetups).values({
-    id,
-    name,
-    state: 'awaiting_google',
-    oauthStateHash: await sha256(state),
-    pkceVerifierEnvelope: JSON.stringify(verifierEnvelope),
-    expiresAt,
-    createdAt,
-    updatedAt: createdAt,
-  }).run();
-  context.header('Set-Cookie', cookie(SETUP_COOKIE, id, requestIsSecure(context.req.raw), Math.floor(SETUP_WINDOW_MS / 1_000)));
-  return json(context, { authorizationUrl: googleAuthorizationUrl({ clientId: context.env.GOOGLE_CLIENT_ID, redirectUri: redirectUri(context.env), state, challenge: pkce.challenge }) }, 201);
-});
-
-app.post('/api/setup/cancel', async (context) => {
-  const setup = await setupFromRequest(context.req.raw, context.env);
-  if (setup && ['awaiting_google', 'awaiting_name', 'provisioning', 'failed'].includes(setup.state)) await expireSetup(context.env, setup);
-  context.header('Set-Cookie', cookie(SETUP_COOKIE, '', requestIsSecure(context.req.raw), 0));
-  return json(context, { cancelled: true });
-});
-
 app.get('/oauth/google/callback', async (context) => {
-  const code = context.req.query('code');
-  const state = context.req.query('state');
-  const target = new URL('/setup', context.env.WEB_ORIGIN || context.env.APP_URL);
-  if (!code || !state) {
-    target.searchParams.set('error', 'Google authorization was cancelled.');
-    return context.redirect(target.toString());
+  const completed = await completeGoogleEntry(
+    context.env,
+    context.req.query('code'),
+    context.req.query('state'),
+  );
+  if (completed.sessionId) {
+    context.header('Set-Cookie', cookie(
+      SESSION_COOKIE,
+      completed.sessionId,
+      requestIsSecure(context.req.raw),
+      Math.floor(SESSION_WINDOW_MS / 1_000),
+    ));
   }
-  const control = drizzleControlDatabase(context.env.CONTROL_DB);
-  const row = await control.select().from(organizationSetups)
-    .where(eq(organizationSetups.oauthStateHash, await sha256(state))).get();
+  return context.redirect(completed.location);
+});
+
+app.post('/api/onboarding/confirm', async (context) => {
+  const session = await sessionFromRequest(context.req.raw, context.env);
+  if (!session) return failure(context, 'Authentication is required.', 401);
   try {
-    const setup = validSetup(row ?? null, 'awaiting_google');
-    const key = await masterKey(context.env.CREDENTIAL_MASTER_KEY);
-    const verifier = await decrypt(JSON.parse(setup.pkceVerifierEnvelope), key, `setup-pkce:${setup.id}`);
-    const tokenSet = await exchangeGoogleCode({ code, verifier, clientId: context.env.GOOGLE_CLIENT_ID, clientSecret: context.env.GOOGLE_CLIENT_SECRET, redirectUri: redirectUri(context.env) });
-    if (!hasCompleteGoogleGrant(tokenSet.scopes)) {
-      await revokeGoogleToken(tokenSet.refreshToken);
-      await expireSetup(context.env, setup);
-      target.searchParams.set('error', `Required Google permissions are missing: ${missingGoogleScopes(tokenSet.scopes).join(', ')}`);
-      return context.redirect(target.toString());
-    }
-    const [identity, historyId] = await Promise.all([fetchGoogleIdentity(tokenSet.accessToken), fetchGmailHistoryId(tokenSet.accessToken)]);
-    const identityCreatedAt = now();
-    await control.insert(identities).values({
-      id: crypto.randomUUID(),
-      email: identity.email,
-      displayName: identity.displayName,
-      createdAt: identityCreatedAt,
-      updatedAt: identityCreatedAt,
-    }).onConflictDoUpdate({
-      target: identities.email,
-      set: { displayName: identity.displayName, updatedAt: identityCreatedAt },
-    }).run();
-    const owner = await control.select({ id: identities.id }).from(identities).where(eq(identities.email, identity.email)).get();
-    if (!owner) throw new Error('Google identity could not be stored.');
-    const existingOrganization = await control.select({
-      id: organizations.id,
-      databaseId: organizations.databaseId,
-    }).from(organizations).innerJoin(members, eq(members.organizationId, organizations.id))
-      .where(eq(members.identityId, owner.id)).limit(1).get();
-    if (existingOrganization?.databaseId === null) {
-      await control.batch([
-        control.update(organizationSetups).set({ organizationId: null, databaseId: null, bindingName: null }).where(eq(organizationSetups.organizationId, existingOrganization.id)),
-        control.delete(organizationKeys).where(eq(organizationKeys.organizationId, existingOrganization.id)),
-        control.delete(organizations).where(eq(organizations.id, existingOrganization.id)),
-      ]);
-    }
-    const pendingSetup = await control.select({ id: organizationSetups.id }).from(organizationSetups).where(and(
-      eq(organizationSetups.inboxAddress, identity.email),
-      ne(organizationSetups.id, setup.id),
-      inArray(organizationSetups.state, ['awaiting_google', 'awaiting_name', 'provisioning', 'failed']),
-    )).limit(1).get();
-    if ((existingOrganization && existingOrganization.databaseId !== null) || pendingSetup) {
-      await revokeGoogleToken(tokenSet.refreshToken);
-      await expireSetup(context.env, setup);
-      target.searchParams.set('error', 'This Automation Inbox is already assigned to an Organization.');
-      return context.redirect(target.toString());
-    }
-    const credentialEnvelope = await encrypt(JSON.stringify(tokenSet), key, `setup-credential:${setup.id}`);
-    await control.update(organizationSetups).set({
-      name: setup.name || identity.displayName || identity.email,
-      state: 'awaiting_name',
-      inboxAddress: identity.email,
-      googleSubject: identity.subject,
-      grantedScopes: JSON.stringify(tokenSet.scopes),
-      credentialEnvelope: JSON.stringify(credentialEnvelope),
-      historyId,
-      ownerIdentityId: owner.id,
-      expiresAt: expiresIn(SETUP_WINDOW_MS),
-      updatedAt: now(),
-    }).where(eq(organizationSetups.id, setup.id)).run();
-    const ready = await setupById(context.env, setup.id);
-    if (!ready) throw new Error('Organization setup could not be resumed.');
-    const sessionId = randomToken();
-    const sessionCreatedAt = now();
-    await control.insert(sessions).values({
-      id: sessionId,
-      identityId: owner.id,
-      expiresAt: expiresIn(SESSION_WINDOW_MS),
-      createdAt: sessionCreatedAt,
-      lastSeenAt: sessionCreatedAt,
-    }).run();
-    context.header('Set-Cookie', cookie(SESSION_COOKIE, sessionId, requestIsSecure(context.req.raw), Math.floor(SESSION_WINDOW_MS / 1_000)), { append: true });
-    context.header('Set-Cookie', cookie(SETUP_COOKIE, setup.id, requestIsSecure(context.req.raw), Math.floor(SETUP_WINDOW_MS / 1_000)), { append: true });
+    const input = await context.req.json<{ name?: string }>();
+    await confirmOrganization(context.env, session.identity_id, input.name ?? '');
+    return json(context, { accepted: true });
   } catch (error) {
-    target.searchParams.set('error', error instanceof Error ? error.message : 'Google authorization failed.');
+    return failure(context, error instanceof Error ? error.message : 'Organization setup could not be confirmed.', 409);
   }
-  return context.redirect(target.toString());
 });
 
-app.get('/api/setup/current', async (context) => {
-  const row = await setupFromRequest(context.req.raw, context.env);
-  if (!row) return json(context, null);
-  if ((row.state === 'awaiting_google' || row.state === 'awaiting_name') && Date.parse(row.expiresAt) <= Date.now()) {
-    await expireSetup(context.env, row);
-    return json(context, { ...setupView(row), status: 'expired' });
-  }
-  return json(context, setupView(row));
-});
-
-app.post('/api/setup/complete', async (context) => {
-  const setup = await setupFromRequest(context.req.raw, context.env);
+app.post('/api/onboarding/retry', async (context) => {
   const session = await sessionFromRequest(context.req.raw, context.env);
-  if (!setup || setup.state !== 'awaiting_name') return failure(context, 'Organization setup is not waiting for name confirmation.', 409);
-  if (!session || session.identity_id !== setup.ownerIdentityId) return failure(context, 'Authentication is required.', 401);
-  const input = await context.req.json<{ name?: string }>();
-  const name = input.name?.trim() || setup.name;
-  if (!name) return failure(context, 'Organization name is required.');
-  await drizzleControlDatabase(context.env.CONTROL_DB).update(organizationSetups).set({ name, updatedAt: now() })
-    .where(eq(organizationSetups.id, setup.id)).run();
-  const ready = await setupById(context.env, setup.id);
-  if (!ready) return failure(context, 'Organization setup could not be resumed.', 409);
-  await beginOrganizationProvisioning(context.env, ready);
-  const current = await setupById(context.env, setup.id);
-  return json(context, current ? setupView(current) : null);
+  if (!session) return failure(context, 'Authentication is required.', 401);
+  try {
+    await retryOrganizationProvisioning(context.env, session.identity_id);
+    return json(context, { accepted: true });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Organization provisioning could not be retried.', 409);
+  }
 });
 
-app.post('/api/setup/retry', async (context) => {
-  const setup = await setupFromRequest(context.req.raw, context.env);
+app.delete('/api/onboarding', async (context) => {
   const session = await sessionFromRequest(context.req.raw, context.env);
-  if (!setup || setup.state !== 'failed' || !setup.ownerIdentityId) return failure(context, 'Organization setup is not waiting for retry.', 409);
-  if (!session || session.identity_id !== setup.ownerIdentityId) return failure(context, 'Authentication is required.', 401);
-  if (!setup.provisioningExpiresAt || Date.parse(setup.provisioningExpiresAt) <= Date.now()) {
-    await expireSetup(context.env, setup);
-    return failure(context, 'Organization setup expired. Start over with Google authorization.', 410);
-  }
-  await drizzleControlDatabase(context.env.CONTROL_DB).update(organizationSetups)
-    .set({ state: 'provisioning', errorMessage: null, updatedAt: now() })
-    .where(eq(organizationSetups.id, setup.id)).run();
-  const ready = await setupById(context.env, setup.id);
-  if (!ready) return failure(context, 'Organization setup could not be retried.', 409);
-  await attemptProvision(context.env, ready);
-  const current = await setupById(context.env, setup.id);
-  return json(context, current ? setupView(current) : null);
+  if (!session) return failure(context, 'Authentication is required.', 401);
+  return json(context, {
+    cancelled: await cancelOrganizationOnboarding(context.env, session.identity_id),
+  });
 });
 
 app.get('/api/auth/me', async (context) => {
@@ -573,6 +329,12 @@ app.get('/api/auth/me', async (context) => {
   }).from(members).innerJoin(organizations, eq(organizations.id, members.organizationId))
     .where(and(eq(members.identityId, session.identity_id), eq(members.state, 'active'), isNotNull(organizations.databaseId))).all();
   return json(context, { email: session.email, displayName: session.display_name, organizations: memberships });
+});
+
+app.get('/api/bootstrap', async (context) => {
+  const session = await sessionFromRequest(context.req.raw, context.env);
+  if (!session) return json(context, { kind: 'signed_out' });
+  return json(context, await applicationState(context.env, session));
 });
 
 app.post('/api/auth/logout', async (context) => {
@@ -1568,101 +1330,6 @@ const sessionFromRequest = async (request: Request, env: Bindings): Promise<Sess
     gt(sessions.expiresAt, now()),
     isNull(sessions.revokedAt),
   )).get() ?? null;
-};
-
-/** Converts a fully authorized setup into a provisioning Organization without an extra Owner credential ceremony. */
-const beginOrganizationProvisioning = async (env: Bindings, setup: OrganizationSetupRecord): Promise<void> => {
-  if (setup.organizationId) {
-    await attemptProvision(env, setup);
-    return;
-  }
-  if (!setup.inboxAddress || !setup.ownerIdentityId) {
-    throw new Error('Organization setup is missing its Automation Inbox or initial Owner.');
-  }
-  const organizationId = crypto.randomUUID();
-  const bindingName = `ORG_${organizationId.replaceAll('-', '')}`;
-  const createdAt = now();
-  const control = drizzleControlDatabase(env.CONTROL_DB);
-  await control.batch([
-    control.insert(organizations).values({
-      id: organizationId,
-      name: setup.name,
-      status: 'provisioning',
-      bindingName,
-      createdAt,
-      updatedAt: createdAt,
-    }),
-    control.insert(members).values({
-      organizationId,
-      identityId: setup.ownerIdentityId,
-      role: 'owner',
-      state: 'pending',
-      createdAt,
-      updatedAt: createdAt,
-    }),
-    control.update(organizationSetups).set({
-      state: 'provisioning',
-      organizationId,
-      bindingName,
-      provisioningKey: crypto.randomUUID(),
-      provisioningExpiresAt: expiresIn(PROVISIONING_WINDOW_MS),
-      updatedAt: createdAt,
-    }).where(eq(organizationSetups.id, setup.id)),
-  ]);
-  await createSetupOrganizationKey(env, organizationId);
-  const current = await setupById(env, setup.id);
-  if (current) await attemptProvision(env, current);
-};
-
-const attemptProvision = async (env: Bindings, setup: OrganizationSetupRecord): Promise<void> => {
-  try {
-    if (setup.organizationId) await createSetupOrganizationKey(env, setup.organizationId);
-    await provisionSetup(env, setup);
-  } catch (error) {
-    await drizzleControlDatabase(env.CONTROL_DB).update(organizationSetups).set({
-      state: 'failed',
-      errorMessage: error instanceof Error ? error.message : 'Provisioning failed.',
-      updatedAt: now(),
-    }).where(eq(organizationSetups.id, setup.id)).run();
-  }
-};
-
-export const retryProvisioning = async (env: Bindings): Promise<void> => {
-  const rows = await drizzleControlDatabase(env.CONTROL_DB).select().from(organizationSetups)
-    .where(inArray(organizationSetups.state, ['provisioning', 'failed']))
-    .orderBy(asc(organizationSetups.updatedAt)).limit(10).all();
-  for (const setup of rows) {
-    if (!setup.provisioningExpiresAt || Date.parse(setup.provisioningExpiresAt) <= Date.now()) {
-      await expireSetup(env, setup);
-      continue;
-    }
-    await attemptProvision(env, setup);
-  }
-};
-
-const expireSetup = async (env: Bindings, setup: OrganizationSetupRecord): Promise<void> => {
-  if (setup.credentialEnvelope) {
-    try {
-      const key = await masterKey(env.CREDENTIAL_MASTER_KEY);
-      const tokens = JSON.parse(await decrypt(JSON.parse(setup.credentialEnvelope), key, `setup-credential:${setup.id}`)) as { refreshToken?: string };
-      if (tokens.refreshToken) await revokeGoogleToken(tokens.refreshToken);
-    } catch {
-      // Expiry must still erase local credentials when revocation is unavailable.
-    }
-  }
-  await drizzleControlDatabase(env.CONTROL_DB).update(organizationSetups).set({
-    state: 'expired',
-    inboxAddress: null,
-    googleSubject: null,
-    grantedScopes: null,
-    credentialEnvelope: null,
-    historyId: null,
-    ownerIdentityId: null,
-    pkceVerifierEnvelope: '',
-    provisioningPhase: null,
-    errorMessage: 'Setup expired.',
-    updatedAt: now(),
-  }).where(eq(organizationSetups.id, setup.id)).run();
 };
 
 export { app };
