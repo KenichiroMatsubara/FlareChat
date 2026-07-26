@@ -1,9 +1,115 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "d84619d5-8dc8-4bfd-86b9-6f1685b424d3",
+  "id": "14b0e71e-7322-4055-a7be-5b242ff9f834",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
+    "automation_inbox_claims": {
+      "name": "automation_inbox_claims",
+      "columns": {
+        "google_subject": {
+          "name": "google_subject",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "inbox_address": {
+          "name": "inbox_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "setup_id": {
+          "name": "setup_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "automation_inbox_claims_inbox_address_unique": {
+          "name": "automation_inbox_claims_inbox_address_unique",
+          "columns": [
+            "inbox_address"
+          ],
+          "isUnique": true
+        },
+        "automation_inbox_claims_setup_id_unique": {
+          "name": "automation_inbox_claims_setup_id_unique",
+          "columns": [
+            "setup_id"
+          ],
+          "isUnique": true
+        },
+        "automation_inbox_claims_organization_id_unique": {
+          "name": "automation_inbox_claims_organization_id_unique",
+          "columns": [
+            "organization_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "automation_inbox_claims_setup_id_organization_setups_id_fk": {
+          "name": "automation_inbox_claims_setup_id_organization_setups_id_fk",
+          "tableFrom": "automation_inbox_claims",
+          "tableTo": "organization_setups",
+          "columnsFrom": [
+            "setup_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "automation_inbox_claims_organization_id_organizations_id_fk": {
+          "name": "automation_inbox_claims_organization_id_organizations_id_fk",
+          "tableFrom": "automation_inbox_claims",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "automation_inbox_claims_owner_check": {
+          "name": "automation_inbox_claims_owner_check",
+          "value": "(\"automation_inbox_claims\".\"setup_id\" is not null and \"automation_inbox_claims\".\"organization_id\" is null) or (\"automation_inbox_claims\".\"setup_id\" is null and \"automation_inbox_claims\".\"organization_id\" is not null)"
+        }
+      }
+    },
     "gemini_oauth_states": {
       "name": "gemini_oauth_states",
       "columns": {
@@ -105,73 +211,6 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "google_login_states": {
-      "name": "google_login_states",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "state_hash": {
-          "name": "state_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "pkce_verifier_envelope": {
-          "name": "pkce_verifier_envelope",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "return_origin": {
-          "name": "return_origin",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "google_login_states_state_hash_unique": {
-          "name": "google_login_states_state_hash_unique",
-          "columns": [
-            "state_hash"
-          ],
-          "isUnique": true
-        },
-        "google_login_states_expiry_idx": {
-          "name": "google_login_states_expiry_idx",
-          "columns": [
-            "expires_at"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
     "identities": {
       "name": "identities",
       "columns": {
@@ -179,6 +218,13 @@
           "name": "id",
           "type": "text",
           "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "google_subject": {
+          "name": "google_subject",
+          "type": "text",
+          "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
@@ -212,10 +258,10 @@
         }
       },
       "indexes": {
-        "identities_email_unique": {
-          "name": "identities_email_unique",
+        "identities_google_subject_unique": {
+          "name": "identities_google_subject_unique",
           "columns": [
-            "email"
+            "google_subject"
           ],
           "isUnique": true
         }
@@ -319,7 +365,95 @@
         }
       },
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "members_role_check": {
+          "name": "members_role_check",
+          "value": "\"members\".\"role\" in ('owner', 'admin', 'operator', 'viewer')"
+        },
+        "members_state_check": {
+          "name": "members_state_check",
+          "value": "\"members\".\"state\" in ('pending', 'active', 'suspended', 'removed')"
+        }
+      }
+    },
+    "oauth_flows": {
+      "name": "oauth_flows",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "intent": {
+          "name": "intent",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "state_hash": {
+          "name": "state_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "pkce_verifier_envelope": {
+          "name": "pkce_verifier_envelope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "return_origin": {
+          "name": "return_origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "oauth_flows_state_hash_unique": {
+          "name": "oauth_flows_state_hash_unique",
+          "columns": [
+            "state_hash"
+          ],
+          "isUnique": true
+        },
+        "oauth_flows_expiry_idx": {
+          "name": "oauth_flows_expiry_idx",
+          "columns": [
+            "expires_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "oauth_flows_intent_check": {
+          "name": "oauth_flows_intent_check",
+          "value": "\"oauth_flows\".\"intent\" in ('login', 'organization_setup')"
+        }
+      }
     },
     "organization_keys": {
       "name": "organization_keys",
@@ -380,6 +514,187 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "organization_provisionings": {
+      "name": "organization_provisionings",
+      "columns": {
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_identity_id": {
+          "name": "owner_identity_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "phase": {
+          "name": "phase",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "inbox_address": {
+          "name": "inbox_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "google_subject": {
+          "name": "google_subject",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "granted_scopes": {
+          "name": "granted_scopes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "credential_envelope": {
+          "name": "credential_envelope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "history_id": {
+          "name": "history_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "database_id": {
+          "name": "database_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "binding_name": {
+          "name": "binding_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "provisioning_key": {
+          "name": "provisioning_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "error_message": {
+          "name": "error_message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "organization_provisionings_owner_identity_id_unique": {
+          "name": "organization_provisionings_owner_identity_id_unique",
+          "columns": [
+            "owner_identity_id"
+          ],
+          "isUnique": true
+        },
+        "organization_provisionings_provisioning_key_unique": {
+          "name": "organization_provisionings_provisioning_key_unique",
+          "columns": [
+            "provisioning_key"
+          ],
+          "isUnique": true
+        },
+        "provisionings_state_expiry_idx": {
+          "name": "provisionings_state_expiry_idx",
+          "columns": [
+            "state",
+            "expires_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "organization_provisionings_organization_id_organizations_id_fk": {
+          "name": "organization_provisionings_organization_id_organizations_id_fk",
+          "tableFrom": "organization_provisionings",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "organization_provisionings_owner_identity_id_identities_id_fk": {
+          "name": "organization_provisionings_owner_identity_id_identities_id_fk",
+          "tableFrom": "organization_provisionings",
+          "tableTo": "identities",
+          "columnsFrom": [
+            "owner_identity_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "organization_provisionings_state_check": {
+          "name": "organization_provisionings_state_check",
+          "value": "\"organization_provisionings\".\"state\" in ('provisioning', 'failed')"
+        },
+        "organization_provisionings_phase_check": {
+          "name": "organization_provisionings_phase_check",
+          "value": "\"organization_provisionings\".\"phase\" is null or \"organization_provisionings\".\"phase\" in ('allocating_database', 'applying_schema', 'storing_credentials', 'verifying_binding', 'activating_organization')"
+        }
+      }
+    },
     "organization_setups": {
       "name": "organization_setups",
       "columns": {
@@ -397,109 +712,46 @@
           "notNull": true,
           "autoincrement": false
         },
-        "state": {
-          "name": "state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "oauth_state_hash": {
-          "name": "oauth_state_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "pkce_verifier_envelope": {
-          "name": "pkce_verifier_envelope",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
         "inbox_address": {
           "name": "inbox_address",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false
         },
         "google_subject": {
           "name": "google_subject",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false
         },
         "granted_scopes": {
           "name": "granted_scopes",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false
         },
         "credential_envelope": {
           "name": "credential_envelope",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false
         },
         "history_id": {
           "name": "history_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false
         },
         "owner_identity_id": {
           "name": "owner_identity_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "database_id": {
-          "name": "database_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "binding_name": {
-          "name": "binding_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "provisioning_key": {
-          "name": "provisioning_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "provisioning_phase": {
-          "name": "provisioning_phase",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "error_message": {
-          "name": "error_message",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false
         },
         "expires_at": {
@@ -507,13 +759,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false
-        },
-        "provisioning_expires_at": {
-          "name": "provisioning_expires_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
           "autoincrement": false
         },
         "created_at": {
@@ -539,17 +784,23 @@
           ],
           "isUnique": true
         },
-        "organization_setups_organization_id_unique": {
-          "name": "organization_setups_organization_id_unique",
+        "organization_setups_google_subject_unique": {
+          "name": "organization_setups_google_subject_unique",
           "columns": [
-            "organization_id"
+            "google_subject"
           ],
           "isUnique": true
         },
-        "setups_state_expiry_idx": {
-          "name": "setups_state_expiry_idx",
+        "organization_setups_owner_identity_id_unique": {
+          "name": "organization_setups_owner_identity_id_unique",
           "columns": [
-            "state",
+            "owner_identity_id"
+          ],
+          "isUnique": true
+        },
+        "setups_expiry_idx": {
+          "name": "setups_expiry_idx",
+          "columns": [
             "expires_at"
           ],
           "isUnique": false
@@ -566,20 +817,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "organization_setups_organization_id_organizations_id_fk": {
-          "name": "organization_setups_organization_id_organizations_id_fk",
-          "tableFrom": "organization_setups",
-          "tableTo": "organizations",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -652,7 +890,12 @@
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "organizations_status_check": {
+          "name": "organizations_status_check",
+          "value": "\"organizations\".\"status\" in ('provisioning', 'active', 'suspended', 'failed')"
+        }
+      }
     },
     "recovery_requests": {
       "name": "recovery_requests",
@@ -783,7 +1026,12 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "recovery_requests_state_check": {
+          "name": "recovery_requests_state_check",
+          "value": "\"recovery_requests\".\"state\" in ('requested', 'executing', 'completed', 'failed')"
+        }
+      }
     },
     "sessions": {
       "name": "sessions",

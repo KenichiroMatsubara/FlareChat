@@ -48,7 +48,6 @@ describe('Organization database resolver', () => {
 
     const location = await provisionOrganizationDatabase(environment, {
       organizationId: 'organization-1',
-      setupId: 'setup-1',
       bindingName: 'ORG_ORGANIZATION1',
       databaseId: null,
     });
@@ -65,7 +64,6 @@ describe('Organization database resolver', () => {
     const { control, environment } = localEnvironment();
     const first = await provisionOrganizationDatabase(environment, {
       organizationId: 'organization-1',
-      setupId: 'setup-1',
       bindingName: 'ORG_ORGANIZATION1',
       databaseId: null,
     });
@@ -77,7 +75,6 @@ describe('Organization database resolver', () => {
     });
     const second = await provisionOrganizationDatabase(environment, {
       organizationId: 'organization-2',
-      setupId: 'setup-2',
       bindingName: 'ORG_ORGANIZATION2',
       databaseId: null,
     });

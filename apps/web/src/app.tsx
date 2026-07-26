@@ -1,7 +1,7 @@
 import { CalendarDays, CheckCircle2, CircleAlert, LogOut, Mail, Play, RefreshCw, ShieldCheck } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
-import type { OrganizationSetup } from '@mail/domain';
+import type { AppState, ProvisioningPhase } from '@mail/domain';
 
 import { api } from './api';
 import type { AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, MailboxTestMatch, MailboxTestPreview, OrganizationConnections, OrganizationDashboard, OrganizationRule, OrganizationRuleInput } from './api';
@@ -10,9 +10,6 @@ import { Dashboard } from './dashboard';
 const formatted = (value: string | null): string => value
   ? new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
   : 'まだ実行していません';
-
-export const shouldShowOrganizationSetup = (setup: OrganizationSetup | null, showSetup: boolean, member: AuthMe | null): boolean =>
-  member !== null && Boolean((setup && setup.status !== 'active') || showSetup || member.organizations.length === 0);
 
 /** Uses the authenticated Google profile as the only setup-name default; user edits always win. */
 export const defaultOrganizationName = (member: AuthMe | null): string => member?.displayName.trim() || '';
@@ -23,7 +20,7 @@ export const shouldShowOrganizationLoading = (
   loading: boolean,
 ): boolean => Boolean(member?.organizations.length && (!organizationId || loading));
 
-export const setupPhaseLabel = (phase: OrganizationSetup['phase']): string => {
+export const setupPhaseLabel = (phase: ProvisioningPhase | null): string => {
   if (!phase) return '準備を開始しています';
   return {
     allocating_database: '組織DBを割り当てています',
@@ -35,10 +32,8 @@ export const setupPhaseLabel = (phase: OrganizationSetup['phase']): string => {
 };
 
 export const App = () => {
+  const [appState, setAppState] = useState<AppState | null>(null);
   const [automation, setAutomation] = useState<AutomationStatus | null>(null);
-  const [member, setMember] = useState<AuthMe | null>(null);
-  const [setup, setSetup] = useState<OrganizationSetup | null>(null);
-  const [showSetup, setShowSetup] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [organizationName, setOrganizationName] = useState('');
   const [organizationId, setOrganizationId] = useState('');
@@ -64,29 +59,27 @@ export const App = () => {
   const [busy, setBusy] = useState(false);
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [organizationLoading, setOrganizationLoading] = useState(false);
-  const [authChecked, setAuthChecked] = useState(false);
   const [error, setError] = useState(new URLSearchParams(window.location.search).get('error') ?? '');
+  const member: AuthMe | null = appState && appState.kind !== 'signed_out'
+    ? {
+      email: appState.identity.email,
+      displayName: appState.identity.displayName,
+      organizations: appState.kind === 'ready' ? appState.organizations : [],
+    }
+    : null;
   const refresh = async () => {
     try {
-      const currentMember = await api.currentMember();
-      if (!currentMember) {
-        setAutomation(null); setMember(null); setSetup(null);
-        return;
-      }
-      const currentSetup = await api.currentOrganizationSetup();
-      setMember(currentMember);
-      setSetup(currentSetup);
+      setAppState(await api.bootstrap());
     } catch (cause) {
-      if (authChecked) setError(cause instanceof Error ? cause.message : '状態を取得できませんでした。');
+      if (appState) setError(cause instanceof Error ? cause.message : '状態を取得できませんでした。');
     }
-    finally { setAuthChecked(true); }
   };
   useEffect(() => { void refresh(); if (window.location.search) window.history.replaceState({}, '', window.location.pathname); }, []);
   useEffect(() => {
-    if (setup?.status !== 'provisioning') return undefined;
+    if (appState?.kind !== 'provisioning') return undefined;
     const timer = window.setInterval(() => void refresh(), 5_000);
     return () => window.clearInterval(timer);
-  }, [setup?.status]);
+  }, [appState?.kind]);
   useEffect(() => {
     const organizations = member?.organizations ?? [];
     if (!organizations.some((organization) => organization.organizationId === organizationId)) {
@@ -94,12 +87,12 @@ export const App = () => {
     }
   }, [member, organizationId]);
   useEffect(() => {
-    if (setup?.status === 'awaiting_name') {
-      setOrganizationName(setup.name);
+    if (appState?.kind === 'confirming_organization') {
+      setOrganizationName(appState.setup.name);
       return;
     }
     if (member) setOrganizationName(defaultOrganizationName(member));
-  }, [member?.email, setup?.status, setup?.name]);
+  }, [appState, member?.email]);
   useEffect(() => {
     if (!organizationId) { setOrganizationLoading(false); setAutomation(null); setConnections(null); setOrganizationDashboard(null); setOrganizationRules([]); setDeliveryAudit([]); return undefined; }
     let current = true;
@@ -124,33 +117,28 @@ export const App = () => {
     });
     return () => { current = false; };
   }, [organizationId]);
-  const beginOrganizationSetup = async (name: string) => {
+  const beginGoogleEntry = async (intent: 'login' | 'organization_setup') => {
     setBusy(true); setError('');
-    try { window.location.assign((await api.startOrganizationSetup(name)).authorizationUrl); }
+    try { window.location.assign((await api.beginGoogleEntry(intent)).authorizationUrl); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Google 認可を開始できませんでした。'); setBusy(false); }
-  };
-  const startOrganizationSetup = async (event: React.FormEvent) => {
-    event.preventDefault();
-    await beginOrganizationSetup(organizationName);
   };
   const restartOrganizationSetup = async () => {
     setBusy(true); setError('');
     try {
-      await api.cancelOrganizationSetup();
-      setSetup(null);
-      await beginOrganizationSetup('');
+      await api.cancelOnboarding();
+      await beginGoogleEntry('organization_setup');
     } catch (cause) { setError(cause instanceof Error ? cause.message : '組織セットアップをやり直せませんでした。'); setBusy(false); }
   };
   const completeOrganizationSetup = async (event: React.FormEvent) => {
     event.preventDefault();
     setBusy(true); setError('');
-    try { setSetup(await api.completeOrganizationSetup(organizationName)); await refresh(); }
+    try { await api.confirmOnboarding(organizationName); await refresh(); }
     catch (cause) { setError(cause instanceof Error ? cause.message : '組織の作成を開始できませんでした。'); }
     finally { setBusy(false); }
   };
   const retryOrganizationSetup = async () => {
     setBusy(true); setError('');
-    try { setSetup(await api.retryOrganizationSetup()); await refresh(); }
+    try { await api.retryOnboarding(); await refresh(); }
     catch (cause) { setError(cause instanceof Error ? cause.message : '組織DBの作成を再試行できませんでした。'); }
     finally { setBusy(false); }
   };
@@ -232,28 +220,48 @@ export const App = () => {
   };
   const logout = async () => {
     setBusy(true);
-    try { await api.logout(); setAutomation(null); setMember(null); setOrganizationId(''); setConnections(null); setOrganizationDashboard(null); setOrganizationRules([]); setDeliveryAudit([]); setSummary(null); }
+    try { await api.logout(); setAutomation(null); setAppState({ kind: 'signed_out' }); setOrganizationId(''); setConnections(null); setOrganizationDashboard(null); setOrganizationRules([]); setDeliveryAudit([]); setSummary(null); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'ログアウトできませんでした。'); }
     finally { setBusy(false); }
   };
-  if (!authChecked) return <main className="setup-shell"><section className="setup-card login-card"><div className="loading"><RefreshCw className="spin" size={18} />読み込み中…</div></section></main>;
-  if (shouldShowOrganizationSetup(setup, showSetup, member)) return <main className="setup-shell"><section className="setup-card login-card">
+  if (!appState) return <main className="setup-shell"><section className="setup-card login-card"><div className="loading"><RefreshCw className="spin" size={18} />読み込み中…</div></section></main>;
+  if (appState.kind === 'signed_out') return <main className="setup-shell"><section className="setup-card login-card">
+    <div className="setup-brand"><span><Mail size={22} /></span><div><strong>Mail Automation</strong><small>GMAIL TO CALENDAR</small></div></div>
+    <p className="eyebrow">GOOGLE IDENTITY</p><h1>Mail Automationを開く</h1>
+    <p className="setup-copy">既存メンバーは本人確認だけでログインできます。初めて利用する場合は、Automation Inboxの完全な権限を認可してOrganizationを作成します。</p>
+    {error && <p className="setup-error">{error}</p>}
+    <button className="primary google-login" onClick={() => void beginGoogleEntry('login')} disabled={busy}><ShieldCheck size={18} />{busy ? 'Googleへ接続中…' : 'Googleでログイン'}</button>
+    <button className="quiet-button" onClick={() => void beginGoogleEntry('organization_setup')} disabled={busy}>新しいOrganizationをセットアップ</button>
+  </section></main>;
+  if (appState.kind === 'unassigned') return <main className="setup-shell"><section className="setup-card login-card">
+    <div className="setup-brand"><span><Mail size={22} /></span><div><strong>Mail Automation</strong><small>CREATE ORGANIZATION</small></div></div>
+    <p className="eyebrow">NO ORGANIZATION</p><h1>Organizationをセットアップ</h1>
+    <p className="setup-copy">Automation Inboxを認可すると、このGoogleアカウントを初期OwnerとしてOrganization DBを作成します。</p>
+    {error && <p className="setup-error">{error}</p>}
+    <button className="primary" onClick={() => void beginGoogleEntry('organization_setup')} disabled={busy}>{busy ? 'Googleへ接続中…' : 'Automation Inboxを認可する'}</button>
+    <button className="quiet-button" onClick={() => void logout()} disabled={busy}>ログアウト</button>
+  </section></main>;
+  if (appState.kind === 'confirming_organization') return <main className="setup-shell"><section className="setup-card login-card">
     <div className="setup-brand"><span><Mail size={22} /></span><div><strong>Mail Automation</strong><small>ORGANIZATION SETUP</small></div></div>
     {error && <p className="setup-error">{error}</p>}
-    {!setup && <form className="setup-form" onSubmit={(event) => void startOrganizationSetup(event)}><p className="eyebrow">CREATE ORGANIZATION</p><h1>組織をセットアップ</h1><p className="setup-copy">Automation Inbox を認可すると、最初に Google ログインしたメインアカウントを Owner として組織DBを作成します。</p><label>組織名<input value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} placeholder="例: 地域サークル" autoComplete="organization" required /></label>{member?.displayName && <p className="login-note">Google アカウント名「{member.displayName}」を初期値にしています。必要なら変更できます。</p>}<button className="primary" disabled={busy}>{busy ? 'Googleへ接続中…' : 'Automation Inbox を認可する'}</button><button className="quiet-button" type="button" onClick={() => setShowSetup(false)} disabled={busy}>戻る</button></form>}
-    {setup?.status === 'awaiting_google' && <><p className="eyebrow">GOOGLE AUTHORIZATION</p><h1>Google アカウントを接続中</h1><p className="setup-copy">認可したアカウントを Automation Inbox と初期 Owner にして、組織DBを作成します。</p>{error && <button className="primary" onClick={() => void restartOrganizationSetup()} disabled={busy}>{busy ? '開始中…' : '最初からやり直す'}</button>}</>}
-    {setup?.status === 'awaiting_name' && <form className="setup-form" onSubmit={(event) => void completeOrganizationSetup(event)}><p className="eyebrow">CONFIRM ORGANIZATION</p><h1>組織名を確認</h1><p className="setup-copy">認可した Google アカウントを Automation Inbox と初期 Owner にします。Google アカウント名を初期値にしています。必要なら変更してください。</p><label>組織名<input value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} autoComplete="organization" required /></label><button className="primary" disabled={busy}>{busy ? '組織DBを作成中…' : 'この名前で組織を作成する'}</button><button className="quiet-button" type="button" onClick={() => void restartOrganizationSetup()} disabled={busy}>最初からやり直す</button></form>}
-    {setup?.status === 'provisioning' && <><p className="eyebrow">PROVISIONING</p><h1>組織を準備しています</h1><p className="setup-copy">{setupPhaseLabel(setup.phase)}</p><p>期限: {formatted(setup.provisioningExpiresAt)}</p><div className="loading"><RefreshCw className="spin" size={18} />状態を確認中…</div></>}
-    {setup?.status === 'failed' && <><p className="eyebrow">FAILED PHASE</p><h1>組織DBを準備できませんでした</h1><p className="setup-copy">{setupPhaseLabel(setup.phase)}</p><p className="setup-error">{setup.error ?? '組織DBの作成に失敗しました。'}</p><button className="primary" onClick={() => void retryOrganizationSetup()} disabled={busy}>{busy ? '再試行中…' : 'この段階から再試行する'}</button><button className="quiet-button" onClick={() => void restartOrganizationSetup()} disabled={busy}>最初からやり直す</button></>}
-    {setup?.status === 'expired' && <><p className="eyebrow">SETUP EXPIRED</p><h1>セットアップの期限が切れました</h1><p className="setup-error">{setup.error ?? 'もう一度開始してください。'}</p><button className="primary" onClick={() => void restartOrganizationSetup()} disabled={busy}>最初からやり直す</button></>}
+    <form className="setup-form" onSubmit={(event) => void completeOrganizationSetup(event)}>
+      <p className="eyebrow">CONFIRM ORGANIZATION</p><h1>組織名を確認</h1>
+      <p className="setup-copy">認可したGoogleアカウントをAutomation Inboxと初期Ownerにします。</p>
+      <label>組織名<input value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} autoComplete="organization" required /></label>
+      <button className="primary" disabled={busy}>{busy ? '組織DBを作成中…' : 'この名前で組織を作成する'}</button>
+    </form>
   </section></main>;
-  if (!automation && !member?.organizations.length) return <main className="setup-shell"><section className="setup-card login-card">
-    <div className="setup-brand"><span><Mail size={22} /></span><div><strong>Mail Automation</strong><small>GMAIL TO CALENDAR</small></div></div>
-    <p className="eyebrow">START WITH GOOGLE</p><h1>メールを予定にする</h1>
-    <p className="setup-copy">Googleログインは本人確認です。メール自動化を使うには、続けて組織セットアップで Automation Inbox と組織DBを作成してください。</p>
-    {error && <p className="setup-error">{error}</p>}
-    <button className="primary google-login" onClick={() => void beginOrganizationSetup('')} disabled={busy}><ShieldCheck size={18} />{busy ? 'Googleへ接続中…' : 'Googleを接続して始める'}</button>
-    <p className="login-note">Google 認可は一度だけです。認可したアカウントを Automation Inbox と初期 Owner にして、組織DBを作成します。</p>
+  if (appState.kind === 'provisioning') return <main className="setup-shell"><section className="setup-card login-card">
+    <p className="eyebrow">PROVISIONING</p><h1>組織を準備しています</h1>
+    <p className="setup-copy">{setupPhaseLabel(appState.phase)}</p>
+    <div className="loading"><RefreshCw className="spin" size={18} />状態を確認中…</div>
+  </section></main>;
+  if (appState.kind === 'provisioning_failed') return <main className="setup-shell"><section className="setup-card login-card">
+    <p className="eyebrow">FAILED PHASE</p><h1>組織DBを準備できませんでした</h1>
+    <p className="setup-copy">{setupPhaseLabel(appState.phase)}</p>
+    <p className="setup-error">{appState.error ?? '組織DBの作成に失敗しました。'}</p>
+    <button className="primary" onClick={() => void retryOrganizationSetup()} disabled={busy}>{busy ? '再試行中…' : 'この段階から再試行する'}</button>
+    <button className="quiet-button" onClick={() => void restartOrganizationSetup()} disabled={busy}>最初からやり直す</button>
   </section></main>;
   if (shouldShowOrganizationLoading(member, organizationId, organizationLoading)) return <main className="setup-shell"><section className="setup-card login-card"><div className="loading"><RefreshCw className="spin" size={18} />組織DBを読み込み中…</div></section></main>;
   const organization = member?.organizations.find((value) => value.organizationId === organizationId) ?? null;

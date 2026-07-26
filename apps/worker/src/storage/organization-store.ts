@@ -20,7 +20,7 @@ export interface OrganizationStore {
 
 /**
  * Owns every Automation Inbox read/write. Its schema contains no Control D1
- * table, so identity-scoped legacy automation queries cannot be expressed.
+ * table, so identity-scoped automation queries cannot be expressed.
  */
 export const createOrganizationStore = (database: OrganizationDatabase): OrganizationStore => ({
   currentAutomation: async () => {

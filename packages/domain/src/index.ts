@@ -76,13 +76,6 @@ export interface ApiResult<T> {
 }
 
 export type OrganizationRole = 'owner' | 'admin' | 'operator' | 'viewer';
-export type SetupStatus =
-  | 'awaiting_google'
-  | 'awaiting_name'
-  | 'provisioning'
-  | 'active'
-  | 'expired'
-  | 'failed';
 
 export type ProvisioningPhase =
   | 'allocating_database'
@@ -91,17 +84,41 @@ export type ProvisioningPhase =
   | 'verifying_binding'
   | 'activating_organization';
 
-/** The non-secret state shown while an Organization is being created. */
-export interface OrganizationSetup {
-  id: string;
-  name: string;
-  inboxAddress: string | null;
-  status: SetupStatus;
-  expiresAt: string;
-  provisioningExpiresAt: string | null;
-  phase: ProvisioningPhase | null;
-  error: string | null;
+export interface AppIdentity {
+  email: string;
+  displayName: string;
 }
+
+export interface AppMembership {
+  organizationId: string;
+  role: 'owner' | 'admin' | 'operator' | 'viewer';
+  name: string;
+  status: string;
+}
+
+export type AppState =
+  | { kind: 'signed_out' }
+  | { kind: 'unassigned'; identity: AppIdentity }
+  | {
+    kind: 'confirming_organization';
+    identity: AppIdentity;
+    setup: { id: string; name: string; inboxAddress: string; expiresAt: string };
+  }
+  | {
+    kind: 'provisioning';
+    identity: AppIdentity;
+    organization: { id: string; name: string };
+    phase: ProvisioningPhase | null;
+  }
+  | {
+    kind: 'provisioning_failed';
+    identity: AppIdentity;
+    organization: { id: string; name: string };
+    phase: ProvisioningPhase | null;
+    error: string | null;
+    retryUntil: string;
+  }
+  | { kind: 'ready'; identity: AppIdentity; organizations: AppMembership[] };
 
 export interface PasskeyCreationOptions {
   challenge: string;

@@ -1,4 +1,4 @@
-import type { OrganizationSetup } from '@mail/domain';
+import type { AppState } from '@mail/domain';
 
 interface ApiResult<T> {
   data: T;
@@ -139,24 +139,15 @@ const currentAutomation = async (organizationId: string): Promise<AutomationStat
   return body.data;
 };
 
-const currentMember = async (): Promise<AuthMe | null> => {
-  const response = await fetch('/api/auth/me', { credentials: 'include' });
-  if (response.status === 401) return null;
-  const body = await responseBody<AuthMe>(response);
-  if (!response.ok) throw new Error(body?.error?.message ?? 'ユーザー情報を取得できませんでした。');
-  if (!body) throw new Error('ユーザー情報を取得できませんでした。');
-  return body.data;
-};
-
 export const api = {
-  startOrganizationSetup: (name: string): Promise<{ authorizationUrl: string }> => request('/api/setup', { method: 'POST', body: JSON.stringify({ name }) }),
-  completeOrganizationSetup: (name: string): Promise<OrganizationSetup | null> => request('/api/setup/complete', { method: 'POST', body: JSON.stringify({ name }) }),
-  retryOrganizationSetup: (): Promise<OrganizationSetup | null> => request('/api/setup/retry', { method: 'POST' }),
-  cancelOrganizationSetup: (): Promise<{ cancelled: boolean }> => request('/api/setup/cancel', { method: 'POST' }),
-  currentOrganizationSetup: (): Promise<OrganizationSetup | null> => request('/api/setup/current'),
-  googleLogin: (): Promise<{ authorizationUrl: string }> => request('/api/auth/google', { method: 'POST' }),
+  bootstrap: (): Promise<AppState> => request('/api/bootstrap'),
+  beginGoogleEntry: (intent: 'login' | 'organization_setup'): Promise<{ authorizationUrl: string }> =>
+    request('/api/entry/google', { method: 'POST', body: JSON.stringify({ intent }) }),
+  confirmOnboarding: (name: string): Promise<{ accepted: boolean }> =>
+    request('/api/onboarding/confirm', { method: 'POST', body: JSON.stringify({ name }) }),
+  retryOnboarding: (): Promise<{ accepted: boolean }> => request('/api/onboarding/retry', { method: 'POST' }),
+  cancelOnboarding: (): Promise<{ cancelled: boolean }> => request('/api/onboarding', { method: 'DELETE' }),
   currentAutomation,
-  currentMember,
   organizationDashboard: (organizationId: string): Promise<OrganizationDashboard> => request(`/api/organizations/${encodeURIComponent(organizationId)}/dashboard`),
   organizationRules: (organizationId: string): Promise<OrganizationRule[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules`),
   organizationDeliveryAudit: (organizationId: string): Promise<DeliveryAuditRecord[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/audit/deliveries`),

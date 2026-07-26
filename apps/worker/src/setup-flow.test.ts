@@ -50,20 +50,19 @@ describe('single-authorization Organization setup', () => {
       throw new Error(`Unexpected Google request: ${url}`);
     }));
 
-    const started = await app.fetch(new Request('https://app.example.com/api/setup', {
+    const started = await app.fetch(new Request('https://app.example.com/api/entry/google', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: '' }),
+      body: JSON.stringify({ intent: 'organization_setup' }),
     }), environment);
     const startedBody = await started.json() as { data: { authorizationUrl: string } };
-    const setupCookie = started.headers.get('set-cookie')?.match(/mail_setup=([^;]+)/u)?.[1];
     const authorization = new URL(startedBody.data.authorizationUrl);
     const callback = await app.fetch(new Request(
       `https://app.example.com/oauth/google/callback?code=fixture-code&state=${encodeURIComponent(authorization.searchParams.get('state') ?? '')}`,
     ), environment);
     const sessionCookie = callback.headers.get('set-cookie')?.match(/mail_session=([^;]+)/u)?.[1];
-    const current = await app.fetch(new Request('https://app.example.com/api/setup/current', {
-      headers: { Cookie: `mail_setup=${setupCookie}; mail_session=${sessionCookie}` },
+    const bootstrap = await app.fetch(new Request('https://app.example.com/api/bootstrap', {
+      headers: { Cookie: `mail_session=${sessionCookie}` },
     }), environment);
     const identity = await app.fetch(new Request('https://app.example.com/api/auth/me', {
       headers: { Cookie: `mail_session=${sessionCookie}` },
@@ -71,11 +70,13 @@ describe('single-authorization Organization setup', () => {
 
     expect(started.status).toBe(201);
     expect(callback.status).toBe(302);
-    await expect(current.json()).resolves.toMatchObject({
+    await expect(bootstrap.json()).resolves.toMatchObject({
       data: {
-        name: 'Example Owner',
-        inboxAddress: 'owner@example.com',
-        status: 'awaiting_name',
+        kind: 'confirming_organization',
+        setup: {
+          name: 'Example Owner',
+          inboxAddress: 'owner@example.com',
+        },
       },
     });
     await expect(identity.json()).resolves.toMatchObject({

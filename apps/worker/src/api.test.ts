@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { app } from './api';
-import { randomToken } from './encoding';
 import { enqueueJob } from './jobs';
 import { createTestApp, type TestApp } from '../test/app';
 import { createAutomationTestApp } from '../test/automation';
@@ -91,32 +90,6 @@ describe('Organization access', () => {
     expect(dashboard.status).toBe(200);
     expect(listChange.status).toBe(403);
     expect(recipientChange.status).toBe(403);
-  });
-});
-
-describe('Organization setup', () => {
-  it('starts one Google authorization and makes cancellation observable', async () => {
-    fixture = createTestApp();
-    fixture.environment.CREDENTIAL_MASTER_KEY = randomToken(32);
-    fixture.environment.CREDENTIAL_MASTER_KEY_VERSION = 'test-v1';
-    const started = await app.fetch(new Request('https://app.example.com/api/setup', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: '' }),
-    }), fixture.environment);
-    const setupCookie = started.headers.get('set-cookie')?.match(/mail_setup=([^;]+)/u)?.[1];
-
-    const cancelled = await app.fetch(new Request('https://app.example.com/api/setup/cancel', {
-      method: 'POST',
-      headers: { Cookie: `mail_setup=${setupCookie}` },
-    }), fixture.environment);
-    const current = await app.fetch(new Request('https://app.example.com/api/setup/current', {
-      headers: { Cookie: `mail_setup=${setupCookie}` },
-    }), fixture.environment);
-
-    expect(started.status).toBe(201);
-    expect(cancelled.status).toBe(200);
-    await expect(current.json()).resolves.toMatchObject({ data: { status: 'expired' } });
   });
 });
 

@@ -162,8 +162,9 @@ export const seedOrganizationMember = (
   },
 ): void => {
   control.execute(
-    'INSERT INTO identities (id, email, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+    'INSERT INTO identities (id, google_subject, email, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
     input.identityId,
+    `google-${input.identityId}`,
     input.email,
     input.email,
     CREATED_AT,
