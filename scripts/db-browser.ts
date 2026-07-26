@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { spawn } from 'node:child_process';
-import { findControlDatabase } from './find-local-d1.js';
+import { findStudioDatabases, type StudioDatabase } from './find-local-d1.js';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.DB_BROWSER_PORT ?? 4984);
@@ -20,7 +20,7 @@ type DatabaseConstructor = new (path: string, options?: { readonly?: boolean }) 
 
 const require = createRequire(import.meta.url);
 const BetterSqlite3 = require('better-sqlite3') as DatabaseConstructor;
-const databasePath = findControlDatabase();
+const databases = findStudioDatabases();
 
 const isRecord = (value: unknown): value is Record<string, unknown> => (
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -39,8 +39,15 @@ const readTables = (database: Database): string[] => database
   .all()
   .flatMap((row) => isRecord(row) && typeof row.name === 'string' && row.name !== 'd1_migrations' ? [row.name] : []);
 
-const readTable = (name: string): { columns: string[]; rows: Array<Record<string, unknown>> } => {
-  const database = new BetterSqlite3(databasePath, { readonly: true });
+const selectedDatabase = (id: string | null): StudioDatabase => {
+  if (!id) throw new Error('A database must be selected.');
+  const database = databases.find((candidate) => candidate.id === id);
+  if (!database) throw new Error(`Unknown database: ${id}`);
+  return database;
+};
+
+const readTable = (databaseId: string | null, name: string): { columns: string[]; rows: Array<Record<string, unknown>> } => {
+  const database = new BetterSqlite3(selectedDatabase(databaseId).path, { readonly: true });
   try {
     const tables = readTables(database);
     if (!tables.includes(name)) throw new Error(`Unknown table: ${name}`);
@@ -55,8 +62,8 @@ const readTable = (name: string): { columns: string[]; rows: Array<Record<string
   }
 };
 
-const readTableSummary = (): Array<{ name: string; count: number }> => {
-  const database = new BetterSqlite3(databasePath, { readonly: true });
+const readTableSummary = (databaseId: string | null): Array<{ name: string; count: number }> => {
+  const database = new BetterSqlite3(selectedDatabase(databaseId).path, { readonly: true });
   try {
     return readTables(database).map((name) => {
       const row = database.prepare(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(name)}`).get();
@@ -83,11 +90,12 @@ const handleRequest = (request: IncomingMessage, response: ServerResponse): void
   try {
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? `${HOST}:${PORT}`}`);
     if (url.pathname === '/') return sendPage(response);
-    if (url.pathname === '/api/tables') return sendJson(response, 200, readTableSummary());
+    if (url.pathname === '/api/databases') return sendJson(response, 200, databases.map(({ id, name }) => ({ id, name })));
+    if (url.pathname === '/api/tables') return sendJson(response, 200, readTableSummary(url.searchParams.get('database')));
     if (url.pathname === '/api/table') {
       const name = url.searchParams.get('name');
       if (!name) return sendJson(response, 400, { error: 'Table name is required.' });
-      return sendJson(response, 200, readTable(name));
+      return sendJson(response, 200, readTable(url.searchParams.get('database'), name));
     }
     return sendJson(response, 404, { error: 'Not found.' });
   } catch (error) {
@@ -109,7 +117,7 @@ const server = createServer(handleRequest);
 server.listen(PORT, HOST, () => {
   const url = `http://${HOST}:${PORT}`;
   console.log(`Local DB browser is running at ${url}`);
-  console.log(`Database: ${databasePath}`);
+  console.log(`Databases: ${databases.map((database) => database.name).join(', ')}`);
   openBrowser(url);
 });
 
@@ -122,10 +130,11 @@ const PAGE = `<!doctype html>
 <style>
 :root { color-scheme: dark; font: 14px system-ui, sans-serif; }
 * { box-sizing: border-box; }
-body { margin: 0; display: grid; grid-template-columns: 260px 1fr; height: 100vh; background: #111; color: #eee; }
+body { margin: 0; display: grid; grid-template-columns: 300px 1fr; height: 100vh; background: #111; color: #eee; }
 aside { border-right: 1px solid #333; overflow: auto; padding: 16px; }
 main { min-width: 0; overflow: auto; padding: 24px; }
 h1 { font-size: 20px; margin: 0 0 16px; }
+aside h2 { color: #8f9990; font-size: 12px; letter-spacing: .08em; margin: 20px 10px 7px; text-transform: uppercase; }
 button { display: block; width: 100%; border: 0; border-radius: 6px; background: transparent; color: #ccc; cursor: pointer; padding: 9px 10px; text-align: left; }
 button:hover, button.active { background: #292929; color: #fff; }
 .count { color: #888; float: right; }
@@ -136,23 +145,28 @@ th, td { border-bottom: 1px solid #292929; padding: 9px 12px; text-align: left; 
 th { position: sticky; top: 0; background: #1d1d1d; }
 td.null { color: #777; font-style: italic; }
 .empty { color: #888; }
+.step { color: #8f9990; font-size: 12px; margin: -9px 0 8px; }
 </style>
 </head>
 <body>
-<aside><h1>Local D1</h1><div id="tables">Loading…</div></aside>
-<main><h1 id="title">Select a table</h1><div class="meta" id="meta"></div><div id="content" class="empty">Loading…</div></main>
+<aside><h1>Local D1</h1><p class="step">1. データベースを選択</p><h2>Databases</h2><div id="databases">Loading…</div><section id="table-section" hidden><h2 id="tables-heading">Tables</h2><div id="tables"></div></section></aside>
+<main><h1 id="title">データベースを選択してください</h1><div class="meta" id="meta">選択後に、そのデータベースのテーブルを表示します。</div><div id="content" class="empty">左側の「Databases」から閲覧するデータベースを選択してください。</div></main>
 <script>
 const tables = document.getElementById('tables');
+const databaseList = document.getElementById('databases');
+const tableSection = document.getElementById('table-section');
+const tablesHeading = document.getElementById('tables-heading');
 const title = document.getElementById('title');
 const meta = document.getElementById('meta');
 const content = document.getElementById('content');
+let selectedDatabaseId = null;
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
 const renderTable = async (name) => {
   document.querySelectorAll('button[data-table]').forEach((button) => button.classList.toggle('active', button.dataset.table === name));
   title.textContent = name;
   meta.textContent = 'Loading…';
   content.textContent = '';
-  const response = await fetch('/api/table?name=' + encodeURIComponent(name));
+  const response = await fetch('/api/table?database=' + encodeURIComponent(selectedDatabaseId) + '&name=' + encodeURIComponent(name));
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Failed to load table.');
   meta.textContent = data.rows.length + ' rows (up to 200 shown)';
@@ -161,13 +175,31 @@ const renderTable = async (name) => {
   content.innerHTML = '<table><thead><tr>' + data.columns.map((column) => '<th>' + escapeHtml(column) + '</th>').join('') + '</tr></thead><tbody>' + data.rows.map((row) => '<tr>' + data.columns.map((column) => { const value = row[column]; return '<td class="' + (value === null ? 'null' : '') + '">' + escapeHtml(value === null ? 'NULL' : value) + '</td>'; }).join('') + '</tr>').join('') + '</tbody></table>';
 };
 const loadTables = async () => {
-  const response = await fetch('/api/tables');
+  const response = await fetch('/api/tables?database=' + encodeURIComponent(selectedDatabaseId));
   const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Failed to load tables.');
   tables.innerHTML = data.map((table) => '<button data-table="' + escapeHtml(table.name) + '">' + escapeHtml(table.name) + '<span class="count">' + table.count + '</span></button>').join('');
   tables.querySelectorAll('button[data-table]').forEach((button) => button.addEventListener('click', () => renderTable(button.dataset.table).catch((error) => { content.textContent = error.message; })));
-  if (data[0]) await renderTable(data[0].name);
 };
-loadTables().catch((error) => { content.textContent = error.message; });
+const selectDatabase = async (id, name) => {
+  selectedDatabaseId = id;
+  document.querySelectorAll('button[data-database]').forEach((button) => button.classList.toggle('active', button.dataset.database === id));
+  tableSection.hidden = false;
+  tablesHeading.textContent = 'Tables in ' + name;
+  title.textContent = 'テーブルを選択してください';
+  meta.textContent = name;
+  content.className = 'empty';
+  content.textContent = '左側の「Tables」からテーブルを選択してください。';
+  await loadTables();
+};
+const loadDatabases = async () => {
+  const response = await fetch('/api/databases');
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Failed to load databases.');
+  databaseList.innerHTML = data.map((entry) => '<button data-database="' + escapeHtml(entry.id) + '">' + escapeHtml(entry.name) + '</button>').join('');
+  databaseList.querySelectorAll('button[data-database]').forEach((button) => button.addEventListener('click', () => selectDatabase(button.dataset.database, button.textContent).catch((error) => { content.textContent = error.message; })));
+};
+loadDatabases().catch((error) => { content.textContent = error.message; });
 </script>
 </body>
 </html>`;

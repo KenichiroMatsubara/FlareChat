@@ -29,7 +29,11 @@ npm run db:studio
 
 本来の Drizzle Studio を使う場合は `npm run db:drizzle` です。こちらは `local.drizzle.studio` の大きな UI を読み込むため、初回表示に時間がかかることがあります。
 
-Organization D1 など別の SQLite ファイルを開く場合は、`DB_STUDIO_PATH` にファイルパスを指定します。ローカル DB ブラウザを自動起動したくない場合は `DB_BROWSER_NO_OPEN=1` を指定してください。
+ローカルD1状態にある Control D1 と Organization D1 は、左側の `Databases` 一覧から選択して閲覧します。DBを選ぶまでテーブル一覧は表示されません。任意の SQLite ファイルを複数開く場合は、カンマ区切りの `DB_STUDIO_PATHS` を指定してください（従来の単一指定 `DB_STUDIO_PATH` も利用できます）。ローカル DB ブラウザを自動起動したくない場合は `DB_BROWSER_NO_OPEN=1` を指定してください。
+
+```bash
+DB_STUDIO_PATHS=/path/to/control.sqlite,/path/to/organization.sqlite npm run db:studio
+```
 
 Google OAuthやLINE Messaging APIの値は `apps/worker/.dev.vars.example` を
 `apps/worker/.dev.vars` にコピーして設定します。
