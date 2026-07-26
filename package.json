@@ -11,7 +11,9 @@
     "dev": "concurrently -n worker,web -c cyan,magenta \"npm run dev -w @mail/worker\" \"npm run dev -w @mail/web\"",
     "build": "npm run build -w @mail/domain && npm run build -w @mail/web && npm run build -w @mail/worker",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "vitest run",
+    "test": "npm run test:unit && npm run test:d1",
+    "test:unit": "vitest run",
+    "test:d1": "vitest run --config vitest.d1.config.ts",
     "db:local": "npm run db:local -w @mail/worker",
     "db:studio": "tsx scripts/db-browser.ts",
     "db:drizzle": "drizzle-kit studio --config=drizzle.config.ts",
@@ -20,6 +22,7 @@
     "deploy": "npm run build && npm run deploy -w @mail/worker"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.12.21",
     "@cloudflare/workers-types": "^5.20260722.1",
     "@types/node": "^22.20.1",
     "better-sqlite3": "^13.0.1",

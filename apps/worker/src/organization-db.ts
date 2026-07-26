@@ -1,12 +1,19 @@
-import { attachD1Binding, createD1Database, queryD1, verifyD1Schema } from './cloudflare';
+import { attachD1Binding, createD1Database, queryD1, queryD1Batch, verifyD1Schema } from './cloudflare';
 import { and, isNotNull, ne } from 'drizzle-orm';
 import { controlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
 import { organizationProvisionings, organizations } from './storage/control-schema';
 import { googleConnections } from './storage/organization-schema';
 
+import organizationSchemaMigration from '../migrations/organization/0000_initial.sql';
 import type { Bindings } from './types';
 
 const LOCAL_BINDING = /^LOCAL_ORGANIZATION_DB_\d+$/u;
+const REMOTE_QUERY = Symbol('remote-query');
+
+interface RemoteQuery {
+  sql: string;
+  params: unknown[];
+}
 
 const remoteStatement = (env: Bindings, databaseId: string, sql: string, params: unknown[] = []): D1PreparedStatement => {
   const execute = async (): Promise<{ results: unknown[]; meta: Record<string, number | boolean | string | null> }> => {
@@ -14,6 +21,7 @@ const remoteStatement = (env: Bindings, databaseId: string, sql: string, params:
     return { results: result.results ?? [], meta: result.meta ?? {} };
   };
   return {
+    [REMOTE_QUERY]: { sql, params },
     bind: (...values: unknown[]) => remoteStatement(env, databaseId, sql, values),
     first: async <T>(column?: string): Promise<T | null> => {
       const row = (await execute()).results[0];
@@ -34,6 +42,19 @@ const remoteStatement = (env: Bindings, databaseId: string, sql: string, params:
 
 const remoteDatabase = (env: Bindings, databaseId: string): D1Database => ({
   prepare: (sql: string) => remoteStatement(env, databaseId, sql),
+  batch: async <T>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> => {
+    const queries = statements.map((statement) => {
+      const query = (statement as unknown as { [REMOTE_QUERY]?: RemoteQuery })[REMOTE_QUERY];
+      if (!query) throw new Error('Remote Organization D1 received an unsupported prepared statement.');
+      return query;
+    });
+    const results = await queryD1Batch<T>(env, databaseId, queries);
+    return results.map((result) => ({
+      success: true,
+      results: result.results ?? [],
+      meta: (result.meta ?? {}) as D1Result<T>['meta'],
+    }));
+  },
 } as unknown as D1Database);
 
 const boundDatabase = (env: Bindings, bindingName: string): D1Database | null => {
@@ -47,12 +68,24 @@ const localBindings = (env: Bindings): string[] =>
     .filter((name) => LOCAL_BINDING.test(name))
     .sort((left, right) => left.localeCompare(right, 'en', { numeric: true }));
 
-const resetLocalDatabase = async (database: D1Database): Promise<void> => {
+const migrationStatements = (): string[] =>
+  organizationSchemaMigration
+    .split('--> statement-breakpoint')
+    .map((statement) => statement.trim())
+    .filter(Boolean);
+
+const initializeDatabase = async (database: D1Database): Promise<void> => {
   const tables = await database.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all<{ name: string }>();
-  for (const { name } of tables.results.reverse()) {
-    if (name.startsWith('sqlite_') || name.startsWith('_cf_')) continue;
-    await database.prepare(`DROP TABLE IF EXISTS "${name.replaceAll('"', '""')}"`).run();
-  }
+  const drops = tables.results
+    .filter(({ name }) => !name.startsWith('sqlite_') && !name.startsWith('_cf_'))
+    .map(({ name }) => `DROP TABLE IF EXISTS "${name.replaceAll('"', '""')}"`);
+  const statements = [
+    'PRAGMA defer_foreign_keys = on',
+    ...drops,
+    ...migrationStatements(),
+    'PRAGMA defer_foreign_keys = off',
+  ];
+  await database.batch(statements.map((statement) => database.prepare(statement)));
 };
 
 const verifyLocalDatabase = async (database: D1Database): Promise<void> => {
@@ -67,6 +100,8 @@ export interface OrganizationDatabaseProvisioning {
   databaseId: string;
   bindingName: string;
   database: D1Database;
+  /** Atomically resets and initializes this not-yet-active Organization database. */
+  initialize: () => Promise<void>;
   finalize: () => Promise<void>;
 }
 
@@ -88,6 +123,7 @@ const localDatabaseLocation = async (
       databaseId: input.databaseId,
       bindingName: input.bindingName,
       database,
+      initialize: () => initializeDatabase(database),
       finalize: () => verifyLocalDatabase(database),
     };
   }
@@ -106,11 +142,11 @@ const localDatabaseLocation = async (
   if (!bindingName) throw new Error('No local Organization database slot is available. Reset an unused local Organization or add another local D1 binding.');
   const database = boundDatabase(env, bindingName);
   if (!database) throw new Error(`Local Organization database binding ${bindingName} is unavailable.`);
-  await resetLocalDatabase(database);
   return {
     databaseId: `local:${bindingName}`,
     bindingName,
     database,
+    initialize: () => initializeDatabase(database),
     finalize: () => verifyLocalDatabase(database),
   };
 };
@@ -126,10 +162,12 @@ export const provisionOrganizationDatabase = async (
   const bindings = localBindings(env);
   if (bindings.length > 0) return localDatabaseLocation(env, input, bindings);
   const databaseId = input.databaseId ?? await createD1Database(env, `mail-organization-${input.organizationId}`);
+  const database = remoteDatabase(env, databaseId);
   return {
     databaseId,
     bindingName: input.bindingName,
-    database: remoteDatabase(env, databaseId),
+    database,
+    initialize: () => initializeDatabase(database),
     finalize: async () => {
       await attachD1Binding(env, input.bindingName, databaseId);
       await verifyD1Schema(env, databaseId);

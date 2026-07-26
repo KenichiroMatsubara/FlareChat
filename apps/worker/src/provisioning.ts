@@ -1,6 +1,5 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
-import organizationSchemaMigration from '../migrations/organization/0000_initial.sql';
 import { createOrganizationKey, decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
 import { provisionOrganizationDatabase } from './organization-db';
 import { controlDatabase, organizationDatabase } from './storage/database';
@@ -16,15 +15,6 @@ const recordPhase = async (env: Bindings, organizationId: string, phase: Provisi
     phase,
     updatedAt: new Date().toISOString(),
   }).where(eq(organizationProvisionings.organizationId, organizationId)).run();
-};
-
-const applyOrganizationSchema = async (binding: D1Database): Promise<void> => {
-  const database = organizationDatabase(binding);
-  const statements = organizationSchemaMigration
-    .split('--> statement-breakpoint')
-    .map((statement) => statement.trim())
-    .filter(Boolean);
-  for (const statement of statements) await database.run(sql.raw(statement));
 };
 
 export const provisionOrganization = async (
@@ -45,7 +35,7 @@ export const provisionOrganization = async (
     updatedAt: new Date().toISOString(),
   }).where(eq(organizationProvisionings.organizationId, provisioning.organizationId)).run();
   await recordPhase(env, provisioning.organizationId, 'applying_schema');
-  await applyOrganizationSchema(provisioned.database);
+  await provisioned.initialize();
   const keyRecord = await control.select({
     masterKeyVersion: organizationKeys.masterKeyVersion,
     wrappedKeyEnvelope: organizationKeys.wrappedKeyEnvelope,

@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   plugins: [{
@@ -9,4 +9,7 @@ export default defineConfig({
       ? `export default ${JSON.stringify(await readFile(id, 'utf8'))};`
       : null,
   }],
+  test: {
+    exclude: [...configDefaults.exclude, '**/*.d1.test.ts'],
+  },
 });

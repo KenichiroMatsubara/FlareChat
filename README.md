@@ -44,10 +44,17 @@ Control DBへ代替保存することもありません。3枠を使い切った
 
 Google Cloud Console の **API とサービス → 認証情報 → このアプリの OAuth 2.0 クライアント ID → 承認済みのリダイレクト URI** には、次を登録してください。
 
-- `http://localhost:8787/oauth/google/callback`（初回 Organization セットアップ）
-- `http://localhost:8787/oauth/google/login/callback`（後日の管理画面ログイン）
+- `http://localhost:8787/oauth/google/callback`
 
 `redirect_uri_mismatch` が出た場合は、`apps/worker/.dev.vars` の `GOOGLE_CLIENT_ID` と同じ OAuth クライアントを開き、利用する URI が完全一致していることを確認してください。初回画面では
-Google 認可を一度だけ行い、そのアカウントが Automation Inbox と初期 Owner の両方になります。同意後、Google表示名を初期値にした組織名を確認・編集してから組織DBを作成します。受信した新着メールに `2026/08/03 19:00-21:00` または
+「新しいOrganizationを作る」か「既存Organizationへログイン」の一方を選びます。新規作成は完全 grant、既存メンバーのログインは identity-only grant を要求し、どちらも選んだ導線で Google OAuth を一度だけ行います。新規作成で認可したアカウントは Automation Inbox と初期 Owner Identity の両方になり、同意後、Google表示名を初期値にした組織名を確認・編集してから組織DBを作成します。受信した新着メールに `2026/08/03 19:00-21:00` または
 `2026年8月3日 19:00〜21:00` のような日付と時刻範囲があれば、primary Calendar に予定を
 作成します。ログイン時点より前のメールは処理しません。
+
+## テスト
+
+`npm test` は通常の統合テストに加えて、Workers Vitest pool の Miniflare D1 adapter で canonical Organization schema を検証します。D1 provisioning の回帰だけを数秒で実行するコマンドは次です。
+
+```bash
+npm run test:d1
+```
