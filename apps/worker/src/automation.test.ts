@@ -1,12 +1,41 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { extractEventCandidate, sourceAttachments, sourceAttachmentSizes, selectActiveRule, runEnabledAutomations } from './automation';
-import { createOrganizationKey, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
+import { app } from './api';
+import {
+  extractEventCandidate,
+  runEnabledAutomations,
+  selectActiveRule,
+  sourceAttachments,
+  sourceAttachmentSizes,
+} from './automation';
+import { createAutomationTestApp, type AutomationTestApp } from '../test/automation';
 
-afterEach(() => { vi.unstubAllGlobals(); });
+let fixture: AutomationTestApp | undefined;
 
-describe('mail event extraction', () => {
-  it('extracts a Japanese date and time range from a mail', () => {
+afterEach(() => {
+  vi.unstubAllGlobals();
+  fixture?.close();
+  fixture = undefined;
+});
+
+const gmailBody = (value: string): string =>
+  btoa(String.fromCharCode(...new TextEncoder().encode(value)))
+    .replaceAll('+', '-')
+    .replaceAll('/', '_')
+    .replace(/=+$/u, '');
+
+const sourceMessageResponse = (): Response => new Response(JSON.stringify({
+  payload: {
+    headers: [
+      { name: 'Subject', value: '例会のお知らせ' },
+      { name: 'From', value: 'member@example.com' },
+    ],
+    body: { data: gmailBody('日時: 2026年8月3日 19:00〜21:30') },
+  },
+}), { status: 200 });
+
+describe('Source Message event extraction', () => {
+  it('extracts an explicitly dated Japanese time range', () => {
     expect(extractEventCandidate('例会のお知らせ', '日時: 2026年8月3日 19:00〜21:30')).toEqual({
       title: '例会のお知らせ',
       startsAt: '2026-08-03T19:00:00+09:00',
@@ -14,198 +43,146 @@ describe('mail event extraction', () => {
     });
   });
 
-  it('does not invent an event when the mail omits a date or an end time', () => {
+  it('withholds a Source Message that omits a date or an end time', () => {
     expect(extractEventCandidate('お知らせ', '来週の19時から集まりましょう')).toBeNull();
     expect(extractEventCandidate('お知らせ', '2026/08/03 に集まりましょう')).toBeNull();
   });
 
-  it('selects the highest-priority active Rule whose sender, domain, and keyword policy match', () => {
+  it('selects the highest-priority matching active Automation Rule', () => {
     expect(selectActiveRule([
       { id: 'rule-low', priority: 1, selectionPolicy: { domain: 'example.com' } },
       { id: 'rule-high', priority: 10, selectionPolicy: { sender: 'announcer@example.com', keyword: '例会' } },
-    ], { sender: 'announcer@example.com', subject: '例会のお知らせ', body: '2026年8月3日 19:00〜21:00' })).toMatchObject({ id: 'rule-high' });
-    expect(selectActiveRule([{ id: 'rule-1', priority: 1, selectionPolicy: { domain: 'example.com' } }], { sender: 'other@invalid.test', subject: '例会', body: '' })).toBeNull();
-    expect(selectActiveRule([{ id: 'rule-label', priority: 1, selectionPolicy: { label: 'Announcements' } }], { sender: 'a@example.com', subject: '例会', body: '', labels: ['Announcements'] })).toMatchObject({ id: 'rule-label' });
+    ], {
+      sender: 'announcer@example.com',
+      subject: '例会のお知らせ',
+      body: '2026年8月3日 19:00〜21:00',
+    })).toMatchObject({ id: 'rule-high' });
+    expect(selectActiveRule([
+      { id: 'rule-1', priority: 1, selectionPolicy: { domain: 'example.com' } },
+    ], {
+      sender: 'other@invalid.test',
+      subject: '例会',
+      body: '',
+    })).toBeNull();
   });
 
-  it('counts only attached file parts when enforcing Source Message attachment limits', () => {
-    expect(sourceAttachmentSizes({ body: { size: 1_000 }, parts: [
-      { filename: 'agenda.pdf', body: { size: 20 * 1024 * 1024 } },
-      { filename: 'map.png', body: { size: 3 } },
-    ] })).toEqual([20 * 1024 * 1024, 3]);
-  });
+  it('counts and retains only attached file parts', () => {
+    const payload = {
+      body: { size: 1_000 },
+      parts: [
+        { filename: 'agenda.pdf', mimeType: 'application/pdf', body: { attachmentId: 'file-1', size: 12 } },
+        { body: { data: 'inline-text', size: 100 } },
+      ],
+    };
 
-  it('retains attachment identifiers and MIME metadata for Drive publication', () => {
-    expect(sourceAttachments({ parts: [
-      { filename: 'agenda.pdf', mimeType: 'application/pdf', body: { attachmentId: 'file-1', size: 12 } },
-      { body: { data: 'inline-text', size: 100 } },
-    ] })).toEqual([{ attachmentId: 'file-1', filename: 'agenda.pdf', mimeType: 'application/pdf', size: 12 }]);
+    expect(sourceAttachmentSizes(payload)).toEqual([12]);
+    expect(sourceAttachments(payload)).toEqual([
+      { attachmentId: 'file-1', filename: 'agenda.pdf', mimeType: 'application/pdf', size: 12 },
+    ]);
   });
 });
 
 describe('Organization Automation Inbox scheduling', () => {
-  it('discovers Automation Inboxes from each active Organization database, not the retired Control database path', async () => {
-    const controlQueries: string[] = [];
-    const organizationQueries: string[] = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({
-        all: async () => {
-          controlQueries.push(sql);
-          return { results: [{ id: 'organization-1', binding_name: 'ORG_ORGANIZATION1', database_id: 'database-1' }] };
-        },
-        bind: (..._values: unknown[]) => ({
-          all: async () => {
-            controlQueries.push(sql);
-            return { results: [{ id: 'organization-1', binding_name: 'ORG_ORGANIZATION1', database_id: 'database-1' }] };
-          },
-          run: async () => ({ meta: { changes: 1 } }),
-        }),
-      }),
-    } as unknown as D1Database;
-    const organizationDatabase = {
-      prepare: (sql: string) => ({
-        all: async () => { organizationQueries.push(sql); return { results: [] }; },
-        bind: (..._values: unknown[]) => ({
-          all: async () => { organizationQueries.push(sql); return { results: [] }; },
-        }),
-      }),
-    } as unknown as D1Database;
-    const env = {
-      CONTROL_DB: controlDatabase,
-      ORG_ORGANIZATION1: organizationDatabase,
-    } as unknown as Parameters<typeof runEnabledAutomations>[0];
+  it('runs an Automation Inbox only after an authorized member enables it', async () => {
+    fixture = await createAutomationTestApp({ enabled: false });
+    const requests: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      requests.push(url);
+      return new Response(JSON.stringify({ historyId: 'history-after-connection' }), { status: 200 });
+    }));
 
-    await runEnabledAutomations(env);
+    await runEnabledAutomations(fixture.environment);
+    const enabled = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/automation/enabled',
+      { enabled: true },
+    ), fixture.environment);
+    await runEnabledAutomations(fixture.environment);
 
-    expect(controlQueries.join('\n')).toContain('FROM organizations');
-    expect(controlQueries.join('\n')).not.toContain('google_automations');
-    expect(organizationQueries.join('\n')).toContain('FROM google_connections');
+    expect(enabled.status).toBe(200);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toContain('/gmail/v1/users/me/history');
   });
 
-  it('reads only after the Inbox history boundary and persists the new boundary in that Organization database', async () => {
-    const master = await masterKey('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
-    const wrappedKey = await createOrganizationKey(master, 'v1', 'organization-1');
-    const organizationKey = await unwrapOrganizationKey(wrappedKey, master, 'organization-1');
-    const inbox = {
-      id: 'inbox-1',
-      kind: 'automation_inbox',
-      google_subject: 'subject-1',
-      inbox_address: 'automation@example.com',
-      granted_scopes: '[]',
-      token_envelope: JSON.stringify(await encrypt(JSON.stringify({
-        accessToken: 'access-token', refreshToken: 'refresh-token', expiresAt: '2099-01-01T00:00:00.000Z', scopes: [], tokenType: 'Bearer',
-      }), organizationKey, 'google-connection:organization-1:automation-inbox')),
-      gmail_history_id: 'history-before-connection',
-      status: 'active',
-    };
-    const updatedConnections: unknown[][] = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({
-        all: async () => ({ results: sql.includes('FROM organizations') ? [{ id: 'organization-1', binding_name: 'ORG_ORGANIZATION1', database_id: 'database-1' }] : [] }),
-        bind: (..._values: unknown[]) => ({
-          first: async () => sql.includes('FROM organization_keys') ? { master_key_version: wrappedKey.masterKeyVersion, wrapped_key_envelope: JSON.stringify(wrappedKey.envelope) } : null,
-        }),
-      }),
-    } as unknown as D1Database;
-    const organizationDatabase = {
-      prepare: (sql: string) => ({
-        all: async () => ({ results: sql.includes('FROM google_connections') ? [inbox] : sql.includes('FROM rules') ? [{ id: 'rule-1', priority: 0, selection_policy: '{}' }] : [] }),
-        bind: (...values: unknown[]) => ({
-          run: async () => { updatedConnections.push(values); return { meta: { changes: 1 } }; },
-        }),
-      }),
-    } as unknown as D1Database;
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ historyId: 'history-after-connection' }), { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
+  it('resumes each Gmail read from the last successfully persisted history boundary', async () => {
+    fixture = await createAutomationTestApp();
+    const boundaries: Array<string | null> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const parsed = new URL(url);
+      boundaries.push(parsed.searchParams.get('startHistoryId'));
+      const historyId = boundaries.length === 1 ? 'history-after-first-run' : 'history-after-second-run';
+      return new Response(JSON.stringify({ historyId }), { status: 200 });
+    }));
 
-    await runEnabledAutomations({
-      CONTROL_DB: controlDatabase,
-      ORG_ORGANIZATION1: organizationDatabase,
-      CREDENTIAL_MASTER_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-      CREDENTIAL_MASTER_KEY_VERSION: 'v1',
-      GOOGLE_CLIENT_ID: 'client-id',
-      GOOGLE_CLIENT_SECRET: 'client-secret',
-    } as unknown as Parameters<typeof runEnabledAutomations>[0]);
+    await runEnabledAutomations(fixture.environment);
+    await runEnabledAutomations(fixture.environment);
 
-    expect(new URL(fetchMock.mock.calls[0]?.[0] as string).searchParams.get('startHistoryId')).toBe('history-before-connection');
-    expect(updatedConnections).toContainEqual(['history-after-connection', expect.any(String), 'inbox-1']);
+    expect(boundaries).toEqual(['history-before-connection', 'history-after-first-run']);
+    const status = await app.fetch(
+      fixture.request('/api/organizations/organization-1/automation'),
+      fixture.environment,
+    );
+    await expect(status.json()).resolves.toMatchObject({
+      data: { email: 'automation@example.com', lastError: null },
+    });
   });
 
-  it('creates one Scheduled Event in the owning Organization database for a newly discovered dated Source Message', async () => {
-    const master = await masterKey('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
-    const wrappedKey = await createOrganizationKey(master, 'v1', 'organization-1');
-    const organizationKey = await unwrapOrganizationKey(wrappedKey, master, 'organization-1');
-    const inbox = {
-      id: 'inbox-1', kind: 'automation_inbox', google_subject: 'subject-1', inbox_address: 'automation@example.com', granted_scopes: '[]',
-      token_envelope: JSON.stringify(await encrypt(JSON.stringify({ accessToken: 'access-token', refreshToken: 'refresh-token', expiresAt: '2099-01-01T00:00:00.000Z', scopes: [], tokenType: 'Bearer' }), organizationKey, 'google-connection:organization-1:automation-inbox')),
-      gmail_history_id: 'history-before-connection', status: 'active',
-    };
-    const writes: Array<{ sql: string; values: unknown[] }> = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({
-        all: async () => ({ results: sql.includes('FROM organizations') ? [{ id: 'organization-1', binding_name: 'ORG_ORGANIZATION1', database_id: 'database-1' }] : [] }),
-        bind: (..._values: unknown[]) => ({ first: async () => sql.includes('FROM organization_keys') ? { master_key_version: wrappedKey.masterKeyVersion, wrapped_key_envelope: JSON.stringify(wrappedKey.envelope) } : null }),
-      }),
-    } as unknown as D1Database;
-    const organizationDatabase = {
-      prepare: (sql: string) => ({
-        all: async () => ({ results: sql.includes('FROM google_connections') ? [inbox] : sql.includes('FROM rules') ? [{ id: 'rule-1', priority: 0, selection_policy: '{}' }] : [] }),
-        bind: (...values: unknown[]) => ({
-          first: async () => null,
-          run: async () => { writes.push({ sql, values }); return { meta: { changes: 1 } }; },
-        }),
-      }),
-    } as unknown as D1Database;
-    const fetchMock = vi.fn(async (url: string) => {
-      if (url.includes('/history')) return new Response(JSON.stringify({ historyId: 'history-after-connection', history: [{ messagesAdded: [{ message: { id: 'gmail-message-1' } }] }] }), { status: 200 });
-      if (url.includes('/messages/gmail-message-1')) return new Response(JSON.stringify({ payload: { headers: [{ name: 'Subject', value: '例会のお知らせ' }, { name: 'From', value: 'member@example.com' }], body: { data: btoa(String.fromCharCode(...new TextEncoder().encode('日時: 2026年8月3日 19:00〜21:30'))).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '') } } }), { status: 200 });
+  it('turns one newly discovered dated Source Message into one upcoming Scheduled Event', async () => {
+    fixture = await createAutomationTestApp();
+    const requests: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      requests.push(url);
+      if (url.includes('/history')) {
+        return new Response(JSON.stringify({
+          historyId: 'history-after-connection',
+          history: [{ messagesAdded: [{ message: { id: 'gmail-message-1' } }] }],
+        }), { status: 200 });
+      }
+      if (url.includes('/messages/gmail-message-1')) return sourceMessageResponse();
       return new Response(JSON.stringify({ id: 'calendar-event-1' }), { status: 200 });
+    }));
+
+    await runEnabledAutomations(fixture.environment);
+
+    expect(requests).toContain('https://www.googleapis.com/calendar/v3/calendars/primary/events');
+    const dashboard = await app.fetch(
+      fixture.request('/api/organizations/organization-1/dashboard'),
+      fixture.environment,
+    );
+    await expect(dashboard.json()).resolves.toMatchObject({
+      data: { upcomingEvents: 1, exceptions: 0 },
     });
-    vi.stubGlobal('fetch', fetchMock);
-
-    await runEnabledAutomations({ CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase, CREDENTIAL_MASTER_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', CREDENTIAL_MASTER_KEY_VERSION: 'v1', GOOGLE_CLIENT_ID: 'client-id', GOOGLE_CLIENT_SECRET: 'client-secret' } as unknown as Parameters<typeof runEnabledAutomations>[0]);
-
-    expect(fetchMock.mock.calls.map(([url]) => url)).toContain('https://www.googleapis.com/calendar/v3/calendars/primary/events');
-    expect(writes.some((write) => write.sql.includes('INSERT INTO events'))).toBe(true);
-    expect(writes.find((write) => write.sql.includes('INSERT INTO events'))?.values).toContain('organization-1');
   });
 
-  it('creates an Exception instead of a Scheduled Event when configured Gemini output is unsafe', async () => {
-    const master = await masterKey('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
-    const wrappedKey = await createOrganizationKey(master, 'v1', 'organization-1');
-    const organizationKey = await unwrapOrganizationKey(wrappedKey, master, 'organization-1');
-    const inbox = {
-      id: 'inbox-1', kind: 'automation_inbox', google_subject: 'subject-1', inbox_address: 'automation@example.com', granted_scopes: '[]',
-      token_envelope: JSON.stringify(await encrypt(JSON.stringify({ accessToken: 'access-token', refreshToken: 'refresh-token', expiresAt: '2099-01-01T00:00:00.000Z', scopes: [], tokenType: 'Bearer' }), organizationKey, 'google-connection:organization-1:automation-inbox')),
-      gmail_history_id: 'history-before-connection', status: 'active',
-    };
-    const aiConnection = { id: 'ai-1', kind: 'ai', label: 'Gemini', credential: JSON.stringify(await encrypt(JSON.stringify({ provider: 'Google Gemini API', apiKey: 'api-key', model: 'gemini-3.5-flash-lite' }), organizationKey, 'organization-connection:organization-1:ai')), status: 'active' };
-    const writes: Array<{ sql: string; values: unknown[] }> = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({
-        all: async () => ({ results: sql.includes('FROM organizations') ? [{ id: 'organization-1', binding_name: 'ORG_ORGANIZATION1', database_id: 'database-1' }] : [] }),
-        bind: (..._values: unknown[]) => ({ first: async () => sql.includes('FROM organization_keys') ? { master_key_version: wrappedKey.masterKeyVersion, wrapped_key_envelope: JSON.stringify(wrappedKey.envelope) } : null }),
-      }),
-    } as unknown as D1Database;
-    const organizationDatabase = {
-      prepare: (sql: string) => ({
-        all: async () => ({ results: sql.includes('FROM google_connections') ? [inbox] : sql.includes('FROM rules') ? [{ id: 'rule-1', priority: 0, selection_policy: '{}' }] : [] }),
-        bind: (...values: unknown[]) => ({
-          first: async () => sql.includes('FROM source_messages') ? null : sql.includes('FROM connections') ? aiConnection : null,
-          run: async () => { writes.push({ sql, values }); return { meta: { changes: 1 } }; },
-        }),
-      }),
-    } as unknown as D1Database;
-    const fetchMock = vi.fn(async (url: string) => {
-      if (url.includes('/history')) return new Response(JSON.stringify({ historyId: 'history-after-connection', history: [{ messagesAdded: [{ message: { id: 'gmail-message-1' } }] }] }), { status: 200 });
-      if (url.includes('/messages/gmail-message-1')) return new Response(JSON.stringify({ payload: { headers: [{ name: 'Subject', value: '例会' }, { name: 'From', value: 'member@example.com' }], body: { data: btoa(String.fromCharCode(...new TextEncoder().encode('日時: 2026年8月3日 19:00〜21:30'))).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '') } } }), { status: 200 });
-      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"title":"日時未定"}' }] } }] }), { status: 200 });
+  it('creates an Automation Exception and no Scheduled Event for unsafe AI output', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/history')) {
+        return new Response(JSON.stringify({
+          historyId: 'history-after-connection',
+          history: [{ messagesAdded: [{ message: { id: 'gmail-message-1' } }] }],
+        }), { status: 200 });
+      }
+      if (url.includes('/messages/gmail-message-1')) return sourceMessageResponse();
+      return new Response(JSON.stringify({
+        candidates: [{ content: { parts: [{ text: '{"title":"日時未定"}' }] } }],
+      }), { status: 200 });
+    }));
+
+    await runEnabledAutomations(fixture.environment);
+
+    const dashboard = await app.fetch(
+      fixture.request('/api/organizations/organization-1/dashboard'),
+      fixture.environment,
+    );
+    const exceptions = await app.fetch(
+      fixture.request('/api/organizations/organization-1/operations/exceptions'),
+      fixture.environment,
+    );
+    await expect(dashboard.json()).resolves.toMatchObject({
+      data: { upcomingEvents: 0, exceptions: 1 },
     });
-    vi.stubGlobal('fetch', fetchMock);
-
-    await runEnabledAutomations({ CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase, CREDENTIAL_MASTER_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', CREDENTIAL_MASTER_KEY_VERSION: 'v1', GOOGLE_CLIENT_ID: 'client-id', GOOGLE_CLIENT_SECRET: 'client-secret' } as unknown as Parameters<typeof runEnabledAutomations>[0]);
-
-    expect(writes.some((write) => write.sql.includes('INSERT INTO exceptions'))).toBe(true);
-    expect(writes.some((write) => write.sql.includes('INSERT INTO events'))).toBe(false);
+    await expect(exceptions.json()).resolves.toMatchObject({
+      data: [{ state: 'open' }],
+    });
   });
 });

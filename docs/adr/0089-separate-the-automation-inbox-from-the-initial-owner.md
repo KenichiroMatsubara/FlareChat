@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0095
+---
+
 # Separate the Automation Inbox from the initial Owner
 
 The Automation Inbox is an Organization-owned service connection and never acts as a human Organization member or management-GUI login.

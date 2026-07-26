@@ -1,11 +1,28 @@
+import { and, count, eq, isNotNull } from 'drizzle-orm';
+
 import { decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
 import { fromBase64Url } from './encoding';
 import { extractGeminiEventDetails } from './event-details';
+import type { EventDetails } from './event-details';
 import { publishDriveAttachment } from './drive-attachments';
 import { refreshGoogleToken } from './google';
 import type { GoogleTokenSet } from './google';
-import type { Bindings, ConnectionRow, GoogleAutomationRow } from './types';
+import { organizationDatabase } from './organization-db';
+import type { Bindings } from './types';
 import { validateAttachmentIntake } from '@mail/domain';
+import { controlDatabase as drizzleControlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
+import { organizationKeys, organizations } from './storage/control-schema';
+import {
+  connections,
+  deliveries,
+  eventAttachments,
+  events,
+  exceptions as automationExceptions,
+  googleConnections,
+  rules as automationRules,
+  sourceMessages,
+} from './storage/organization-schema';
+import type { GoogleConnectionRecord } from './storage/organization-schema';
 
 interface GmailHistory {
   historyId?: string;
@@ -20,6 +37,10 @@ interface GmailMessage {
   snippet?: string;
 }
 
+interface GmailMessageList {
+  messages?: Array<{ id?: string }>;
+}
+
 interface GmailPart {
   filename?: string;
   mimeType?: string;
@@ -32,22 +53,7 @@ interface CalendarEvent {
   id?: string;
 }
 
-interface ActiveOrganization {
-  id: string;
-  binding_name: string;
-  database_id: string;
-}
-
-interface AutomationInbox {
-  id: string;
-  kind: 'automation_inbox';
-  google_subject: string;
-  inbox_address: string;
-  granted_scopes: string;
-  token_envelope: string;
-  gmail_history_id: string;
-  status: 'active' | 'reauthentication_required' | 'disconnected';
-}
+type AutomationInbox = GoogleConnectionRecord;
 
 export interface AutomationSummary {
   scanned: number;
@@ -60,6 +66,16 @@ interface EventCandidate {
   title: string;
   startsAt: string;
   endsAt: string;
+}
+
+export interface MailboxTestMatch {
+  id: string;
+  subject: string;
+  sender: string;
+}
+
+export interface MailboxTestSource extends MailboxTestMatch {
+  source: string;
 }
 
 export interface ActiveRule {
@@ -161,27 +177,13 @@ export const selectActiveRule = (rules: ActiveRule[], source: RuleSource): Activ
   return matching.sort((left, right) => right.priority - left.priority)[0] ?? null;
 };
 
-const accessTokenFor = async (env: Bindings, automation: GoogleAutomationRow): Promise<string> => {
-  const key = await masterKey(env.CREDENTIAL_MASTER_KEY);
-  const token = JSON.parse(await decrypt(JSON.parse(automation.token_envelope), key, `google-automation:${automation.id}`)) as GoogleTokenSet;
-  if (Date.parse(token.expiresAt) > Date.now() + 60_000) return token.accessToken;
-  const refreshed = await refreshGoogleToken({
-    refreshToken: token.refreshToken,
-    clientId: env.GOOGLE_CLIENT_ID,
-    clientSecret: env.GOOGLE_CLIENT_SECRET,
-  });
-  const envelope = await encrypt(JSON.stringify(refreshed), key, `google-automation:${automation.id}`);
-  await env.CONTROL_DB.prepare('UPDATE google_automations SET token_envelope = ?, updated_at = ? WHERE id = ?')
-    .bind(JSON.stringify(envelope), now(), automation.id).run();
-  return refreshed.accessToken;
-};
-
 const organizationKeyFor = async (env: Bindings, organizationId: string): Promise<CryptoKey> => {
-  const record = await env.CONTROL_DB.prepare(
-    'SELECT master_key_version, wrapped_key_envelope FROM organization_keys WHERE organization_id = ?',
-  ).bind(organizationId).first<{ master_key_version: string; wrapped_key_envelope: string }>();
+  const record = await drizzleControlDatabase(env.CONTROL_DB).select({
+    masterKeyVersion: organizationKeys.masterKeyVersion,
+    wrappedKeyEnvelope: organizationKeys.wrappedKeyEnvelope,
+  }).from(organizationKeys).where(eq(organizationKeys.organizationId, organizationId)).get();
   if (!record) throw new Error('Organization encryption key is missing.');
-  return unwrapOrganizationKey({ masterKeyVersion: record.master_key_version, envelope: JSON.parse(record.wrapped_key_envelope) }, await masterKey(env.CREDENTIAL_MASTER_KEY), organizationId);
+  return unwrapOrganizationKey({ masterKeyVersion: record.masterKeyVersion, envelope: JSON.parse(record.wrappedKeyEnvelope) }, await masterKey(env.CREDENTIAL_MASTER_KEY), organizationId);
 };
 
 const accessTokenForInbox = async (
@@ -191,7 +193,7 @@ const accessTokenForInbox = async (
   inbox: AutomationInbox,
 ): Promise<string> => {
   const key = await organizationKeyFor(env, organizationId);
-  const token = JSON.parse(await decrypt(JSON.parse(inbox.token_envelope), key, `google-connection:${organizationId}:automation-inbox`)) as GoogleTokenSet;
+  const token = JSON.parse(await decrypt(JSON.parse(inbox.tokenEnvelope), key, `google-connection:${organizationId}:automation-inbox`)) as GoogleTokenSet;
   if (Date.parse(token.expiresAt) > Date.now() + 60_000) return token.accessToken;
   const refreshed = await refreshGoogleToken({
     refreshToken: token.refreshToken,
@@ -199,30 +201,112 @@ const accessTokenForInbox = async (
     clientSecret: env.GOOGLE_CLIENT_SECRET,
   });
   const envelope = await encrypt(JSON.stringify(refreshed), key, `google-connection:${organizationId}:automation-inbox`);
-  await database.prepare('UPDATE google_connections SET token_envelope = ?, updated_at = ? WHERE id = ?')
-    .bind(JSON.stringify(envelope), now(), inbox.id).run();
+  await drizzleOrganizationDatabase(database).update(googleConnections)
+    .set({ tokenEnvelope: JSON.stringify(envelope), updatedAt: now() })
+    .where(eq(googleConnections.id, inbox.id))
+    .run();
   return refreshed.accessToken;
 };
 
 /** Uses the Organization-scoped Gemini connection when it is configured. */
+const geminiDetails = async (
+  env: Bindings,
+  organizationId: string,
+  database: D1Database,
+  source: string,
+): Promise<EventDetails | null | undefined> => {
+  const connection = await drizzleOrganizationDatabase(database).select().from(connections)
+    .where(and(eq(connections.kind, 'ai'), eq(connections.status, 'active'))).limit(1).get();
+  if (!connection) return undefined;
+  try {
+    const key = await organizationKeyFor(env, organizationId);
+    const credential = JSON.parse(await decrypt(JSON.parse(connection.credential), key, `organization-connection:${organizationId}:ai`)) as { provider?: string; apiKey?: string; model?: string };
+    if (credential.provider !== 'Google Gemini API' || !credential.apiKey || !credential.model) return null;
+    return extractGeminiEventDetails({ apiKey: credential.apiKey, model: credential.model, source });
+  } catch {
+    return null;
+  }
+};
+
 const geminiCandidate = async (
   env: Bindings,
   organizationId: string,
   database: D1Database,
   source: string,
 ): Promise<EventCandidate | null | undefined> => {
-  const connection = await database.prepare("SELECT * FROM connections WHERE kind = 'ai' AND status = 'active' LIMIT 1")
-    .bind().first<ConnectionRow>();
-  if (!connection) return undefined;
-  try {
-    const key = await organizationKeyFor(env, organizationId);
-    const credential = JSON.parse(await decrypt(JSON.parse(connection.credential), key, `organization-connection:${organizationId}:ai`)) as { provider?: string; apiKey?: string; model?: string };
-    if (credential.provider !== 'Google Gemini API' || !credential.apiKey || !credential.model) return null;
-    const details = await extractGeminiEventDetails({ apiKey: credential.apiKey, model: credential.model, source });
-    return details && { title: details.title, startsAt: details.startsAt, endsAt: details.endsAt };
-  } catch {
-    return null;
-  }
+  const details = await geminiDetails(env, organizationId, database, source);
+  return details && { title: details.title, startsAt: details.startsAt, endsAt: details.endsAt };
+};
+
+const mailboxMessage = async (accessToken: string, messageId: string): Promise<GmailMessage> =>
+  googleFetch<GmailMessage>(accessToken, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}?format=full`);
+
+const exactSubject = (subject: string, expected: string): boolean => subject.normalize('NFC') === expected.normalize('NFC');
+
+const activeAutomationInbox = async (database: D1Database): Promise<AutomationInbox> => {
+  const inbox = await drizzleOrganizationDatabase(database).select().from(googleConnections).where(and(
+    eq(googleConnections.kind, 'automation_inbox'),
+    eq(googleConnections.status, 'active'),
+  )).limit(1).get();
+  if (!inbox) throw new Error('Automation Inbox が見つかりません。');
+  return inbox;
+};
+
+/** Finds recent exact-subject matches in the Organization's Automation Inbox without changing Gmail state or the history boundary. */
+export const searchMailboxForTest = async (
+  env: Bindings,
+  organizationId: string,
+  database: D1Database,
+  subject: string,
+): Promise<MailboxTestMatch[]> => {
+  const accessToken = await accessTokenForInbox(env, organizationId, database, await activeAutomationInbox(database));
+  const query = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages');
+  query.searchParams.set('q', `subject:"${subject.replaceAll('"', '\\"')}"`);
+  query.searchParams.set('maxResults', '10');
+  const results = await googleFetch<GmailMessageList>(accessToken, query.toString());
+  const messages = await Promise.all((results.messages ?? []).flatMap((value) => value.id ? [mailboxMessage(accessToken, value.id)] : []));
+  return messages.flatMap((message) => {
+    const foundSubject = subjectOf(message.payload);
+    if (!message.id || !exactSubject(foundSubject, subject)) return [];
+    return [{ id: message.id, subject: foundSubject, sender: senderOf(message.payload) }];
+  });
+};
+
+/** Reads one selected message from the Organization's Automation Inbox for a server-side AI preview. */
+export const readMailboxTestSource = async (
+  env: Bindings,
+  organizationId: string,
+  database: D1Database,
+  messageId: string,
+): Promise<MailboxTestSource> => {
+  const accessToken = await accessTokenForInbox(env, organizationId, database, await activeAutomationInbox(database));
+  const message = await mailboxMessage(accessToken, messageId);
+  if (!message.id) throw new Error('Gmail メッセージを取得できませんでした。');
+  const subject = subjectOf(message.payload);
+  const body = decodedBody(message.payload) || (message.snippet ?? '');
+  return { id: message.id, subject, sender: senderOf(message.payload), source: `${subject}\n${body}` };
+};
+
+/** Creates a Calendar event only after a separately confirmed, encrypted test preview. */
+export const createMailboxTestCalendarEvent = async (
+  env: Bindings,
+  organizationId: string,
+  database: D1Database,
+  input: { messageId: string; event: EventDetails },
+): Promise<{ eventId: string }> => {
+  const accessToken = await accessTokenForInbox(env, organizationId, database, await activeAutomationInbox(database));
+  const event = await googleFetch<CalendarEvent>(accessToken, 'https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+    method: 'POST',
+    body: JSON.stringify({
+      summary: input.event.title,
+      description: `${input.event.description}\n\nMail Automation の手動テストで Gmail メッセージ ${input.messageId} から作成しました。`.trim(),
+      location: input.event.location,
+      start: { dateTime: input.event.startsAt, timeZone: input.event.timeZone },
+      end: { dateTime: input.event.endsAt, timeZone: input.event.timeZone },
+    }),
+  });
+  if (!event.id) throw new Error('Google Calendar が予定 ID を返しませんでした。');
+  return { eventId: event.id };
 };
 
 const processOrganizationMessage = async (
@@ -233,48 +317,71 @@ const processOrganizationMessage = async (
   gmailHistoryId: string,
   gmailMessageId: string,
 ): Promise<void> => {
-  const known = await database.prepare('SELECT id FROM source_messages WHERE gmail_message_id = ?')
-    .bind(gmailMessageId).first<{ id: string }>();
+  const db = drizzleOrganizationDatabase(database);
+  const known = await db.select({ id: sourceMessages.id }).from(sourceMessages)
+    .where(eq(sourceMessages.gmailMessageId, gmailMessageId)).get();
   if (known) return;
   const message = await googleFetch<GmailMessage>(accessToken, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(gmailMessageId)}?format=full`);
   const subject = subjectOf(message.payload);
   const sourceMessageId = crypto.randomUUID();
   const timestamp = now();
-  await database.prepare(
-    "INSERT INTO source_messages (id, gmail_message_id, gmail_history_id, sender, subject, received_at, processed_at, state) VALUES (?, ?, ?, ?, ?, ?, ?, 'processing')",
-  ).bind(sourceMessageId, gmailMessageId, gmailHistoryId, senderOf(message.payload), subject, timestamp, timestamp).run();
+  await db.insert(sourceMessages).values({
+    id: sourceMessageId,
+    gmailMessageId,
+    gmailHistoryId,
+    sender: senderOf(message.payload),
+    subject,
+    receivedAt: timestamp,
+    processedAt: timestamp,
+    state: 'processing',
+  }).run();
   const body = decodedBody(message.payload) || (message.snippet ?? '');
   const attachmentIntake = validateAttachmentIntake(sourceAttachmentSizes(message.payload));
   if (!attachmentIntake.accepted) {
-    await database.prepare("INSERT INTO exceptions (id, source_message_id, code, message, state, created_at) VALUES (?, ?, ?, ?, 'open', ?)")
-      .bind(crypto.randomUUID(), sourceMessageId, attachmentIntake.reason, 'Source Message attachments exceed the configured intake limit.', now()).run();
-    await database.prepare("UPDATE source_messages SET state = 'exception', processed_at = ? WHERE id = ?")
-      .bind(now(), sourceMessageId).run();
+    await db.insert(automationExceptions).values({
+      id: crypto.randomUUID(),
+      sourceMessageId,
+      code: attachmentIntake.reason,
+      message: 'Source Message attachments exceed the configured intake limit.',
+      state: 'open',
+      createdAt: now(),
+    }).run();
+    await db.update(sourceMessages).set({ state: 'exception', processedAt: now() })
+      .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
   }
-  const rules = await database.prepare("SELECT id, priority, selection_policy FROM rules WHERE status = 'active' ORDER BY priority DESC")
-    .all<{ id: string; priority: number; selection_policy: string }>();
-  const rule = selectActiveRule(rules.results.flatMap((row) => {
-    try { return [{ id: row.id, priority: row.priority, selectionPolicy: JSON.parse(row.selection_policy) as Record<string, unknown> }]; }
+  const activeRules = await db.select({
+    id: automationRules.id,
+    priority: automationRules.priority,
+    selectionPolicy: automationRules.selectionPolicy,
+  }).from(automationRules).where(eq(automationRules.status, 'active')).orderBy(automationRules.priority).all();
+  const rule = selectActiveRule(activeRules.flatMap((row) => {
+    try { return [{ id: row.id, priority: row.priority, selectionPolicy: JSON.parse(row.selectionPolicy) as Record<string, unknown> }]; }
     catch { return []; }
   }), { sender: senderOf(message.payload), subject, body, ...(message.labelIds === undefined ? {} : { labels: message.labelIds }) });
   if (!rule) {
-    await database.prepare("UPDATE source_messages SET state = 'skipped', processed_at = ? WHERE id = ?")
-      .bind(now(), sourceMessageId).run();
+    await db.update(sourceMessages).set({ state: 'skipped', processedAt: now() })
+      .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
   }
   const aiCandidate = await geminiCandidate(env, organizationId, database, `${subject}\n${body}`);
   if (aiCandidate === null) {
-    await database.prepare("INSERT INTO exceptions (id, source_message_id, code, message, state, created_at) VALUES (?, ?, 'gemini_event_details_invalid', ?, 'open', ?)")
-      .bind(crypto.randomUUID(), sourceMessageId, 'Gemini could not produce safe Event Details.', now()).run();
-    await database.prepare("UPDATE source_messages SET state = 'exception', processed_at = ? WHERE id = ?")
-      .bind(now(), sourceMessageId).run();
+    await db.insert(automationExceptions).values({
+      id: crypto.randomUUID(),
+      sourceMessageId,
+      code: 'gemini_event_details_invalid',
+      message: 'Gemini could not produce safe Event Details.',
+      state: 'open',
+      createdAt: now(),
+    }).run();
+    await db.update(sourceMessages).set({ state: 'exception', processedAt: now() })
+      .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
   }
   const candidate = aiCandidate ?? extractEventCandidate(subject, body);
   if (!candidate) {
-    await database.prepare("UPDATE source_messages SET state = 'skipped', processed_at = ? WHERE id = ?")
-      .bind(now(), sourceMessageId).run();
+    await db.update(sourceMessages).set({ state: 'skipped', processedAt: now() })
+      .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
   }
   const event = await googleFetch<CalendarEvent>(accessToken, 'https://www.googleapis.com/calendar/v3/calendars/primary/events', {
@@ -288,20 +395,47 @@ const processOrganizationMessage = async (
   });
   if (!event.id) throw new Error('Google Calendar did not return an event ID.');
   const eventId = crypto.randomUUID();
-  await database.prepare(
-    "INSERT INTO events (id, organization_id, rule_id, source_message_id, google_event_id, title, starts_at, ends_at, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?)",
-  ).bind(eventId, organizationId, rule.id, sourceMessageId, event.id, candidate.title, candidate.startsAt, candidate.endsAt, now(), now()).run();
+  const eventCreatedAt = now();
+  await db.insert(events).values({
+    id: eventId,
+    organizationId,
+    ruleId: rule.id,
+    sourceMessageId,
+    googleEventId: event.id,
+    title: candidate.title,
+    startsAt: candidate.startsAt,
+    endsAt: candidate.endsAt,
+    status: 'scheduled',
+    createdAt: eventCreatedAt,
+    updatedAt: eventCreatedAt,
+  }).run();
   const attachments = sourceAttachments(message.payload);
   const publications = await Promise.all(attachments.map(async (attachment) => ({
     attachment,
     publication: await publishDriveAttachment({ accessToken, gmailMessageId, attachment }),
   })));
   for (const { attachment, publication } of publications) {
-    await database.prepare(
-      'INSERT INTO event_attachments (id, event_id, gmail_attachment_id, filename, mime_type, byte_size, drive_file_id, public_url, outcome, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    ).bind(crypto.randomUUID(), eventId, attachment.attachmentId, attachment.filename, attachment.mimeType, attachment.size, publication.driveFileId, publication.publicUrl, publication.outcome, now()).run();
-    await database.prepare('INSERT INTO deliveries (id, event_id, channel, destination, outcome, external_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .bind(crypto.randomUUID(), eventId, 'drive', attachment.filename, publication.outcome, publication.driveFileId, now()).run();
+    await db.insert(eventAttachments).values({
+      id: crypto.randomUUID(),
+      eventId,
+      gmailAttachmentId: attachment.attachmentId,
+      filename: attachment.filename,
+      mimeType: attachment.mimeType,
+      byteSize: attachment.size,
+      driveFileId: publication.driveFileId,
+      publicUrl: publication.publicUrl,
+      outcome: publication.outcome,
+      createdAt: now(),
+    }).run();
+    await db.insert(deliveries).values({
+      id: crypto.randomUUID(),
+      eventId,
+      channel: 'drive',
+      destination: attachment.filename,
+      outcome: publication.outcome,
+      externalId: publication.driveFileId,
+      createdAt: now(),
+    }).run();
   }
   const publicUrls = publications.flatMap(({ publication }) => publication.publicUrl ? [publication.publicUrl] : []);
   if (publicUrls.length) {
@@ -311,11 +445,19 @@ const processOrganizationMessage = async (
     });
   }
   if (publications.some(({ publication }) => publication.outcome === 'failed')) {
-    await database.prepare("INSERT INTO exceptions (id, source_message_id, code, message, state, created_at) VALUES (?, ?, 'drive_attachment_publish_failed', ?, 'open', ?)")
-      .bind(crypto.randomUUID(), sourceMessageId, '一部の添付ファイルを公開できませんでした。', now()).run();
+    await db.insert(automationExceptions).values({
+      id: crypto.randomUUID(),
+      sourceMessageId,
+      code: 'drive_attachment_publish_failed',
+      message: '一部の添付ファイルを公開できませんでした。',
+      state: 'open',
+      createdAt: now(),
+    }).run();
   }
-  await database.prepare("UPDATE source_messages SET state = ?, processed_at = ? WHERE id = ?")
-    .bind(publications.some(({ publication }) => publication.outcome === 'failed') ? 'exception' : 'processed', now(), sourceMessageId).run();
+  await db.update(sourceMessages).set({
+    state: publications.some(({ publication }) => publication.outcome === 'failed') ? 'exception' : 'processed',
+    processedAt: now(),
+  }).where(eq(sourceMessages.id, sourceMessageId)).run();
 };
 
 const runOrganizationInbox = async (
@@ -326,133 +468,94 @@ const runOrganizationInbox = async (
 ): Promise<void> => {
   const accessToken = await accessTokenForInbox(env, organizationId, database, inbox);
   let pageToken: string | undefined;
-  let historyId = inbox.gmail_history_id;
+  let historyId = inbox.gmailHistoryId;
   do {
     const query = new URL('https://gmail.googleapis.com/gmail/v1/users/me/history');
-    query.searchParams.set('startHistoryId', inbox.gmail_history_id);
+    query.searchParams.set('startHistoryId', inbox.gmailHistoryId);
     query.searchParams.set('historyTypes', 'messageAdded');
     if (pageToken) query.searchParams.set('pageToken', pageToken);
     const history = await googleFetch<GmailHistory>(accessToken, query.toString());
     for (const entry of history.history ?? []) {
       for (const message of entry.messagesAdded ?? []) {
-        if (message.message?.id) await processOrganizationMessage(env, database, organizationId, accessToken, inbox.gmail_history_id, message.message.id);
+        if (message.message?.id) await processOrganizationMessage(env, database, organizationId, accessToken, inbox.gmailHistoryId, message.message.id);
       }
     }
     historyId = history.historyId ?? historyId;
     pageToken = history.nextPageToken;
   } while (pageToken);
-  await database.prepare('UPDATE google_connections SET gmail_history_id = ?, updated_at = ? WHERE id = ?')
-    .bind(historyId, now(), inbox.id).run();
+  const syncedAt = now();
+  await drizzleOrganizationDatabase(database).update(googleConnections)
+    .set({ gmailHistoryId: historyId, lastSyncedAt: syncedAt, lastError: null, updatedAt: syncedAt })
+    .where(eq(googleConnections.id, inbox.id))
+    .run();
 };
 
-const recordMessage = async (
+const automationCounts = async (database: D1Database): Promise<{ scanned: number; created: number; skipped: number; exceptions: number }> => {
+  const db = drizzleOrganizationDatabase(database);
+  const [scanned, created, skipped, exceptions] = await Promise.all([
+    db.select({ value: count() }).from(sourceMessages).get(),
+    db.select({ value: count() }).from(events).where(eq(events.status, 'scheduled')).get(),
+    db.select({ value: count() }).from(sourceMessages).where(eq(sourceMessages.state, 'skipped')).get(),
+    db.select({ value: count() }).from(sourceMessages).where(eq(sourceMessages.state, 'exception')).get(),
+  ]);
+  return {
+    scanned: scanned?.value ?? 0,
+    created: created?.value ?? 0,
+    skipped: skipped?.value ?? 0,
+    exceptions: exceptions?.value ?? 0,
+  };
+};
+
+export const runOrganizationAutomation = async (
   env: Bindings,
-  automationId: string,
-  gmailMessageId: string,
-  subject: string,
-  status: 'created' | 'skipped' | 'exception',
-  calendarEventId: string | null,
-  error: string | null,
-): Promise<boolean> => {
-  const result = await env.CONTROL_DB.prepare(
-    `INSERT OR IGNORE INTO automation_messages
-      (id, automation_id, gmail_message_id, subject, calendar_event_id, status, error_message, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(crypto.randomUUID(), automationId, gmailMessageId, subject, calendarEventId, status, error, now(), now()).run();
-  return result.meta.changes > 0;
-};
-
-const processMessage = async (
-  env: Bindings,
-  automation: GoogleAutomationRow,
-  accessToken: string,
-  gmailMessageId: string,
-  summary: AutomationSummary,
-): Promise<void> => {
-  const known = await env.CONTROL_DB.prepare('SELECT id FROM automation_messages WHERE automation_id = ? AND gmail_message_id = ?')
-    .bind(automation.id, gmailMessageId).first<{ id: string }>();
-  if (known) return;
-  summary.scanned += 1;
-  try {
-    const message = await googleFetch<GmailMessage>(accessToken, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(gmailMessageId)}?format=full`);
-    const subject = subjectOf(message.payload);
-    const candidate = extractEventCandidate(subject, decodedBody(message.payload) || (message.snippet ?? ''));
-    if (!candidate) {
-      if (await recordMessage(env, automation.id, gmailMessageId, subject, 'skipped', null, '日付と開始・終了時刻を認識できませんでした。')) summary.skipped += 1;
-      return;
-    }
-    const event = await googleFetch<CalendarEvent>(accessToken, 'https://www.googleapis.com/calendar/v3/calendars/primary/events', {
-      method: 'POST',
-      body: JSON.stringify({
-        summary: candidate.title,
-        description: `Mail Automation が Gmail メッセージ ${gmailMessageId} から作成しました。`,
-        start: { dateTime: candidate.startsAt, timeZone: 'Asia/Tokyo' },
-        end: { dateTime: candidate.endsAt, timeZone: 'Asia/Tokyo' },
-      }),
-    });
-    if (!event.id) throw new Error('Google Calendar did not return an event ID.');
-    if (await recordMessage(env, automation.id, gmailMessageId, subject, 'created', event.id, null)) summary.created += 1;
-  } catch (error) {
-    const recorded = await recordMessage(
-      env,
-      automation.id,
-      gmailMessageId,
-      '(メッセージを取得できませんでした)',
-      'exception',
-      null,
-      error instanceof Error ? error.message : 'メッセージの自動化に失敗しました。',
-    );
-    if (recorded) summary.exceptions += 1;
-  }
-};
-
-export const runAutomation = async (env: Bindings, automation: GoogleAutomationRow): Promise<AutomationSummary> => {
-  const summary: AutomationSummary = { scanned: 0, created: 0, skipped: 0, exceptions: 0 };
-  const accessToken = await accessTokenFor(env, automation);
-  let pageToken: string | undefined;
-  let historyId = automation.gmail_history_id;
-  do {
-    const query = new URL('https://gmail.googleapis.com/gmail/v1/users/me/history');
-    query.searchParams.set('startHistoryId', automation.gmail_history_id);
-    query.searchParams.set('historyTypes', 'messageAdded');
-    if (pageToken) query.searchParams.set('pageToken', pageToken);
-    const history = await googleFetch<GmailHistory>(accessToken, query.toString());
-    for (const entry of history.history ?? []) {
-      for (const message of entry.messagesAdded ?? []) {
-        if (message.message?.id) await processMessage(env, automation, accessToken, message.message.id, summary);
-      }
-    }
-    historyId = history.historyId ?? historyId;
-    pageToken = history.nextPageToken;
-  } while (pageToken);
-  await env.CONTROL_DB.prepare('UPDATE google_automations SET gmail_history_id = ?, last_synced_at = ?, last_error = NULL, updated_at = ? WHERE id = ?')
-    .bind(historyId, now(), now(), automation.id).run();
-  return summary;
-};
-
-export const runAutomationForIdentity = async (env: Bindings, identityId: string): Promise<AutomationSummary> => {
-  const automation = await env.CONTROL_DB.prepare('SELECT * FROM google_automations WHERE identity_id = ? AND enabled = 1')
-    .bind(identityId).first<GoogleAutomationRow>();
-  if (!automation) throw new Error('有効な Google 自動化が見つかりません。');
-  return runAutomation(env, automation);
+  organizationId: string,
+  database: D1Database,
+): Promise<AutomationSummary> => {
+  const db = drizzleOrganizationDatabase(database);
+  const inbox = await db.select().from(googleConnections).where(and(
+    eq(googleConnections.kind, 'automation_inbox'),
+    eq(googleConnections.status, 'active'),
+    eq(googleConnections.enabled, true),
+  )).limit(1).get();
+  if (!inbox) throw new Error('有効な Automation Inbox が見つかりません。');
+  const before = await automationCounts(database);
+  await runOrganizationInbox(env, organizationId, database, inbox);
+  const after = await automationCounts(database);
+  return {
+    scanned: after.scanned - before.scanned,
+    created: after.created - before.created,
+    skipped: after.skipped - before.skipped,
+    exceptions: after.exceptions - before.exceptions,
+  };
 };
 
 export const runEnabledAutomations = async (env: Bindings): Promise<void> => {
-  const organizations = await env.CONTROL_DB.prepare(
-    "SELECT id, binding_name, database_id FROM organizations WHERE status = 'active' AND database_id IS NOT NULL ORDER BY updated_at LIMIT 20",
-  ).all<ActiveOrganization>();
-  for (const organization of organizations.results) {
-    const database = (env as unknown as Record<string, unknown>)[organization.binding_name];
-    if (!database || typeof database !== 'object') continue;
-    const inboxes = await (database as D1Database).prepare(
-      "SELECT * FROM google_connections WHERE kind = 'automation_inbox' AND status = 'active'",
-    ).all<AutomationInbox>();
-    for (const inbox of inboxes.results) {
+  const activeOrganizations = await drizzleControlDatabase(env.CONTROL_DB).select({
+    id: organizations.id,
+    bindingName: organizations.bindingName,
+    databaseId: organizations.databaseId,
+  }).from(organizations).where(and(
+    eq(organizations.status, 'active'),
+    isNotNull(organizations.databaseId),
+  )).orderBy(organizations.updatedAt).limit(20).all();
+  for (const organization of activeOrganizations) {
+    const database = organizationDatabase(env, organization.bindingName, organization.databaseId);
+    if (!database) continue;
+    const orgDb = drizzleOrganizationDatabase(database);
+    const inboxes = await orgDb.select().from(googleConnections).where(and(
+      eq(googleConnections.kind, 'automation_inbox'),
+      eq(googleConnections.status, 'active'),
+      eq(googleConnections.enabled, true),
+    )).all();
+    for (const inbox of inboxes) {
       try {
-        await runOrganizationInbox(env, organization.id, database as D1Database, inbox);
-      } catch {
-        await (database as D1Database).prepare("UPDATE google_connections SET status = 'reauthentication_required', updated_at = ? WHERE id = ?")
-          .bind(now(), inbox.id).run();
+        await runOrganizationInbox(env, organization.id, database, inbox);
+      } catch (error) {
+        await orgDb.update(googleConnections).set({
+          status: 'reauthentication_required',
+          lastError: error instanceof Error ? error.message : 'Automation Inbox failed.',
+          updatedAt: now(),
+        }).where(eq(googleConnections.id, inbox.id)).run();
       }
     }
   }

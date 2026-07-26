@@ -1,3 +1,7 @@
+---
+status: superseded in part by ADR-0095
+---
+
 # Retry failed Organization provisioning for twenty-four hours
 
 After the complete Automation Inbox grant and initial Owner passkey registration succeed, an infrastructure failure may leave the setup in `Provisioning` for at most twenty-four hours.

@@ -10,6 +10,8 @@ export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/drive.file',
 ] as const;
 
+export const GOOGLE_IDENTITY_SCOPES = ['openid', 'email', 'profile'] as const;
+
 const GOOGLE_SCOPE_ALIASES: Record<string, string> = {
   'https://www.googleapis.com/auth/userinfo.email': 'email',
   'https://www.googleapis.com/auth/userinfo.profile': 'profile',

@@ -1,5 +1,7 @@
+# Google Cloud OAuth client: register both local redirect URIs documented in README.md.
 GOOGLE_CLIENT_SECRET=
 GOOGLE_CLIENT_ID=
 # `openssl rand -base64 32 | tr '+/' '-_' | tr -d '='` で生成した32バイトのbase64url値
 CREDENTIAL_MASTER_KEY=
 CREDENTIAL_MASTER_KEY_VERSION=local-1
+# Local Organization D1 bindings are declared in wrangler.jsonc; Cloudflare credentials are not required.

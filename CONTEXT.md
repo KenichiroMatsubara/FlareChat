@@ -8,13 +8,13 @@ The deployment uses one Control D1 database plus one Organization D1 database pe
 
 Organization registration automatically provisions a new D1 database, applies the current schema, adds a uniquely named D1 binding to the Worker through the Cloudflare API, verifies access, and only then activates the Organization. The initial active-Organization value of ten is configurable operational policy and never determines database slots or provisioning capacity.
 
-Organization creation begins with authorization of its Automation Inbox. D1 provisioning starts only after Google returns the complete required grant: identity, `gmail.readonly`, `gmail.send`, `calendar.events.owned`, and `drive.file`. Partial consent creates no Organization or D1 database; no separate application login allowlist is required for the private pilot.
+Organization creation begins with one Google authorization. The authorized account becomes both the Automation Inbox and the initial Owner identity, and its display name is the editable Organization-name default. D1 provisioning starts only after Google returns the complete required grant: identity, `gmail.readonly`, `gmail.send`, `calendar.events.owned`, and `drive.file`. Partial consent creates no Organization or D1 database; no separate application login allowlist is required for the private pilot.
 
-The Automation Inbox is a service connection, not a human Organization member. After its complete grant, the person performing setup registers a passkey and becomes the initial Owner; D1 provisioning begins only after both steps succeed.
+The Automation Inbox remains an Organization-owned Google Connection rather than a human membership record, even when its Google identity also identifies the initial Owner. Setup requires neither Owner email re-entry nor passkey registration.
 
-An Organization setup session expires fifteen minutes after the Automation Inbox grant. If the initial Owner passkey is not completed in time, Mail Automation revokes and deletes the Google credential and creates no Organization D1 database.
+An Organization setup session expires fifteen minutes after the Automation Inbox grant while the installer confirms the editable Organization name. If confirmation is not completed in time, Mail Automation revokes and deletes the Google credential and creates no Organization D1 database.
 
-After OAuth and passkey setup succeed, a failed D1 provisioning operation may retain the encrypted Google credential and initial Owner record for at most twenty-four hours while idempotent automatic retries continue. Expiry revokes the grant, deletes the pending identity and credential, and requires a new setup.
+After Google authorization and name confirmation succeed, a failed D1 provisioning operation may retain the encrypted Google credential and initial Owner record for at most twenty-four hours while explicit and automatic idempotent retries remain available. The failed phase and concrete error remain visible. Expiry revokes the grant, deletes the pending credential, and requires a new setup.
 
 When an estimated included Cloudflare allowance or configured cost threshold approaches exhaustion, interactive attendance, administration, and authentication traffic takes precedence. New inbox processing, AI extraction, and ordinary LINE delivery are retained as pending work and resume oldest-first after capacity recovers.
 

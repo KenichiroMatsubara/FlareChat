@@ -1,34 +1,50 @@
 import { shouldSendAttendanceReminder } from '@mail/domain';
+import { and, eq, isNotNull } from 'drizzle-orm';
+import { organizationDatabase } from './organization-db';
 import type { Bindings } from './types';
+import { controlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
+import { organizations } from './storage/control-schema';
+import { attendance, events, jobs, listItems } from './storage/organization-schema';
 
 interface ReminderCandidate {
-  event_id: string;
-  recipient_item_id: string;
+  eventId: string;
+  recipientItemId: string;
   destination: string;
   status: 'unanswered' | 'attending' | 'not_attending';
-  attendance_deadline: string;
-  milestone: number | null;
+  attendanceDeadline: string;
 }
 
 /** Queues one durable reminder per unanswered recipient and milestone. */
 export const enqueueDueAttendanceReminders = async (database: D1Database, now: string): Promise<number> => {
-  const rows = await database.prepare(
-    `SELECT a.event_id, a.recipient_item_id, li.value AS destination, a.status, e.attendance_deadline,
-       CAST((julianday(e.attendance_deadline) - julianday(?)) AS INTEGER) AS milestone
-     FROM attendance a
-     JOIN events e ON e.id = a.event_id
-     JOIN list_items li ON li.id = a.recipient_item_id
-     WHERE e.attendance_deadline IS NOT NULL`,
-  ).bind(now).all<ReminderCandidate>();
+  const db = drizzleOrganizationDatabase(database);
+  const rows: ReminderCandidate[] = await db.select({
+    eventId: attendance.eventId,
+    recipientItemId: attendance.recipientItemId,
+    destination: listItems.value,
+    status: attendance.status,
+    attendanceDeadline: events.attendanceDeadline,
+  }).from(attendance)
+    .innerJoin(events, eq(events.id, attendance.eventId))
+    .innerJoin(listItems, eq(listItems.id, attendance.recipientItemId))
+    .where(isNotNull(events.attendanceDeadline))
+    .all() as ReminderCandidate[];
   let queued = 0;
-  for (const row of rows.results) {
-    const milestone = row.milestone ?? -1;
-    const idempotencyKey = `attendance-reminder:${row.event_id}:${row.recipient_item_id}:${milestone}`;
+  for (const row of rows) {
+    const milestone = Math.floor((Date.parse(row.attendanceDeadline) - Date.parse(now)) / 86_400_000);
+    const idempotencyKey = `attendance-reminder:${row.eventId}:${row.recipientItemId}:${milestone}`;
     if (!shouldSendAttendanceReminder({ status: row.status, daysUntilDeadline: milestone, alreadySent: false })) continue;
     const timestamp = now;
-    const result = await database.prepare(
-      "INSERT OR IGNORE INTO jobs (id, kind, payload, state, attempts, available_at, idempotency_key, created_at, updated_at) VALUES (?, 'attendance_reminder', ?, 'pending', 0, ?, ?, ?, ?)",
-    ).bind(crypto.randomUUID(), JSON.stringify({ eventId: row.event_id, recipientItemId: row.recipient_item_id, destination: row.destination, milestone }), timestamp, idempotencyKey, timestamp, timestamp).run();
+    const result = await db.insert(jobs).values({
+      id: crypto.randomUUID(),
+      kind: 'attendance_reminder',
+      payload: JSON.stringify({ eventId: row.eventId, recipientItemId: row.recipientItemId, destination: row.destination, milestone }),
+      state: 'pending',
+      attempts: 0,
+      availableAt: timestamp,
+      idempotencyKey,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }).onConflictDoNothing().run();
     queued += result.meta.changes;
   }
   return queued;
@@ -36,13 +52,15 @@ export const enqueueDueAttendanceReminders = async (database: D1Database, now: s
 
 /** Scans all active Organization databases; suspended Organizations deliberately receive no new reminder work. */
 export const enqueueDueOrganizationAttendanceReminders = async (env: Bindings, now: string): Promise<number> => {
-  const organizations = await env.CONTROL_DB.prepare("SELECT binding_name FROM organizations WHERE status = 'active' AND database_id IS NOT NULL")
-    .all<{ binding_name: string }>();
+  const activeOrganizations = await controlDatabase(env.CONTROL_DB).select({
+    bindingName: organizations.bindingName,
+    databaseId: organizations.databaseId,
+  }).from(organizations).where(and(eq(organizations.status, 'active'), isNotNull(organizations.databaseId))).all();
   let queued = 0;
-  for (const organization of organizations.results) {
-    const database = (env as unknown as Record<string, unknown>)[organization.binding_name];
-    if (!database || typeof database !== 'object') continue;
-    queued += await enqueueDueAttendanceReminders(database as D1Database, now);
+  for (const organization of activeOrganizations) {
+    const database = organizationDatabase(env, organization.bindingName, organization.databaseId);
+    if (!database) continue;
+    queued += await enqueueDueAttendanceReminders(database, now);
   }
   return queued;
 };

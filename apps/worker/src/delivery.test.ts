@@ -1,61 +1,145 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { archiveExpiredDeliveryRecords } from './delivery-archive';
 import { deliverCalendarInvitation, deliverLineBatch, recordDeliveryAttempt } from './delivery';
+import { masterKey } from './cryptography';
+import { createMigratedTestD1, type TestD1Database } from '../test/d1';
+import { createMemoryR2, seedScheduledEvent } from '../test/seed';
+
+const openDatabases: TestD1Database[] = [];
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  for (const database of openDatabases.splice(0)) database.close();
+});
+
+const deliveryDatabase = (): TestD1Database => {
+  const database = createMigratedTestD1('organization');
+  seedScheduledEvent(database, { id: 'event-1' });
+  openDatabases.push(database);
+  return database;
+};
+
+const archivedRecordCount = async (database: TestD1Database): Promise<number> =>
+  archiveExpiredDeliveryRecords({
+    database: database.binding,
+    bucket: createMemoryR2().bucket,
+    organizationKey: await masterKey('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'),
+    organizationId: 'organization-1',
+    before: '2099-01-01T00:00:00.000Z',
+  });
 
 describe('Delivery Records', () => {
-  it('records each recipient delivery outcome independently so partial success is preserved', async () => {
-    const writes: unknown[][] = [];
-    const database = { prepare: (_sql: string) => ({ bind: (...values: unknown[]) => ({ run: async () => { writes.push(values); return { meta: { changes: 1 } }; } }) }) } as unknown as D1Database;
+  it('makes each recipient outcome independently durable', async () => {
+    const database = deliveryDatabase();
 
-    const record = await recordDeliveryAttempt(database, { eventId: 'event-1', destination: 'recipient@example.com', channel: 'calendar', outcome: 'succeeded', externalId: 'google-event-1' });
+    const succeeded = await recordDeliveryAttempt(database.binding, {
+      eventId: 'event-1',
+      destination: 'first@example.com',
+      channel: 'calendar',
+      outcome: 'succeeded',
+      externalId: 'google-event-1',
+    });
+    const failed = await recordDeliveryAttempt(database.binding, {
+      eventId: 'event-1',
+      destination: 'second@example.com',
+      channel: 'calendar',
+      outcome: 'failed',
+      externalId: null,
+    });
 
-    expect(record).toMatchObject({ eventId: 'event-1', destination: 'recipient@example.com', outcome: 'succeeded' });
-    expect(writes[0]).toContain('recipient@example.com');
+    expect(succeeded).toMatchObject({ destination: 'first@example.com', outcome: 'succeeded' });
+    expect(failed).toMatchObject({ destination: 'second@example.com', outcome: 'failed' });
+    await expect(archivedRecordCount(database)).resolves.toBe(2);
   });
 
-  it('adds one Calendar invitee without replacing existing attendees, then records its external result', async () => {
-    const writes: unknown[][] = [];
-    const database = { prepare: (_sql: string) => ({ bind: (...values: unknown[]) => ({ run: async () => { writes.push(values); return { meta: { changes: 1 } }; } }) }) } as unknown as D1Database;
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ attendees: [{ email: 'existing@example.com' }] }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'calendar-event-1' }), { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
+  it('adds one Calendar invitee without replacing existing attendees and records success', async () => {
+    const database = deliveryDatabase();
+    const requests: Array<{ url: string; init: RequestInit | undefined }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      requests.push({ url, init });
+      if (!init?.method) {
+        return new Response(JSON.stringify({ attendees: [{ email: 'existing@example.com' }] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ id: 'calendar-event-1' }), { status: 200 });
+    }));
 
-    const record = await deliverCalendarInvitation({ database, accessToken: 'token', eventId: 'event-1', calendarEventId: 'calendar-event-1', recipientEmail: 'guest@example.com' });
+    const result = await deliverCalendarInvitation({
+      database: database.binding,
+      accessToken: 'token',
+      eventId: 'event-1',
+      calendarEventId: 'calendar-event-1',
+      recipientEmail: 'guest@example.com',
+    });
 
-    expect(record).toMatchObject({ eventId: 'event-1', destination: 'guest@example.com', channel: 'calendar', outcome: 'succeeded', externalId: 'calendar-event-1' });
-    expect(fetchMock).toHaveBeenNthCalledWith(1, 'https://www.googleapis.com/calendar/v3/calendars/primary/events/calendar-event-1', expect.anything());
-    expect(fetchMock).toHaveBeenNthCalledWith(2, 'https://www.googleapis.com/calendar/v3/calendars/primary/events/calendar-event-1?sendUpdates=all', expect.objectContaining({ method: 'PATCH' }));
-    expect(JSON.parse(fetchMock.mock.calls[1]?.[1].body as string)).toEqual({ attendees: [{ email: 'existing@example.com' }, { email: 'guest@example.com' }] });
-    expect(writes[0]).toContain('succeeded');
-    vi.unstubAllGlobals();
+    expect(result).toMatchObject({
+      destination: 'guest@example.com',
+      outcome: 'succeeded',
+      externalId: 'calendar-event-1',
+    });
+    expect(requests.map(({ url }) => url)).toEqual([
+      'https://www.googleapis.com/calendar/v3/calendars/primary/events/calendar-event-1',
+      'https://www.googleapis.com/calendar/v3/calendars/primary/events/calendar-event-1?sendUpdates=all',
+    ]);
+    expect(JSON.parse(requests[1]!.init?.body as string)).toEqual({
+      attendees: [{ email: 'existing@example.com' }, { email: 'guest@example.com' }],
+    });
+    await expect(archivedRecordCount(database)).resolves.toBe(1);
   });
 
-  it('records a failed Calendar invitation independently for bounded retry', async () => {
-    const writes: unknown[][] = [];
-    const database = { prepare: (_sql: string) => ({ bind: (...values: unknown[]) => ({ run: async () => { writes.push(values); return { meta: { changes: 1 } }; } }) }) } as unknown as D1Database;
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { message: 'unavailable' } }), { status: 503 })));
+  it('records a failed Calendar invitation as independently retryable work', async () => {
+    const database = deliveryDatabase();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: 'unavailable' } }), { status: 503 }),
+    ));
 
-    const record = await deliverCalendarInvitation({ database, accessToken: 'token', eventId: 'event-1', calendarEventId: 'calendar-event-1', recipientEmail: 'guest@example.com' });
+    const result = await deliverCalendarInvitation({
+      database: database.binding,
+      accessToken: 'token',
+      eventId: 'event-1',
+      calendarEventId: 'calendar-event-1',
+      recipientEmail: 'guest@example.com',
+    });
 
-    expect(record).toMatchObject({ outcome: 'failed', externalId: null });
-    expect(writes[0]).toContain('failed');
-    vi.unstubAllGlobals();
+    expect(result).toMatchObject({ destination: 'guest@example.com', outcome: 'failed', externalId: null });
+    await expect(archivedRecordCount(database)).resolves.toBe(1);
   });
 
-  it('sends at most five ordered LINE messages to one destination and preserves one record per message', async () => {
-    const writes: unknown[][] = [];
-    const database = { prepare: (_sql: string) => ({ bind: (...values: unknown[]) => ({ run: async () => { writes.push(values); return { meta: { changes: 1 } }; } }) }) } as unknown as D1Database;
-    const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 200, headers: { 'x-line-request-id': 'line-request-1' } }));
-    vi.stubGlobal('fetch', fetchMock);
+  it('sends one ordered LINE batch and leaves one durable outcome per intended message', async () => {
+    const database = deliveryDatabase();
+    let requestBody: unknown;
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      requestBody = JSON.parse(init?.body as string);
+      return new Response('', { status: 200, headers: { 'x-line-request-id': 'line-request-1' } });
+    }));
 
-    const records = await deliverLineBatch({ database, accessToken: 'line-token', eventId: 'event-1', destinationId: 'user-1', messages: ['first', 'second'] });
+    const results = await deliverLineBatch({
+      database: database.binding,
+      accessToken: 'line-token',
+      eventId: 'event-1',
+      destinationId: 'user-1',
+      messages: ['first', 'second'],
+    });
 
-    expect(records).toHaveLength(2);
-    expect(records.every((record) => record.outcome === 'succeeded' && record.externalId === 'line-request-1')).toBe(true);
-    const body = JSON.parse(fetchMock.mock.calls[0]?.[1].body as string) as { to: string; messages: Array<{ text: string }> };
-    expect(body).toEqual({ to: 'user-1', messages: [{ type: 'text', text: 'first' }, { type: 'text', text: 'second' }] });
-    expect(writes).toHaveLength(2);
-    vi.unstubAllGlobals();
+    expect(requestBody).toEqual({
+      to: 'user-1',
+      messages: [{ type: 'text', text: 'first' }, { type: 'text', text: 'second' }],
+    });
+    expect(results).toHaveLength(2);
+    expect(results.every((result) => result.outcome === 'succeeded' && result.externalId === 'line-request-1')).toBe(true);
+    await expect(archivedRecordCount(database)).resolves.toBe(2);
+  });
+
+  it('rejects a LINE batch larger than the provider limit without creating Delivery Records', async () => {
+    const database = deliveryDatabase();
+
+    await expect(deliverLineBatch({
+      database: database.binding,
+      accessToken: 'line-token',
+      eventId: 'event-1',
+      destinationId: 'user-1',
+      messages: ['1', '2', '3', '4', '5', '6'],
+    })).rejects.toThrow('between one and five');
+    await expect(archivedRecordCount(database)).resolves.toBe(0);
   });
 });

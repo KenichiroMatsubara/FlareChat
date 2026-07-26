@@ -1,3 +1,7 @@
+---
+status: superseded in part by ADR-0095
+---
+
 # Expire incomplete Organization setup after fifteen minutes
 
 After the complete Automation Inbox grant returns, the setup session remains valid for fifteen minutes while the installer registers the initial Owner passkey.

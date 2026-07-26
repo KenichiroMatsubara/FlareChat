@@ -33,7 +33,15 @@ const migrationNames = new Set(
   readdirSync(controlMigrationsDir).filter((file) => file.endsWith('.sql')),
 );
 
-const readDatabaseInfo = (path: string): { path: string; score: number; control: boolean } | undefined => {
+type DatabaseKind = 'control' | 'organization';
+
+interface DatabaseInfo {
+  path: string;
+  score: number;
+  kind: DatabaseKind;
+}
+
+const readDatabaseInfo = (path: string): DatabaseInfo | undefined => {
   let database: Database | undefined;
   try {
     database = new BetterSqlite3(path, { readonly: true });
@@ -41,14 +49,21 @@ const readDatabaseInfo = (path: string): { path: string; score: number; control:
       (database.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as unknown as TextRow[])
         .map((row) => row.name),
     );
-    if (!tables.has('d1_migrations')) return undefined;
+    const kind = tables.has('organizations') && tables.has('organization_setups')
+      ? 'control'
+      : tables.has('google_connections') && tables.has('connections') && tables.has('settings')
+        ? 'organization'
+        : undefined;
+    if (!kind) return undefined;
 
-    const appliedMigrations = new Set(
-      (database.prepare('SELECT name FROM d1_migrations').all() as unknown as TextRow[])
-        .map((row) => row.name),
-    );
+    const appliedMigrations = tables.has('d1_migrations')
+      ? new Set(
+        (database.prepare('SELECT name FROM d1_migrations').all() as unknown as TextRow[])
+          .map((row) => row.name),
+      )
+      : new Set<string>();
     const score = [...migrationNames].filter((name) => appliedMigrations.has(name)).length;
-    return { path, score, control: tables.has('organizations') && tables.has('organization_setups') };
+    return { path, score, kind };
   } catch {
     return undefined;
   } finally {
@@ -70,6 +85,32 @@ const toStudioDatabases = (paths: string[], prefix: string): StudioDatabase[] =>
   path,
 }));
 
+/** Finds recognizable Control and Organization D1 databases in a local state directory. */
+export const findStudioDatabasesIn = (directory: string): StudioDatabase[] => {
+  const candidates = readdirSync(directory)
+    .filter((file) => file.endsWith('.sqlite') && file !== 'metadata.sqlite')
+    .map((file) => readDatabaseInfo(resolve(directory, file)))
+    .filter((info): info is DatabaseInfo => info !== undefined)
+    .sort((left, right) => (
+      Number(right.kind === 'control') - Number(left.kind === 'control')
+      || right.score - left.score
+      || left.path.localeCompare(right.path)
+    ));
+
+  let organizationNumber = 0;
+  return candidates.map((candidate) => {
+    if (candidate.kind === 'control') {
+      return { id: 'control', name: 'Control D1', path: candidate.path };
+    }
+    organizationNumber += 1;
+    return {
+      id: `organization-${organizationNumber}`,
+      name: `Organization D1 ${organizationNumber}`,
+      path: candidate.path,
+    };
+  });
+};
+
 /** Finds the local D1 databases available to the read-only development browser. */
 export const findStudioDatabases = (): StudioDatabase[] => {
   const configured = configuredPaths();
@@ -85,21 +126,11 @@ export const findStudioDatabases = (): StudioDatabase[] => {
     throw new Error('Local D1 state was not found. Run `npm run db:local` first.');
   }
 
-  const candidates = readdirSync(localD1Dir)
-    .filter((file) => file.endsWith('.sqlite') && file !== 'metadata.sqlite')
-    .map((file) => readDatabaseInfo(resolve(localD1Dir, file)))
-    .filter((info): info is { path: string; score: number; control: boolean } => info !== undefined)
-    .sort((left, right) => Number(right.control) - Number(left.control) || right.score - left.score || left.path.localeCompare(right.path));
-  if (candidates.length === 0) {
+  const databases = findStudioDatabasesIn(localD1Dir);
+  if (databases.length === 0) {
     throw new Error('No local D1 databases were found. Run `npm run db:local` first.');
   }
-
-  let organizationNumber = 0;
-  return candidates.map((candidate) => {
-    if (candidate.control) return { id: 'control', name: 'Control D1', path: candidate.path };
-    organizationNumber += 1;
-    return { id: `organization-${organizationNumber}`, name: `Organization D1 ${organizationNumber}`, path: candidate.path };
-  });
+  return databases;
 };
 
 export const findControlDatabase = (): string => {

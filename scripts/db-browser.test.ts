@@ -1,4 +1,3 @@
-import { createRequire } from 'node:module';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -6,15 +5,8 @@ import { join, resolve } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 
-interface Database {
-  exec(sql: string): void;
-  close(): void;
-}
+import { createBrowsableDatabase } from './test/sqlite';
 
-type DatabaseConstructor = new (path: string) => Database;
-
-const require = createRequire(import.meta.url);
-const BetterSqlite3 = require('better-sqlite3') as DatabaseConstructor;
 const root = resolve(import.meta.dirname, '..');
 const processes: ChildProcess[] = [];
 const directories: string[] = [];
@@ -28,14 +20,6 @@ const freePort = async (): Promise<number> => new Promise((resolvePort, reject) 
     server.close((error) => error ? reject(error) : resolvePort(address.port));
   });
 });
-
-const createDatabase = (directory: string, name: string, value: string): string => {
-  const path = join(directory, name);
-  const database = new BetterSqlite3(path);
-  database.exec(`CREATE TABLE entries (value TEXT NOT NULL); INSERT INTO entries (value) VALUES ('${value}');`);
-  database.close();
-  return path;
-};
 
 const waitFor = async (url: string): Promise<Response> => {
   let lastError: unknown;
@@ -60,8 +44,8 @@ describe('local D1 browser', () => {
   it('lists and reads each database configured with DB_STUDIO_PATHS', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'mail-automation-db-browser-'));
     directories.push(directory);
-    const controlPath = createDatabase(directory, 'control.sqlite', 'control row');
-    const organizationPath = createDatabase(directory, 'organization.sqlite', 'organization row');
+    const controlPath = createBrowsableDatabase(directory, 'control.sqlite', 'control row');
+    const organizationPath = createBrowsableDatabase(directory, 'organization.sqlite', 'organization row');
     const port = await freePort();
     const child = spawn(process.execPath, ['--import', 'tsx', 'scripts/db-browser.ts'], {
       cwd: root,

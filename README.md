@@ -36,10 +36,18 @@ DB_STUDIO_PATHS=/path/to/control.sqlite,/path/to/organization.sqlite npm run db:
 ```
 
 Google OAuthやLINE Messaging APIの値は `apps/worker/.dev.vars.example` を
-`apps/worker/.dev.vars` にコピーして設定します。
+`apps/worker/.dev.vars` にコピーして設定します。ローカル開発では Wrangler に宣言した
+3つのローカル専用 Organization D1 から、組織ごとに別のDBを割り当てます。
+Cloudflare のアカウントID、APIトークン、Worker名は不要です。Organization の認証情報を
+Control DBへ代替保存することもありません。3枠を使い切った場合は、不要なローカル
+セットアップを最初からやり直すか、`wrangler.jsonc` にローカル D1 binding を追加してください。
 
-Google OAuth の承認済みリダイレクト URI には
-`http://localhost:8787/oauth/google/login/callback` を登録してください。初回画面は
-Google ログインだけです。同意後、受信した新着メールに `2026/08/03 19:00-21:00` または
+Google Cloud Console の **API とサービス → 認証情報 → このアプリの OAuth 2.0 クライアント ID → 承認済みのリダイレクト URI** には、次を登録してください。
+
+- `http://localhost:8787/oauth/google/callback`（初回 Organization セットアップ）
+- `http://localhost:8787/oauth/google/login/callback`（後日の管理画面ログイン）
+
+`redirect_uri_mismatch` が出た場合は、`apps/worker/.dev.vars` の `GOOGLE_CLIENT_ID` と同じ OAuth クライアントを開き、利用する URI が完全一致していることを確認してください。初回画面では
+Google 認可を一度だけ行い、そのアカウントが Automation Inbox と初期 Owner の両方になります。同意後、Google表示名を初期値にした組織名を確認・編集してから組織DBを作成します。受信した新着メールに `2026/08/03 19:00-21:00` または
 `2026年8月3日 19:00〜21:00` のような日付と時刻範囲があれば、primary Calendar に予定を
 作成します。ログイン時点より前のメールは処理しません。

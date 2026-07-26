@@ -78,11 +78,18 @@ export interface ApiResult<T> {
 export type OrganizationRole = 'owner' | 'admin' | 'operator' | 'viewer';
 export type SetupStatus =
   | 'awaiting_google'
-  | 'awaiting_passkey'
+  | 'awaiting_name'
   | 'provisioning'
   | 'active'
   | 'expired'
   | 'failed';
+
+export type ProvisioningPhase =
+  | 'allocating_database'
+  | 'applying_schema'
+  | 'storing_credentials'
+  | 'verifying_binding'
+  | 'activating_organization';
 
 /** The non-secret state shown while an Organization is being created. */
 export interface OrganizationSetup {
@@ -92,6 +99,7 @@ export interface OrganizationSetup {
   status: SetupStatus;
   expiresAt: string;
   provisioningExpiresAt: string | null;
+  phase: ProvisioningPhase | null;
   error: string | null;
 }
 

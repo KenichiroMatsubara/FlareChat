@@ -9,8 +9,9 @@ export const toBase64Url = (value: ArrayBuffer | Uint8Array): string => {
 };
 
 export const fromBase64Url = (value: string): Uint8Array => {
-  if (!/^[A-Za-z0-9_-]*$/u.test(value)) throw new Error('Invalid base64url value.');
-  const padded = value.replaceAll('-', '+').replaceAll('_', '/') + '='.repeat((4 - (value.length % 4)) % 4);
+  if (!/^[A-Za-z0-9_-]*={0,2}$/u.test(value)) throw new Error('Invalid base64url value.');
+  const unpadded = value.replace(/=+$/u, '');
+  const padded = unpadded.replaceAll('-', '+').replaceAll('_', '/') + '='.repeat((4 - (unpadded.length % 4)) % 4);
   const binary = atob(padded);
   return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 };

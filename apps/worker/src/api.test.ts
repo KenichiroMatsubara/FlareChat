@@ -1,746 +1,431 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { app, DEFAULT_GEMINI_MODEL, generatedText } from './api';
-import { createOrganizationKey, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
+import { app } from './api';
+import { randomToken } from './encoding';
+import { enqueueJob } from './jobs';
+import { createTestApp, type TestApp } from '../test/app';
+import { createAutomationTestApp } from '../test/automation';
+import {
+  seedAttendanceRegistration,
+  seedAutomationException,
+  seedAutomationRule,
+  seedDeliveryRecord,
+  seedOrganizationMember,
+  seedScheduledEvent,
+} from '../test/seed';
 
-const ownerSetup = {
-  id: 'setup-1',
-  name: 'Example Organization',
-  state: 'awaiting_passkey' as const,
-  oauth_state_hash: 'oauth-state',
-  pkce_verifier_envelope: '{}',
-  passkey_challenge_hash: null,
-  inbox_address: 'automation@example.com',
-  google_subject: 'google-subject',
-  granted_scopes: '[]',
-  credential_envelope: '{}',
-  history_id: '1',
-  owner_email: null,
-  owner_identity_id: null,
-  organization_id: null,
-  database_id: null,
-  binding_name: null,
-  provisioning_key: null,
-  error_message: null,
-  expires_at: '2099-01-01T00:00:00.000Z',
-  provisioning_expires_at: null,
-  created_at: '2026-07-25T00:00:00.000Z',
-  updated_at: '2026-07-25T00:00:00.000Z',
-};
+let fixture: TestApp | undefined;
 
-const setupDatabase = () => ({
-  prepare: (sql: string) => ({
-    bind: (..._values: unknown[]) => ({
-      first: async () => sql.includes('FROM organization_setups') ? ownerSetup : null,
-      run: async () => ({ meta: { changes: 1 } }),
-    }),
-  }),
-}) as unknown as D1Database;
-
-const setupEnvironment = () => ({
-  CONTROL_DB: setupDatabase(),
-  ASSETS: {} as Fetcher,
-  APP_URL: 'https://app.example.com',
-  WEB_ORIGIN: 'https://app.example.com',
-  RP_ID: 'app.example.com',
-  GOOGLE_CLIENT_ID: 'client-id',
-  GOOGLE_CLIENT_SECRET: 'client-secret',
-  CREDENTIAL_MASTER_KEY: '',
-  CREDENTIAL_MASTER_KEY_VERSION: '',
-  CLOUDFLARE_ACCOUNT_ID: '',
-  CLOUDFLARE_API_TOKEN: '',
-  CLOUDFLARE_WORKER_NAME: '',
-  ACTIVE_ORGANIZATION_LIMIT: '10',
+afterEach(() => {
+  fixture?.close();
+  fixture = undefined;
 });
 
-describe('Gemini test response', () => {
-  it('uses the current Flash Lite model without requiring user model input', () => {
-    expect(DEFAULT_GEMINI_MODEL).toBe('gemini-3.5-flash-lite');
+describe('Organization access', () => {
+  it('returns Automation Inbox behavior from the selected Organization', async () => {
+    fixture = createTestApp();
+
+    const response = await app.fetch(
+      fixture.request('/api/organizations/organization-1/automation'),
+      fixture.environment,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      data: { email: 'owner@example.com', displayName: 'Owner', enabled: true },
+    });
   });
 
-  it('joins text parts while ignoring non-text parts', () => {
-    expect(generatedText({
-      candidates: [{ content: { parts: [{ text: '東京' }, {}, { text: 'です。' }] } }],
-    })).toBe('東京です。');
+  it('never falls back to another database when an Organization binding is unavailable', async () => {
+    fixture = createTestApp();
+    delete (fixture.environment as unknown as Record<string, unknown>).ORG_ORGANIZATION1;
+
+    const response = await app.fetch(
+      fixture.request('/api/organizations/organization-1/connections'),
+      fixture.environment,
+    );
+
+    expect(response.status).toBe(503);
   });
 
-  it('returns an empty string when Gemini has no textual candidate', () => {
-    expect(generatedText({ candidates: [{ content: { parts: [{}] } }] })).toBe('');
+  it('keeps management data isolated between two Organizations', async () => {
+    fixture = createTestApp('admin');
+    fixture.addOrganization({ id: 'organization-2', bindingName: 'ORG_ORGANIZATION2', role: 'admin' });
+    const created = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-2/lists',
+      { kind: 'source', name: 'Organization Two Sources' },
+    ), fixture.environment);
+
+    const first = await app.fetch(
+      fixture.request('/api/organizations/organization-1/lists'),
+      fixture.environment,
+    );
+    const second = await app.fetch(
+      fixture.request('/api/organizations/organization-2/lists'),
+      fixture.environment,
+    );
+
+    expect(created.status).toBe(201);
+    await expect(first.json()).resolves.toMatchObject({ data: [] });
+    await expect(second.json()).resolves.toMatchObject({
+      data: [{ name: 'Organization Two Sources' }],
+    });
+  });
+
+  it('lets a Viewer inspect outcomes but rejects management changes', async () => {
+    fixture = createTestApp('viewer');
+
+    const dashboard = await app.fetch(
+      fixture.request('/api/organizations/organization-1/dashboard'),
+      fixture.environment,
+    );
+    const listChange = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/lists',
+      { kind: 'source', name: 'Forbidden' },
+    ), fixture.environment);
+    const recipientChange = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/recipients',
+      { name: 'Forbidden', email: 'forbidden@example.com' },
+    ), fixture.environment);
+
+    expect(dashboard.status).toBe(200);
+    expect(listChange.status).toBe(403);
+    expect(recipientChange.status).toBe(403);
   });
 });
 
 describe('Organization setup', () => {
-  it('registers the initial Owner as a distinct management Identity', async () => {
-    const response = await app.fetch(new Request('https://app.example.com/api/setup/passkey/options', {
+  it('starts one Google authorization and makes cancellation observable', async () => {
+    fixture = createTestApp();
+    fixture.environment.CREDENTIAL_MASTER_KEY = randomToken(32);
+    fixture.environment.CREDENTIAL_MASTER_KEY_VERSION = 'test-v1';
+    const started = await app.fetch(new Request('https://app.example.com/api/setup', {
       method: 'POST',
-      headers: { Cookie: 'mail_setup=setup-1', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ownerEmail: 'owner@example.com' }),
-    }), setupEnvironment());
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: '' }),
+    }), fixture.environment);
+    const setupCookie = started.headers.get('set-cookie')?.match(/mail_setup=([^;]+)/u)?.[1];
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      data: { user: { name: 'owner@example.com', displayName: 'owner@example.com' } },
-    });
+    const cancelled = await app.fetch(new Request('https://app.example.com/api/setup/cancel', {
+      method: 'POST',
+      headers: { Cookie: `mail_setup=${setupCookie}` },
+    }), fixture.environment);
+    const current = await app.fetch(new Request('https://app.example.com/api/setup/current', {
+      headers: { Cookie: `mail_setup=${setupCookie}` },
+    }), fixture.environment);
+
+    expect(started.status).toBe(201);
+    expect(cancelled.status).toBe(200);
+    await expect(current.json()).resolves.toMatchObject({ data: { status: 'expired' } });
   });
 });
 
-describe('Organization lists', () => {
-  it('returns Typed Lists only from the signed-in member\'s Organization database', async () => {
-    const controlDatabase = {
-      prepare: (sql: string) => ({
-        bind: (..._values: unknown[]) => ({
-          first: async () => {
-            if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'identity-1', email: 'owner@example.com', display_name: 'Owner' };
-            if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'owner' };
-            return null;
-          },
-        }),
-      }),
-    } as unknown as D1Database;
-    const organizationDatabase = {
-      prepare: (_sql: string) => ({ all: async () => ({ results: [{ id: 'list-1', kind: 'source', name: 'Members', description: '', created_at: '2026-07-25T00:00:00.000Z', updated_at: '2026-07-25T00:00:00.000Z' }] }) }),
-    } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/lists', {
-      headers: { Cookie: 'mail_session=session-1' },
-    }), {
-      ...setupEnvironment(),
-      CONTROL_DB: controlDatabase,
-      ORG_ORGANIZATION1: organizationDatabase,
-    });
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ data: [{ id: 'list-1', kind: 'source', name: 'Members' }] });
-  });
-
-  it('allows an Owner to create a Typed List in that Organization database', async () => {
-    const inserted: unknown[][] = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({
-        bind: (..._values: unknown[]) => ({
-          first: async () => {
-            if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'identity-1', email: 'owner@example.com', display_name: 'Owner' };
-            if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'owner' };
-            return null;
-          },
-        }),
-      }),
-    } as unknown as D1Database;
-    const organizationDatabase = {
-      prepare: (_sql: string) => ({
-        bind: (...values: unknown[]) => ({ run: async () => { inserted.push(values); return { meta: { changes: 1 } }; } }),
-      }),
-    } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/lists', {
-      method: 'POST',
-      headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: 'source', name: 'Members', description: 'Verified senders' }),
-    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
-
-    expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toMatchObject({ data: { organizationId: 'organization-1', kind: 'source', name: 'Members' } });
-    expect(inserted[0]).toContain('organization-1');
-  });
-
-  it('allows an Admin to add and later disable a List Item without exposing another Organization', async () => {
-    const writes: Array<{ sql: string; values: unknown[] }> = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({
-        bind: (..._values: unknown[]) => ({
-          first: async () => {
-            if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'identity-1', email: 'admin@example.com', display_name: 'Admin' };
-            if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'admin' };
-            return null;
-          },
-        }),
-      }),
-    } as unknown as D1Database;
-    const organizationDatabase = {
-      prepare: (sql: string) => ({
-        bind: (...values: unknown[]) => ({ run: async () => { writes.push({ sql, values }); return { meta: { changes: 1 } }; } }),
-      }),
-    } as unknown as D1Database;
-    const environment = { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase };
-    const created = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/lists/list-1/items', {
-      method: 'POST', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ value: 'member@example.com', label: 'Member' }),
-    }), environment);
-    const disabled = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/lists/list-1/items/item-1', {
-      method: 'PATCH', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: false }),
-    }), environment);
+describe('Organization management', () => {
+  it('creates and reads canonical Typed Lists and List Items', async () => {
+    fixture = createTestApp('admin');
+    const created = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/lists',
+      { kind: 'source', name: 'Members', description: 'Verified senders' },
+    ), fixture.environment);
+    const createdBody = await created.json() as { data: { id: string } };
+    const item = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/lists/${createdBody.data.id}/items`,
+      { value: 'sender@example.com', label: 'Sender' },
+    ), fixture.environment);
+    const listed = await app.fetch(
+      fixture.request('/api/organizations/organization-1/lists'),
+      fixture.environment,
+    );
 
     expect(created.status).toBe(201);
-    expect(disabled.status).toBe(200);
-    expect(writes.some((write) => write.sql.includes('INSERT INTO list_items'))).toBe(true);
-    expect(writes.some((write) => write.sql.includes('UPDATE list_items SET enabled'))).toBe(true);
-  });
-});
-
-describe('Automation Rules', () => {
-  it('lists Rules and their explicit lifecycle state from the current Organization database', async () => {
-    const controlDatabase = {
-      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
-        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'viewer-identity', email: 'viewer@example.com', display_name: 'Viewer' };
-        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'viewer' };
-        return null;
-      } }) }),
-    } as unknown as D1Database;
-    const organizationDatabase = { prepare: (_sql: string) => ({ all: async () => ({ results: [{ id: 'rule-1', name: 'Announcements', status: 'active', selection_policy: '{}', routing_policy: '{}', priority: 0, created_at: '2026-07-25T00:00:00.000Z', updated_at: '2026-07-25T00:00:00.000Z' }] }) }) } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/rules', { headers: { Cookie: 'mail_session=session-1' } }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ data: [{ id: 'rule-1', state: 'active' }] });
+    expect(item.status).toBe(201);
+    await expect(listed.json()).resolves.toMatchObject({
+      data: [{ kind: 'source', name: 'Members' }],
+    });
   });
 
-  it('creates an Organization-scoped Draft Rule for an Owner', async () => {
-    const writes: unknown[][] = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
-        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'identity-1', email: 'owner@example.com', display_name: 'Owner' };
-        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'owner' };
-        return null;
-      } }) }),
-    } as unknown as D1Database;
-    const organizationDatabase = {
-      prepare: (_sql: string) => ({
-        bind: (...values: unknown[]) => ({
-          run: async () => { writes.push(values); return { meta: { changes: 1 } }; },
-        }),
-      }),
-    } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/rules', {
-      method: 'POST', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Announcements', state: 'draft' }),
-    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
+  it('rejects removed Typed List compatibility names', async () => {
+    fixture = createTestApp();
 
-    expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toMatchObject({ data: { organizationId: 'organization-1', name: 'Announcements', state: 'draft' } });
-    expect(writes[0]).toContain('organization-1');
+    const response = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/lists',
+      { kind: 'calendar_recipient', name: 'Legacy' },
+    ), fixture.environment);
+
+    expect(response.status).toBe(400);
   });
 
-  it('snapshots Selection and Routing Policies as an immutable Rule Revision', async () => {
-    const writes: string[] = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
-        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'identity-1', email: 'owner@example.com', display_name: 'Owner' };
-        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'owner' };
-        return null;
-      } }) }),
-    } as unknown as D1Database;
-    const organizationDatabase = { prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ run: async () => { writes.push(sql); return { meta: { changes: 1 } }; } }) }) } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/rules', {
-      method: 'POST', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Announcements', state: 'active', selectionPolicy: { sender: 'announcer@example.com' }, routingPolicy: { calendarRecipientListId: 'list-1' } }),
-    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
+  it('creates a Rule and exposes its lifecycle changes through the same interface', async () => {
+    fixture = createTestApp();
+    const created = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/rules',
+      {
+        name: 'Announcements',
+        selectionPolicy: { source: 'trusted' },
+        routingPolicy: { calendar: true },
+      },
+    ), fixture.environment);
+    const body = await created.json() as { data: { id: string } };
+    const updated = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/rules/${body.data.id}`,
+      { state: 'active' },
+      'PATCH',
+    ), fixture.environment);
+    const listed = await app.fetch(
+      fixture.request('/api/organizations/organization-1/rules'),
+      fixture.environment,
+    );
 
-    expect(response.status).toBe(201);
-    expect(writes).toContainEqual(expect.stringContaining('INSERT INTO rule_revisions'));
+    expect([created.status, updated.status]).toEqual([201, 200]);
+    await expect(listed.json()).resolves.toMatchObject({
+      data: [{
+        id: body.data.id,
+        name: 'Announcements',
+        state: 'active',
+        selectionPolicy: { source: 'trusted' },
+      }],
+    });
   });
 
-  it('moves a Rule through its explicit lifecycle states', async () => {
-    const writes: Array<{ sql: string; values: unknown[] }> = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
-        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'identity-1', email: 'owner@example.com', display_name: 'Owner' };
-        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'owner' };
-        return null;
-      } }) }),
-    } as unknown as D1Database;
-    const organizationDatabase = { prepare: (sql: string) => ({ bind: (...values: unknown[]) => ({ run: async () => { writes.push({ sql, values }); return { meta: { changes: 1 } }; } }) }) } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/rules/rule-1', {
-      method: 'PATCH', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ state: 'active' }),
-    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
+  it('creates, changes, imports, reads, and snapshots Recipient Profiles', async () => {
+    fixture = createTestApp('operator');
+    seedScheduledEvent(fixture.organization, { id: 'event-1' });
+    const created = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/recipients',
+      { name: 'Guest', email: 'guest@example.com' },
+    ), fixture.environment);
+    const body = await created.json() as { data: { id: string } };
+    const updated = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/recipients/${body.data.id}`,
+      { tags: ['vip'], state: 'active' },
+      'PATCH',
+    ), fixture.environment);
+    const imported = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/recipients/import',
+      { csv: 'name,email\nSecond,second@example.com\nInvalid,not-an-email' },
+    ), fixture.environment);
+    const snapshotted = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/events/event-1/recipient-snapshots',
+      { recipientProfileIds: [body.data.id] },
+    ), fixture.environment);
+    const listed = await app.fetch(
+      fixture.request('/api/organizations/organization-1/recipients'),
+      fixture.environment,
+    );
 
-    expect(response.status).toBe(200);
-    expect(writes[0]).toMatchObject({ sql: expect.stringContaining('UPDATE rules SET status'), values: ['active', expect.any(String), 'rule-1'] });
-  });
-});
-
-describe('Recipient Profiles', () => {
-  it('lists Recipient Profiles from only the current Organization database', async () => {
-    const controlDatabase = {
-      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
-        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'viewer-identity', email: 'viewer@example.com', display_name: 'Viewer' };
-        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'viewer' };
-        return null;
-      } }) }),
-    } as unknown as D1Database;
-    const organizationDatabase = { prepare: (_sql: string) => ({ all: async () => ({ results: [{ id: 'recipient-1', name: 'Guest', email: 'guest@example.com', state: 'active', tags: '[]', created_at: '2026-07-25T00:00:00.000Z', updated_at: '2026-07-25T00:00:00.000Z' }] }) }) } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/recipients', { headers: { Cookie: 'mail_session=session-1' } }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ data: [{ id: 'recipient-1', email: '***' }] });
-  });
-
-  it('lets an Operator create a separate Recipient Profile in the Organization database', async () => {
-    const writes: unknown[][] = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
-        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'identity-1', email: 'operator@example.com', display_name: 'Operator' };
-        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'operator' };
-        return null;
-      } }) }),
-    } as unknown as D1Database;
-    const organizationDatabase = { prepare: (_sql: string) => ({ bind: (...values: unknown[]) => ({ run: async () => { writes.push(values); return { meta: { changes: 1 } }; } }) }) } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/recipients', {
-      method: 'POST', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Guest', email: 'guest@example.com' }),
-    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
-
-    expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toMatchObject({ data: { organizationId: 'organization-1', name: 'Guest', email: 'guest@example.com', state: 'active' } });
-    expect(writes[0]).toContain('organization-1');
+    expect([created.status, updated.status, imported.status, snapshotted.status]).toEqual([201, 200, 201, 201]);
+    await expect(snapshotted.json()).resolves.toMatchObject({ data: { snapshotted: 1 } });
+    await expect(listed.json()).resolves.toMatchObject({
+      data: expect.arrayContaining([
+        expect.objectContaining({ name: 'Guest', email: 'guest@example.com', tags: ['vip'] }),
+        expect.objectContaining({ name: 'Second', email: 'second@example.com' }),
+      ]),
+    });
   });
 
-  it('previews Recipient CSV imports without persisting malformed or duplicate rows', async () => {
-    const controlDatabase = {
-      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
-        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'operator-identity', email: 'operator@example.com', display_name: 'Operator' };
-        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'operator' };
-        return null;
-      } }) }),
-    } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/recipients/import/preview', {
-      method: 'POST', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ csv: 'Alice,alice@example.com\nAgain,ALICE@example.com\nBroken' }),
-    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase });
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ data: { accepted: [{ email: 'alice@example.com' }], duplicates: ['alice@example.com'], invalid: [{ row: 3 }] } });
-  });
-
-  it('imports only the accepted Recipient CSV rows into the current Organization database', async () => {
-    const writes: unknown[][] = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
-        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'operator-identity', email: 'operator@example.com', display_name: 'Operator' };
-        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'operator' };
-        return null;
-      } }) }),
-    } as unknown as D1Database;
-    const organizationDatabase = { prepare: (_sql: string) => ({ bind: (...values: unknown[]) => ({ run: async () => { writes.push(values); return { meta: { changes: 1 } }; } }) }) } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/recipients/import', {
-      method: 'POST', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ csv: 'Alice,alice@example.com\nAgain,ALICE@example.com\nBroken' }),
-    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
-
-    expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toMatchObject({ data: { imported: 1, duplicates: ['alice@example.com'], invalid: [{ row: 3 }] } });
-    expect(writes).toHaveLength(1);
-    expect(writes[0]).toContain('organization-1');
-    expect(writes[0]).toContain('alice@example.com');
-  });
-
-  it('lets an Operator update Recipient tags and deactivate a Profile in the current Organization', async () => {
-    const writes: Array<{ sql: string; values: unknown[] }> = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
-        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'operator-identity', email: 'operator@example.com', display_name: 'Operator' };
-        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'operator' };
-        return null;
-      } }) }),
-    } as unknown as D1Database;
-    const organizationDatabase = { prepare: (sql: string) => ({ bind: (...values: unknown[]) => ({ run: async () => { writes.push({ sql, values }); return { meta: { changes: 1 } }; } }) }) } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/recipients/recipient-1', {
-      method: 'PATCH', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ tags: ['staff', 'priority'], state: 'inactive' }),
-    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ data: { id: 'recipient-1', state: 'inactive', tags: ['staff', 'priority'] } });
-    expect(writes[0]).toMatchObject({ sql: expect.stringContaining('UPDATE recipient_profiles SET') });
-    expect(writes[0]?.values).toContain('recipient-1');
-  });
-
-  it('snapshots selected Recipient Profiles for an Event so later profile edits cannot change its audience', async () => {
-    const writes: unknown[][] = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
-        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'operator-identity', email: 'operator@example.com', display_name: 'Operator' };
-        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'operator' };
-        return null;
-      } }) }),
-    } as unknown as D1Database;
-    const organizationDatabase = {
-      prepare: (sql: string) => ({ bind: (...values: unknown[]) => ({
-        first: async () => sql.includes('FROM recipient_profiles') ? { id: 'recipient-1', name: 'Guest', email: 'guest@example.com', state: 'active' } : null,
-        run: async () => { writes.push(values); return { meta: { changes: 1 } }; },
-      }) }),
-    } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/events/event-1/recipient-snapshots', {
-      method: 'POST', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ recipientProfileIds: ['recipient-1'] }),
-    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
-
-    expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toMatchObject({ data: { eventId: 'event-1', snapshotted: 1 } });
-    expect(writes[0]).toContain('guest@example.com');
-  });
-});
-
-describe('Organization dashboard', () => {
-  it('reports active Rules, upcoming events, pending Jobs, Exceptions, and the latest Inbox sync from one Organization database', async () => {
-    const controlDatabase = {
-      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
-        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'identity-1', email: 'viewer@example.com', display_name: 'Viewer' };
-        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'viewer' };
-        return null;
-      } }) }),
-    } as unknown as D1Database;
-    const dashboardResult = (sql: string) => {
-      if (sql.includes('FROM rules')) return { count: 2 };
-      if (sql.includes('FROM events')) return { count: 3 };
-      if (sql.includes('FROM jobs')) return { count: 4 };
-      if (sql.includes('FROM exceptions')) return { count: 5 };
-      return { last_synced_at: '2026-07-25T00:00:00.000Z' };
-    };
-    const organizationDatabase = {
-      prepare: (sql: string) => ({ first: async () => dashboardResult(sql), bind: (..._values: unknown[]) => ({ first: async () => dashboardResult(sql) }) }),
-    } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/dashboard', { headers: { Cookie: 'mail_session=session-1' } }), {
-      ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase,
+  it('builds dashboard counts from durable Organization behavior', async () => {
+    fixture = createTestApp();
+    seedAutomationRule(fixture.organization, { id: 'rule-1' });
+    seedScheduledEvent(fixture.organization, { id: 'event-1' });
+    seedAutomationException(fixture.organization, { id: 'exception-1' });
+    await enqueueJob(fixture.organization.binding, {
+      kind: 'sync',
+      payload: {},
+      idempotencyKey: 'job-key-1',
     });
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ data: { activeRules: 2, upcomingEvents: 3, pendingJobs: 4, exceptions: 5, lastSyncedAt: '2026-07-25T00:00:00.000Z' } });
+    const response = await app.fetch(
+      fixture.request('/api/organizations/organization-1/dashboard'),
+      fixture.environment,
+    );
+
+    await expect(response.json()).resolves.toMatchObject({
+      data: { activeRules: 1, upcomingEvents: 1, pendingJobs: 1, exceptions: 1 },
+    });
   });
 });
 
-describe('Organization membership', () => {
-  it('lets an Owner change a member role without touching another Organization', async () => {
-    const writes: unknown[][] = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({
-        bind: (...values: unknown[]) => ({
-          first: async () => {
-            if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'owner-identity', email: 'owner@example.com', display_name: 'Owner' };
-            if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'owner' };
-            return null;
-          },
-          run: async () => { writes.push(values); return { meta: { changes: 1 } }; },
-        }),
-      }),
-    } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/members/member-identity', {
-      method: 'PATCH', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ role: 'operator' }),
-    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase });
+describe('Control-plane administration', () => {
+  it('makes an Owner membership suspension visible to the affected member', async () => {
+    fixture = createTestApp();
+    seedOrganizationMember(fixture.control, {
+      identityId: 'identity-2',
+      email: 'member@example.com',
+      role: 'viewer',
+      sessionId: 'session-2',
+    });
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ data: { identityId: 'member-identity', role: 'operator' } });
-    expect(writes[0]).toContain('organization-1');
+    const changed = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/members/identity-2',
+      { role: 'operator', state: 'suspended' },
+      'PATCH',
+    ), fixture.environment);
+    const memberView = await app.fetch(new Request('https://app.example.com/api/auth/me', {
+      headers: { Cookie: 'mail_session=session-2' },
+    }), fixture.environment);
+
+    expect(changed.status).toBe(200);
+    await expect(memberView.json()).resolves.toMatchObject({ data: { organizations: [] } });
   });
 
-  it('lets an Owner suspend and reactivate a member in only that Organization', async () => {
-    const writes: unknown[][] = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({
-        bind: (...values: unknown[]) => ({
-          first: async () => {
-            if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'owner-identity', email: 'owner@example.com', display_name: 'Owner' };
-            if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'owner' };
-            return null;
-          },
-          run: async () => { writes.push(values); return { meta: { changes: 1 } }; },
-        }),
-      }),
-    } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/members/member-identity', {
-      method: 'PATCH', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ state: 'suspended' }),
-    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase });
+  it('records one Owner recovery request per idempotency key', async () => {
+    fixture = createTestApp();
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ data: { identityId: 'member-identity', state: 'suspended' } });
-    expect(writes[0]).toContain('suspended');
-    expect(writes[0]).toContain('organization-1');
-  });
+    const first = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/recovery-requests',
+      { idempotencyKey: 'receipt-1' },
+    ), fixture.environment);
+    const duplicate = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/recovery-requests',
+      { idempotencyKey: 'receipt-1' },
+    ), fixture.environment);
 
-  it('lets an Owner suspend and resume an Organization without losing its durable backlog', async () => {
-    const writes: unknown[][] = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({ bind: (...values: unknown[]) => ({
-        first: async () => {
-          if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'owner-identity', email: 'owner@example.com', display_name: 'Owner' };
-          if (sql.includes('FROM members')) return { id: 'organization-1', status: 'active', role: 'owner' };
-          return null;
-        },
-        run: async () => { writes.push(values); return { meta: { changes: 1 } }; },
-      }) }),
-    } as unknown as D1Database;
-    const environment = { ...setupEnvironment(), CONTROL_DB: controlDatabase };
-    const suspended = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/suspension', {
-      method: 'PATCH', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ suspended: true }),
-    }), environment);
-    const resumed = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/suspension', {
-      method: 'PATCH', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ suspended: false }),
-    }), environment);
-
-    expect(suspended.status).toBe(200);
-    expect(resumed.status).toBe(200);
-    await expect(suspended.json()).resolves.toMatchObject({ data: { status: 'suspended' } });
-    await expect(resumed.json()).resolves.toMatchObject({ data: { status: 'active' } });
-    expect(writes).toHaveLength(2);
+    expect(first.status).toBe(201);
+    await expect(first.json()).resolves.toMatchObject({
+      data: { organizationId: 'organization-1', idempotencyKey: 'receipt-1', state: 'requested' },
+    });
+    expect(duplicate.status).toBe(409);
   });
 });
 
-describe('Passkey lifecycle', () => {
-  it('lets an Owner revoke a passkey only within the current Organization', async () => {
-    const writes: Array<{ sql: string; values: unknown[] }> = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({ bind: (...values: unknown[]) => ({
-        first: async () => {
-          if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'owner-identity', email: 'owner@example.com', display_name: 'Owner' };
-          if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'owner' };
-          return null;
-        },
-        run: async () => { writes.push({ sql, values }); return { meta: { changes: 1 } }; },
-      }) }),
-    } as unknown as D1Database;
+describe('Public attendance and operational outcomes', () => {
+  it('returns and changes only a live Event-scoped attendance token', async () => {
+    fixture = createTestApp('operator');
+    seedScheduledEvent(fixture.organization, {
+      id: 'event-1',
+      attendanceDeadline: '2099-01-01T00:00:00.000Z',
+    });
+    seedAttendanceRegistration(fixture.organization, {
+      eventId: 'event-1',
+      recipientId: 'item-1',
+      destination: 'guest@example.com',
+    });
+    const path = '/api/public/organizations/organization-1/attendance/token-event-1-item-1';
 
-    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/passkeys/passkey-1', {
-      method: 'DELETE', headers: { Cookie: 'mail_session=session-1' },
-    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase });
+    const initial = await app.fetch(new Request(`https://app.example.com${path}`), fixture.environment);
+    const updated = await app.fetch(new Request(`https://app.example.com${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ eventId: 'event-1', status: 'attending', comment: '参加します' }),
+    }), fixture.environment);
+    const current = await app.fetch(new Request(`https://app.example.com${path}`), fixture.environment);
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ data: { id: 'passkey-1', state: 'revoked' } });
-    expect(writes[0]).toMatchObject({ sql: expect.stringContaining('UPDATE passkeys SET revoked_at'), values: [expect.any(String), 'passkey-1', 'organization-1'] });
-  });
-});
-
-describe('Recovery requests', () => {
-  it('records an Owner request before an Operator can restore a delivery receipt', async () => {
-    const writes: unknown[][] = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({ bind: (...values: unknown[]) => ({
-        first: async () => {
-          if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'owner-identity', email: 'owner@example.com', display_name: 'Owner' };
-          if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'owner' };
-          return null;
-        },
-        run: async () => { writes.push(values); return { meta: { changes: 1 } }; },
-      }) }),
-    } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/recovery-requests', {
-      method: 'POST', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ idempotencyKey: 'calendar:event-1:guest' }),
-    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase });
-
-    expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toMatchObject({ data: { organizationId: 'organization-1', state: 'requested', idempotencyKey: 'calendar:event-1:guest' } });
-    expect(writes[0]).toContain('owner-identity');
-    expect(writes[0]).toContain('calendar:event-1:guest');
-  });
-});
-
-describe('Public attendance', () => {
-  it('shows only the linked attendance state and comment to the public token holder', async () => {
-    const controlDatabase={prepare:(_s:string)=>({bind:(..._v:unknown[])=>({first:async()=>({binding_name:'ORG_ORGANIZATION1'})})})} as unknown as D1Database;
-    const organizationDatabase={prepare:(_s:string)=>({bind:(..._v:unknown[])=>({first:async()=>({event_id:'event-1',status:'attending',comment:'参加します'})})})} as unknown as D1Database;
-    const response=await app.fetch(new Request('https://app.example.com/api/public/organizations/organization-1/attendance/token-1'),{...setupEnvironment(),CONTROL_DB:controlDatabase,ORG_ORGANIZATION1:organizationDatabase});
-    await expect(response.json()).resolves.toMatchObject({data:{eventId:'event-1',status:'attending',comment:'参加します'}});
-  });
-  it('lets an Operator issue an opaque Event-scoped attendance link for one Recipient', async () => {
-    const writes: unknown[][] = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
-        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'operator-identity', email: 'operator@example.com', display_name: 'Operator' };
-        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'operator' };
-        return null;
-      } }) }),
-    } as unknown as D1Database;
-    const organizationDatabase = { prepare: (_sql: string) => ({ bind: (...values: unknown[]) => ({ run: async () => { writes.push(values); return { meta: { changes: 1 } }; } }) }) } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/events/event-1/attendance-links', {
-      method: 'POST', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ recipientItemId: 'recipient-item-1' }),
-    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
-
-    expect(response.status).toBe(201);
-    const body = await response.json() as { data: { token: string; eventId: string; recipientItemId: string } };
-    expect(body.data).toMatchObject({ eventId: 'event-1', recipientItemId: 'recipient-item-1' });
-    expect(body.data.token.length).toBeGreaterThan(20);
-    expect(writes[0]).toContain('event-1');
-    expect(writes[0]).toContain('recipient-item-1');
+    expect([initial.status, updated.status, current.status]).toEqual([200, 200, 200]);
+    await expect(current.json()).resolves.toMatchObject({
+      data: { eventId: 'event-1', status: 'attending', comment: '参加します' },
+    });
   });
 
-  it('records an attendance response only for a live, matching Event link', async () => {
-    const writes: unknown[][] = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
-        if (sql.includes('FROM organizations')) return { id: 'organization-1', status: 'active', binding_name: 'ORG_ORGANIZATION1' };
-        return null;
-      } }) }),
-    } as unknown as D1Database;
-    const organizationDatabase = {
-      prepare: (sql: string) => ({
-        bind: (...values: unknown[]) => ({
-          first: async () => sql.includes('FROM attendance') ? { event_id: 'event-1', link_event_id: 'event-1', revoked_at: null, attendance_deadline: '2099-01-01T00:00:00.000Z' } : null,
-          run: async () => { writes.push(values); return { meta: { changes: 1 } }; },
-        }),
-      }),
-    } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/public/organizations/organization-1/attendance/link-token', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ eventId: 'event-1', status: 'attending', comment: '参加します' }),
-    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
+  it('rejects revoked attendance tokens', async () => {
+    fixture = createTestApp('operator');
+    seedScheduledEvent(fixture.organization, {
+      id: 'event-1',
+      attendanceDeadline: '2099-01-01T00:00:00.000Z',
+    });
+    seedAttendanceRegistration(fixture.organization, {
+      eventId: 'event-1',
+      recipientId: 'item-1',
+      destination: 'guest@example.com',
+      revokedAt: '2026-07-25T00:00:00.000Z',
+    });
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ data: { eventId: 'event-1', status: 'attending' } });
-    expect(writes[0]).toContain('attending');
-    expect(writes[0]).toContain('参加します');
-  });
-
-  it('rejects an expired or revoked public attendance link without writing a response', async () => {
-    const controlDatabase = {
-      prepare: (_sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => ({ id: 'organization-1', status: 'active', binding_name: 'ORG_ORGANIZATION1' }) }) }),
-    } as unknown as D1Database;
-    let wrote = false;
-    const organizationDatabase = {
-      prepare: (sql: string) => ({
-        bind: (..._values: unknown[]) => ({
-          first: async () => sql.includes('FROM attendance') ? { event_id: 'event-1', link_event_id: 'event-1', revoked_at: '2026-07-24T00:00:00.000Z', attendance_deadline: '2099-01-01T00:00:00.000Z' } : null,
-          run: async () => { wrote = true; return { meta: { changes: 1 } }; },
-        }),
-      }),
-    } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/public/organizations/organization-1/attendance/revoked-token', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ eventId: 'event-1', status: 'not_attending' }),
-    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
+    const response = await app.fetch(new Request(
+      'https://app.example.com/api/public/organizations/organization-1/attendance/token-event-1-item-1',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eventId: 'event-1', status: 'attending' }),
+      },
+    ), fixture.environment);
 
     expect(response.status).toBe(410);
-    expect(wrote).toBe(false);
   });
 
-  it('allows a live link to return an attendance response to unanswered', async () => {
-    const controlDatabase = { prepare: (_sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => ({ id: 'organization-1', status: 'active', binding_name: 'ORG_ORGANIZATION1' }) }) }) } as unknown as D1Database;
-    const organizationDatabase = { prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => sql.includes('FROM attendance') ? { event_id: 'event-1', link_event_id: 'event-1', revoked_at: null, attendance_deadline: '2099-01-01T00:00:00.000Z' } : null, run: async () => ({ meta: { changes: 1 } }) }) }) } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/public/organizations/organization-1/attendance/link-token', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ eventId: 'event-1', status: 'unanswered' }),
-    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
+  it('exposes Event changes, Delivery Records, and Exception transitions through operations interfaces', async () => {
+    fixture = createTestApp('operator');
+    seedScheduledEvent(fixture.organization, { id: 'event-1', status: 'draft' });
+    seedDeliveryRecord(fixture.organization, {
+      id: 'delivery-1',
+      eventId: 'event-1',
+      destination: 'guest@example.com',
+      createdAt: '2026-07-25T00:00:00.000Z',
+    });
+    seedAutomationException(fixture.organization, { id: 'exception-1' });
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ data: { status: 'unanswered' } });
-  });
-});
+    const event = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/events/event-1',
+      { title: 'New title', status: 'scheduled', reason: 'Correction' },
+      'PATCH',
+    ), fixture.environment);
+    const exception = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/operations/exceptions/exception-1',
+      { action: 'resolve' },
+      'PATCH',
+    ), fixture.environment);
+    const audit = await app.fetch(
+      fixture.request('/api/organizations/organization-1/audit/deliveries'),
+      fixture.environment,
+    );
+    const operations = await app.fetch(
+      fixture.request('/api/organizations/organization-1/operations/exceptions'),
+      fixture.environment,
+    );
+    const dashboard = await app.fetch(
+      fixture.request('/api/organizations/organization-1/dashboard'),
+      fixture.environment,
+    );
 
-describe('Manual Event overrides', () => {
-  it('lets an Operator record a scoped manual Event change with an immutable audit entry', async () => {
-    const writes: Array<{ sql: string; values: unknown[] }> = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
-        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'operator-identity', email: 'operator@example.com', display_name: 'Operator' };
-        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'operator' };
-        return null;
-      } }) }),
-    } as unknown as D1Database;
-    const organizationDatabase = { prepare: (sql: string) => ({ bind: (...values: unknown[]) => ({ run: async () => { writes.push({ sql, values }); return { meta: { changes: 1 } }; } }) }) } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/events/event-1', {
-      method: 'PATCH', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ startsAt: '2026-08-01T10:00:00+09:00', reason: '会場都合' }),
-    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ data: { id: 'event-1', updatedFields: ['startsAt'] } });
-    expect(writes.some((write) => write.sql.includes('UPDATE events SET starts_at'))).toBe(true);
-    expect(writes.some((write) => write.sql.includes('INSERT INTO event_overrides'))).toBe(true);
-    expect(writes.flatMap((write) => write.values)).toContain('operator-identity');
-  });
-});
-
-describe('Organization delivery audit', () => {
-  it('shows immutable delivery outcomes while masking destinations for a Viewer', async () => {
-    const controlDatabase = {
-      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
-        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'viewer-identity', email: 'viewer@example.com', display_name: 'Viewer' };
-        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'viewer' };
-        return null;
-      } }) }),
-    } as unknown as D1Database;
-    const organizationDatabase = { prepare: (_sql: string) => ({ all: async () => ({ results: [{ id: 'delivery-1', event_id: 'event-1', channel: 'calendar', destination: 'guest@example.com', outcome: 'succeeded', external_id: 'google-event-1', created_at: '2026-07-25T00:00:00.000Z' }] }) }) } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/audit/deliveries', {
-      headers: { Cookie: 'mail_session=session-1' },
-    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ data: [{ id: 'delivery-1', eventId: 'event-1', destination: '***', outcome: 'succeeded' }] });
-  });
-
-  it('lets an Operator resolve or request retry for Organization exceptions', async () => {
-    const writes: Array<{ sql: string; values: unknown[] }> = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
-        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'operator-identity', email: 'operator@example.com', display_name: 'Operator' };
-        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'operator' };
-        return null;
-      } }) }),
-    } as unknown as D1Database;
-    const organizationDatabase = { prepare: (sql: string) => ({ bind: (...values: unknown[]) => ({ run: async () => { writes.push({ sql, values }); return { meta: { changes: 1 } }; } }) }) } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/operations/exceptions/exception-1', {
-      method: 'PATCH', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'resolve' }),
-    }), { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ data: { id: 'exception-1', state: 'resolved' } });
-    expect(writes[0]).toMatchObject({ sql: expect.stringContaining("UPDATE exceptions SET state = 'resolved'") });
+    expect([event.status, exception.status, audit.status]).toEqual([200, 200, 200]);
+    await expect(audit.json()).resolves.toMatchObject({
+      data: [{ destination: 'guest@example.com', outcome: 'succeeded' }],
+    });
+    await expect(operations.json()).resolves.toMatchObject({
+      data: [{ id: 'exception-1', state: 'resolved' }],
+    });
+    await expect(dashboard.json()).resolves.toMatchObject({
+      data: { upcomingEvents: 1, exceptions: 0 },
+    });
   });
 });
 
-describe('LINE destination webhook', () => {
-  it('verifies the Organization LINE signature before recording distinct discovered destinations', async () => {
-    const keyMaterial = btoa(String.fromCharCode(...new Uint8Array(32).fill(7))).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '');
-    const deploymentKey = await masterKey(keyMaterial);
-    const wrappedKey = await createOrganizationKey(deploymentKey, 'v1', 'organization-1');
-    const organizationKey = await unwrapOrganizationKey(wrappedKey, deploymentKey, 'organization-1');
-    const credential = JSON.stringify(await encrypt(JSON.stringify({ channelSecret: 'line-secret' }), organizationKey, 'organization-connection:organization-1:line'));
-    const body = JSON.stringify({ events: [{ source: { type: 'user', userId: 'user-1' } }, { source: { type: 'group', groupId: 'group-1' } }, { source: { type: 'group', groupId: 'group-1' } }] });
-    const hmacKey = await crypto.subtle.importKey('raw', new TextEncoder().encode('line-secret'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-    const signature = btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.sign('HMAC', hmacKey, new TextEncoder().encode(body)))));
-    const writes: unknown[][] = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
-        if (sql.includes('FROM organizations')) return { id: 'organization-1', status: 'active', binding_name: 'ORG_ORGANIZATION1' };
-        if (sql.includes('FROM organization_keys')) return { master_key_version: wrappedKey.masterKeyVersion, wrapped_key_envelope: JSON.stringify(wrappedKey.envelope) };
-        return null;
-      } }) }),
-    } as unknown as D1Database;
-    const organizationDatabase = {
-      prepare: (sql: string) => ({
-        first: async () => sql.includes('FROM connections') ? { id: 'line-connection-1', kind: 'line', label: 'LINE', credential, status: 'active' } : null,
-        bind: (...values: unknown[]) => ({
-          run: async () => { writes.push(values); return { meta: { changes: 1 } }; },
-        }),
-      }),
-    } as unknown as D1Database;
-    const response = await app.fetch(new Request('https://app.example.com/api/public/organizations/organization-1/line/webhook', {
-      method: 'POST', headers: { 'x-line-signature': signature, 'Content-Type': 'application/json' }, body,
-    }), { ...setupEnvironment(), CREDENTIAL_MASTER_KEY: keyMaterial, CREDENTIAL_MASTER_KEY_VERSION: 'v1', CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase });
+describe('LINE destinations', () => {
+  it('verifies a webhook, discovers a destination, and consumes its Recipient Link once', async () => {
+    fixture = await createAutomationTestApp({ lineSecret: 'line-secret' });
+    const payload = JSON.stringify({ events: [{ source: { type: 'group', groupId: 'group-1' } }] });
+    const hmacKey = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode('line-secret'),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign'],
+    );
+    const signature = Buffer.from(
+      await crypto.subtle.sign('HMAC', hmacKey, new TextEncoder().encode(payload)),
+    ).toString('base64');
+    const webhook = await app.fetch(new Request(
+      'https://app.example.com/api/public/organizations/organization-1/line/webhook',
+      { method: 'POST', headers: { 'x-line-signature': signature }, body: payload },
+    ), fixture.environment);
+    const recipient = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/recipients',
+      { name: 'Guest', email: 'guest@example.com' },
+    ), fixture.environment);
+    const recipientBody = await recipient.json() as { data: { id: string } };
+    const issued = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/recipients/${recipientBody.data.id}/line-links`,
+      {},
+    ), fixture.environment);
+    const issuedBody = await issued.json() as { data: { token: string } };
+    const linkPath = `/api/public/organizations/organization-1/line-links/${issuedBody.data.token}`;
+    const consumed = await app.fetch(fixture.jsonRequest(linkPath, { destinationId: 'group-1' }), fixture.environment);
+    const duplicate = await app.fetch(fixture.jsonRequest(linkPath, { destinationId: 'group-1' }), fixture.environment);
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ data: { discovered: 2 } });
-    expect(writes).toHaveLength(2);
-    expect(writes.flat()).toEqual(expect.arrayContaining(['user-1', 'group-1']));
-  });
-
-  it('issues a short-lived link and consumes it only once to associate a discovered destination', async () => {
-    const writes: Array<{ sql: string; values: unknown[] }> = [];
-    const controlDatabase = {
-      prepare: (sql: string) => ({ bind: (..._values: unknown[]) => ({ first: async () => {
-        if (sql.includes('FROM sessions')) return { id: 'session-1', identity_id: 'operator-identity', email: 'operator@example.com', display_name: 'Operator' };
-        if (sql.includes('FROM members')) return { id: 'organization-1', name: 'Organization One', status: 'active', database_id: 'database-1', binding_name: 'ORG_ORGANIZATION1', role: 'operator' };
-        if (sql.includes('FROM organizations')) return { id: 'organization-1', status: 'active', binding_name: 'ORG_ORGANIZATION1' };
-        return null;
-      } }) }),
-    } as unknown as D1Database;
-    let issuedToken = '';
-    const organizationDatabase = {
-      prepare: (sql: string) => ({ bind: (...values: unknown[]) => ({
-        first: async () => {
-          if (sql.includes('FROM recipient_link_tokens')) return { recipient_profile_id: 'recipient-1', expires_at: '2099-01-01T00:00:00.000Z', used_at: null };
-          if (sql.includes('FROM line_destinations')) return { id: 'destination-1' };
-          return null;
-        },
-        run: async () => { writes.push({ sql, values }); if (sql.includes('INSERT INTO recipient_link_tokens')) issuedToken = values[0] as string; return { meta: { changes: 1 } }; },
-      }) }),
-    } as unknown as D1Database;
-    const environment = { ...setupEnvironment(), CONTROL_DB: controlDatabase, ORG_ORGANIZATION1: organizationDatabase };
-    const issued = await app.fetch(new Request('https://app.example.com/api/organizations/organization-1/recipients/recipient-1/line-links', {
-      method: 'POST', headers: { Cookie: 'mail_session=session-1', 'Content-Type': 'application/json' }, body: JSON.stringify({}),
-    }), environment);
-
+    await expect(webhook.json()).resolves.toMatchObject({ data: { discovered: 1 } });
+    expect(recipient.status).toBe(201);
     expect(issued.status).toBe(201);
-    expect(issuedToken.length).toBeGreaterThan(20);
-    const consumed = await app.fetch(new Request(`https://app.example.com/api/public/organizations/organization-1/line-links/${issuedToken}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ destinationId: 'user-1' }),
-    }), environment);
-
-    expect(consumed.status).toBe(200);
-    expect(writes.some((write) => write.sql.includes('INSERT OR IGNORE INTO recipient_line_destinations'))).toBe(true);
-    expect(writes.some((write) => write.sql.includes('UPDATE recipient_link_tokens SET used_at'))).toBe(true);
+    await expect(consumed.json()).resolves.toMatchObject({
+      data: { recipientProfileId: recipientBody.data.id, destinationId: 'group-1' },
+    });
+    expect(duplicate.status).toBe(410);
   });
 });

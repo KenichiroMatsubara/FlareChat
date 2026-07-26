@@ -4,14 +4,19 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev --port 8787",
-    "build": "tsc -p tsconfig.json && wrangler deploy --dry-run",
+    "dev": "wrangler dev --env local --port 8787",
+    "build": "tsc -p tsconfig.json && wrangler deploy --dry-run --env=\"\"",
     "typecheck": "tsc -p tsconfig.json",
-    "db:local": "wrangler d1 migrations apply CONTROL_DB --local",
-    "deploy": "wrangler deploy"
+    "db:local": "npm run db:local:control && npm run db:local:organization:1 && npm run db:local:organization:2 && npm run db:local:organization:3",
+    "db:local:control": "wrangler d1 migrations apply CONTROL_DB --env local --local",
+    "db:local:organization:1": "wrangler d1 migrations apply LOCAL_ORGANIZATION_DB_1 --env local --local",
+    "db:local:organization:2": "wrangler d1 migrations apply LOCAL_ORGANIZATION_DB_2 --env local --local",
+    "db:local:organization:3": "wrangler d1 migrations apply LOCAL_ORGANIZATION_DB_3 --env local --local",
+    "deploy": "wrangler deploy --env=\"\""
   },
   "dependencies": {
     "@mail/domain": "*",
+    "drizzle-orm": "^0.45.2",
     "hono": "^4.8.12"
   }
 }

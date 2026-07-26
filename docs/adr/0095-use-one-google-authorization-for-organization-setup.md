@@ -1,0 +1,3 @@
+# Use one Google authorization for Organization setup
+
+The Google account authorized during Organization setup becomes both the Automation Inbox and the initial Owner identity. Its display name supplies the editable Organization-name default, and provisioning begins after that name is confirmed without separate Owner email entry or passkey registration. Later management login uses Google identity authentication; Mail Automation does not expose passkey registration or login UI. This supersedes ADRs 0037 and 0089 and the passkey steps in ADRs 0087, 0090, and 0091.

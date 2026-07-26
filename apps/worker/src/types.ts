@@ -15,39 +15,6 @@ export interface Bindings {
   ACTIVE_ORGANIZATION_LIMIT: string;
 }
 
-export interface SetupRow {
-  id: string;
-  name: string;
-  state: 'awaiting_google' | 'awaiting_passkey' | 'provisioning' | 'active' | 'expired' | 'failed';
-  oauth_state_hash: string;
-  pkce_verifier_envelope: string;
-  passkey_challenge_hash: string | null;
-  inbox_address: string | null;
-  google_subject: string | null;
-  granted_scopes: string | null;
-  credential_envelope: string | null;
-  history_id: string | null;
-  owner_email: string | null;
-  owner_identity_id: string | null;
-  organization_id: string | null;
-  database_id: string | null;
-  binding_name: string | null;
-  provisioning_key: string | null;
-  error_message: string | null;
-  expires_at: string;
-  provisioning_expires_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface PasskeyRow {
-  id: string;
-  identity_id: string;
-  credential_id: string;
-  public_key_jwk: string;
-  sign_count: number;
-}
-
 export interface SessionRow {
   id: string;
   identity_id: string;
@@ -69,21 +36,4 @@ export interface ConnectionRow {
   label: string;
   credential: string;
   status: 'active' | 'disconnected';
-}
-
-export interface OrganizationConnectionRow extends ConnectionRow {
-  organization_id: string;
-}
-
-export interface GoogleAutomationRow {
-  id: string;
-  identity_id: string;
-  google_subject: string;
-  email: string;
-  display_name: string;
-  token_envelope: string;
-  gmail_history_id: string;
-  enabled: number;
-  last_synced_at: string | null;
-  last_error: string | null;
 }

@@ -3,6 +3,13 @@
   "name": "mail-automation",
   "main": "src/index.ts",
   "compatibility_date": "2026-07-24",
+  "rules": [
+    {
+      "type": "Text",
+      "globs": ["**/*.sql"],
+      "fallthrough": true
+    }
+  ],
   "assets": {
     "directory": "../web/dist",
     "binding": "ASSETS",
@@ -32,6 +39,49 @@
     "RP_ID": "localhost",
     "GOOGLE_CLIENT_ID": "",
     "ACTIVE_ORGANIZATION_LIMIT": "10"
+  },
+  "env": {
+    "local": {
+      "d1_databases": [
+        {
+          "binding": "CONTROL_DB",
+          "database_name": "mail-automation-control-local",
+          "database_id": "00000000-0000-0000-0000-000000000001",
+          "migrations_dir": "migrations/control"
+        },
+        {
+          "binding": "LOCAL_ORGANIZATION_DB_1",
+          "database_name": "mail-organization-local-1",
+          "database_id": "00000000-0000-0000-0000-000000000101",
+          "migrations_dir": "migrations/organization"
+        },
+        {
+          "binding": "LOCAL_ORGANIZATION_DB_2",
+          "database_name": "mail-organization-local-2",
+          "database_id": "00000000-0000-0000-0000-000000000102",
+          "migrations_dir": "migrations/organization"
+        },
+        {
+          "binding": "LOCAL_ORGANIZATION_DB_3",
+          "database_name": "mail-organization-local-3",
+          "database_id": "00000000-0000-0000-0000-000000000103",
+          "migrations_dir": "migrations/organization"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "RECOVERY_RECEIPTS",
+          "bucket_name": "mail-automation-recovery-receipts-local"
+        }
+      ],
+      "vars": {
+        "APP_URL": "http://localhost:8787",
+        "WEB_ORIGIN": "http://localhost:5173",
+        "RP_ID": "localhost",
+        "GOOGLE_CLIENT_ID": "",
+        "ACTIVE_ORGANIZATION_LIMIT": "10"
+      }
+    }
   },
   "observability": {
     "enabled": true

@@ -1,18 +1,27 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { api } from './api';
+import { defaultOrganizationName, setupPhaseLabel, shouldShowOrganizationLoading, shouldShowOrganizationSetup } from './app';
 
 describe('Organization setup client', () => {
-  it('sends the distinct initial Owner address when requesting Passkey options', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: { challenge: 'challenge' } }), { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
+  it('moves a signed-in user without an Organization to setup instead of showing the login screen again', () => {
+    expect(shouldShowOrganizationSetup(null, false, { email: 'owner@example.com', displayName: 'Owner', organizations: [] })).toBe(true);
+    expect(shouldShowOrganizationSetup(null, true, null)).toBe(false);
+    expect(shouldShowOrganizationSetup({ id: 'setup-1', name: 'Example', inboxAddress: 'inbox@example.com', status: 'active', expiresAt: '', provisioningExpiresAt: null, phase: null, error: null }, false, {
+      email: 'owner@example.com', displayName: 'Owner', organizations: [{ organizationId: 'organization-1', name: 'Example', role: 'owner', status: 'active' }],
+    })).toBe(false);
+  });
 
-    await api.setupPasskeyOptions('owner@example.com');
+  it('defaults the Organization name to the authenticated Google account name', () => {
+    expect(defaultOrganizationName({ email: 'owner@example.com', displayName: '岡崎RAC', organizations: [] })).toBe('岡崎RAC');
+    expect(defaultOrganizationName({ email: 'owner@example.com', displayName: '   ', organizations: [] })).toBe('');
+  });
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/setup/passkey/options', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify({ ownerEmail: 'owner@example.com' }),
-    }));
+  it('reports an empty upstream response without exposing a JSON parser exception', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 502 })));
+
+    await expect(api.currentOrganizationSetup()).rejects.toThrow('サービスに接続できません。開発サーバーが起動しているか確認してください。');
+
     vi.unstubAllGlobals();
   });
 
@@ -26,19 +35,52 @@ describe('Organization setup client', () => {
     vi.unstubAllGlobals();
   });
 
-  it('lists and creates Organization-scoped Rules through the tenant API', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [] }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { id: 'rule-1', name: 'Announcements', state: 'draft' } }), { status: 201 }));
+  it('loads the Automation Inbox through the selected Organization', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: { email: 'owner@example.com', displayName: 'Owner', enabled: true, lastSyncedAt: null, lastError: null, created: 0, skipped: 0, exceptions: 0 },
+    }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await api.organizationRules('organization-1');
-    await api.createOrganizationRule('organization-1', { name: 'Announcements', state: 'draft' });
+    await api.currentAutomation('organization-1');
 
-    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/organizations/organization-1/rules', expect.any(Object));
-    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/organizations/organization-1/rules', expect.objectContaining({
-      method: 'POST', body: JSON.stringify({ name: 'Announcements', state: 'draft' }),
-    }));
+    expect(fetchMock).toHaveBeenCalledWith('/api/organizations/organization-1/automation', { credentials: 'include' });
+    vi.unstubAllGlobals();
+  });
+
+  it('shows Organization loading instead of a false Google connection prompt before the Inbox read completes', () => {
+    const member = {
+      email: 'owner@example.com',
+      displayName: 'Owner',
+      organizations: [{ organizationId: 'organization-1', name: 'Example', role: 'owner' as const, status: 'active' }],
+    };
+
+    expect(shouldShowOrganizationLoading(member, '', false)).toBe(true);
+    expect(shouldShowOrganizationLoading(member, 'organization-1', true)).toBe(true);
+    expect(shouldShowOrganizationLoading(member, 'organization-1', false)).toBe(false);
+  });
+
+  it('returns Organization-scoped Rules supplied by the Worker', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: [{ id: 'rule-1', name: 'Announcements', state: 'draft' }],
+    }), { status: 200 })));
+
+    await expect(api.organizationRules('organization-1')).resolves.toEqual([
+      { id: 'rule-1', name: 'Announcements', state: 'draft' },
+    ]);
+
+    vi.unstubAllGlobals();
+  });
+
+  it('returns a newly created Organization Rule', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: { id: 'rule-1', name: 'Announcements', state: 'draft' },
+    }), { status: 201 })));
+
+    await expect(api.createOrganizationRule(
+      'organization-1',
+      { name: 'Announcements', state: 'draft' },
+    )).resolves.toMatchObject({ id: 'rule-1', name: 'Announcements', state: 'draft' });
+
     vi.unstubAllGlobals();
   });
 
@@ -50,5 +92,9 @@ describe('Organization setup client', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('/api/organizations/organization-1/audit/deliveries', expect.any(Object));
     vi.unstubAllGlobals();
+  });
+
+  it('names the concrete provisioning phase shown after a failure', () => {
+    expect(setupPhaseLabel('storing_credentials')).toBe('Automation Inbox の認証情報を組織DBへ保存しています');
   });
 });

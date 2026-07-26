@@ -1,13 +1,17 @@
+import { asc, eq, lt } from 'drizzle-orm';
+
 import { encrypt } from './cryptography';
+import { organizationDatabase } from './storage/database';
+import { deliveries, deliveryArchives } from './storage/organization-schema';
 
 interface ArchivedDelivery {
   id: string;
-  event_id: string | null;
+  eventId: string | null;
   channel: string;
   destination: string;
   outcome: string;
-  external_id: string | null;
-  created_at: string;
+  externalId: string | null;
+  createdAt: string;
 }
 
 /** Archives old Delivery Records as one encrypted R2 object before removing their hot D1 copies. */
@@ -18,18 +22,26 @@ export const archiveExpiredDeliveryRecords = async (input: {
   organizationId: string;
   before: string;
 }): Promise<number> => {
-  const rows = await input.database.prepare(
-    'SELECT id, event_id, channel, destination, outcome, external_id, created_at FROM deliveries WHERE created_at < ? ORDER BY created_at LIMIT 1_000',
-  ).bind(input.before).all<ArchivedDelivery>();
-  if (!rows.results.length) return 0;
+  const db = organizationDatabase(input.database);
+  const rows: ArchivedDelivery[] = await db.select().from(deliveries)
+    .where(lt(deliveries.createdAt, input.before))
+    .orderBy(asc(deliveries.createdAt))
+    .limit(1_000)
+    .all();
+  if (!rows.length) return 0;
   const archiveId = crypto.randomUUID();
-  const encrypted = await encrypt(JSON.stringify(rows.results), input.organizationKey, `delivery-archive:${input.organizationId}:${archiveId}`);
+  const encrypted = await encrypt(JSON.stringify(rows), input.organizationKey, `delivery-archive:${input.organizationId}:${archiveId}`);
   const objectKey = `delivery-archives/${input.organizationId}/${archiveId}.json`;
   await input.bucket.put(objectKey, JSON.stringify(encrypted), { httpMetadata: { contentType: 'application/json' } });
-  await input.database.batch([
-    input.database.prepare('INSERT INTO delivery_archives (id, object_key, record_count, archived_before, created_at) VALUES (?, ?, ?, ?, ?)')
-      .bind(archiveId, objectKey, rows.results.length, input.before, new Date().toISOString()),
-    ...rows.results.map((record) => input.database.prepare('DELETE FROM deliveries WHERE id = ?').bind(record.id)),
+  await db.batch([
+    db.insert(deliveryArchives).values({
+      id: archiveId,
+      objectKey,
+      recordCount: rows.length,
+      archivedBefore: input.before,
+      createdAt: new Date().toISOString(),
+    }),
+    ...rows.map((record) => db.delete(deliveries).where(eq(deliveries.id, record.id))),
   ]);
-  return rows.results.length;
+  return rows.length;
 };

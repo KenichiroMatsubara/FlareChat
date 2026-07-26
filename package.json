@@ -14,6 +14,9 @@
     "test": "vitest run",
     "db:local": "npm run db:local -w @mail/worker",
     "db:studio": "tsx scripts/db-browser.ts",
+    "db:drizzle": "drizzle-kit studio --config=drizzle.config.ts",
+    "db:generate:control": "drizzle-kit generate --config=drizzle.control.config.ts",
+    "db:generate:organization": "drizzle-kit generate --config=drizzle.organization.config.ts",
     "deploy": "npm run build && npm run deploy -w @mail/worker"
   },
   "devDependencies": {

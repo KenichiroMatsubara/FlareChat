@@ -1,7 +1,11 @@
-import type { OrganizationSetup, PasskeyCreationOptions } from '@mail/domain';
+import type { OrganizationSetup } from '@mail/domain';
 
 interface ApiResult<T> {
   data: T;
+}
+
+interface ApiFailure {
+  error?: { message?: string };
 }
 
 export interface AutomationStatus {
@@ -74,6 +78,14 @@ export interface OrganizationRule {
   updatedAt: string;
 }
 
+export interface OrganizationRuleInput {
+  name: string;
+  state: 'draft' | 'active';
+  selectionPolicy?: Record<string, unknown>;
+  routingPolicy?: Record<string, unknown>;
+  priority?: number;
+}
+
 export interface DeliveryAuditRecord {
   id: string;
   eventId: string | null;
@@ -84,51 +96,71 @@ export interface DeliveryAuditRecord {
   createdAt: string;
 }
 
-export interface PasskeyAuthenticationOptions {
-  challenge: string;
-  rpId: string;
-  timeout: number;
-  userVerification: 'required';
-  allowCredentials: Array<{ type: 'public-key'; id: string }>;
+export interface MailboxTestMatch {
+  id: string;
+  subject: string;
+  sender: string;
 }
+
+export interface MailboxTestPreview extends MailboxTestMatch {
+  event: {
+    title: string;
+    startsAt: string;
+    endsAt: string;
+    timeZone: string;
+    location: string;
+    description: string;
+  };
+  confirmationToken: string;
+  expiresAt: string;
+}
+
+const responseBody = async <T>(response: Response): Promise<(ApiResult<T> & ApiFailure) | null> => {
+  const text = await response.text();
+  if (!text) return null;
+  try { return JSON.parse(text) as ApiResult<T> & ApiFailure; }
+  catch { throw new Error('サービスから不正な応答が返されました。開発サーバーが起動しているか確認してください。'); }
+};
 
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(path, { credentials: 'include', ...init, headers: { 'Content-Type': 'application/json', ...init?.headers } });
-  const body = (await response.json()) as ApiResult<T> & { error?: { message: string } };
-  if (!response.ok) throw new Error(body.error?.message ?? '操作に失敗しました。');
+  const body = await responseBody<T>(response);
+  if (!response.ok) throw new Error(body?.error?.message ?? 'サービスに接続できません。開発サーバーが起動しているか確認してください。');
+  if (!body) throw new Error('サービスから応答がありません。開発サーバーが起動しているか確認してください。');
   return body.data;
 };
 
-const currentAutomation = async (): Promise<AutomationStatus | null> => {
-  const response = await fetch('/api/automation', { credentials: 'include' });
+const currentAutomation = async (organizationId: string): Promise<AutomationStatus | null> => {
+  const response = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/automation`, { credentials: 'include' });
   if (response.status === 401) return null;
-  const body = (await response.json()) as ApiResult<AutomationStatus | null> & { error?: { message: string } };
-  if (!response.ok) throw new Error(body.error?.message ?? '状態を取得できませんでした。');
+  const body = await responseBody<AutomationStatus | null>(response);
+  if (!response.ok) throw new Error(body?.error?.message ?? '状態を取得できませんでした。');
+  if (!body) throw new Error('状態を取得できませんでした。');
   return body.data;
 };
 
 const currentMember = async (): Promise<AuthMe | null> => {
   const response = await fetch('/api/auth/me', { credentials: 'include' });
   if (response.status === 401) return null;
-  const body = (await response.json()) as ApiResult<AuthMe> & { error?: { message: string } };
-  if (!response.ok) throw new Error(body.error?.message ?? 'ユーザー情報を取得できませんでした。');
+  const body = await responseBody<AuthMe>(response);
+  if (!response.ok) throw new Error(body?.error?.message ?? 'ユーザー情報を取得できませんでした。');
+  if (!body) throw new Error('ユーザー情報を取得できませんでした。');
   return body.data;
 };
 
 export const api = {
   startOrganizationSetup: (name: string): Promise<{ authorizationUrl: string }> => request('/api/setup', { method: 'POST', body: JSON.stringify({ name }) }),
+  completeOrganizationSetup: (name: string): Promise<OrganizationSetup | null> => request('/api/setup/complete', { method: 'POST', body: JSON.stringify({ name }) }),
+  retryOrganizationSetup: (): Promise<OrganizationSetup | null> => request('/api/setup/retry', { method: 'POST' }),
+  cancelOrganizationSetup: (): Promise<{ cancelled: boolean }> => request('/api/setup/cancel', { method: 'POST' }),
   currentOrganizationSetup: (): Promise<OrganizationSetup | null> => request('/api/setup/current'),
-  setupPasskeyOptions: (ownerEmail: string): Promise<PasskeyCreationOptions> => request('/api/setup/passkey/options', { method: 'POST', body: JSON.stringify({ ownerEmail }) }),
-  verifySetupPasskey: (credential: unknown): Promise<OrganizationSetup> => request('/api/setup/passkey/verify', { method: 'POST', body: JSON.stringify(credential) }),
   googleLogin: (): Promise<{ authorizationUrl: string }> => request('/api/auth/google', { method: 'POST' }),
-  passkeyOptions: (email: string): Promise<PasskeyAuthenticationOptions> => request('/api/auth/passkey/options', { method: 'POST', body: JSON.stringify({ email }) }),
-  verifyPasskey: (credential: unknown): Promise<{ authenticated: boolean }> => request('/api/auth/passkey/verify', { method: 'POST', body: JSON.stringify(credential) }),
   currentAutomation,
   currentMember,
   organizationDashboard: (organizationId: string): Promise<OrganizationDashboard> => request(`/api/organizations/${encodeURIComponent(organizationId)}/dashboard`),
   organizationRules: (organizationId: string): Promise<OrganizationRule[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules`),
   organizationDeliveryAudit: (organizationId: string): Promise<DeliveryAuditRecord[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/audit/deliveries`),
-  createOrganizationRule: (organizationId: string, input: { name: string; state: 'draft' | 'active' }): Promise<OrganizationRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules`, {
+  createOrganizationRule: (organizationId: string, input: OrganizationRuleInput): Promise<OrganizationRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules`, {
     method: 'POST',
     body: JSON.stringify(input),
   }),
@@ -148,11 +180,22 @@ export const api = {
     method: 'PUT',
     body: JSON.stringify(input),
   }),
-  testGeminiConnection: (organizationId: string, prompt: string): Promise<{ text: string; model: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections/gemini/test`, {
+  testGeminiConnection: (organizationId: string, prompt: string, model: string): Promise<{ text: string; model: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections/gemini/test`, {
     method: 'POST',
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, model }),
   }),
-  runAutomation: (): Promise<AutomationSummary> => request('/api/automation/run', { method: 'POST' }),
-  setEnabled: (enabled: boolean): Promise<{ enabled: boolean }> => request('/api/automation/enabled', { method: 'POST', body: JSON.stringify({ enabled }) }),
+  searchMailboxForTest: (organizationId: string, subject: string): Promise<{ messages: MailboxTestMatch[] }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/search`, {
+    method: 'POST',
+    body: JSON.stringify({ subject }),
+  }),
+  previewMailboxTestEvent: (organizationId: string, messageId: string): Promise<MailboxTestPreview> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/${encodeURIComponent(messageId)}/preview`, {
+    method: 'POST',
+  }),
+  createMailboxTestCalendarEvent: (organizationId: string, confirmationToken: string): Promise<{ eventId: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/calendar`, {
+    method: 'POST',
+    body: JSON.stringify({ confirmationToken }),
+  }),
+  runAutomation: (organizationId: string): Promise<AutomationSummary> => request(`/api/organizations/${encodeURIComponent(organizationId)}/automation/run`, { method: 'POST' }),
+  setEnabled: (organizationId: string, enabled: boolean): Promise<{ enabled: boolean }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/automation/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }),
   logout: (): Promise<{ loggedOut: boolean }> => request('/api/auth/logout', { method: 'POST' }),
 };

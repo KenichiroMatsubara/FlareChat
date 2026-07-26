@@ -10,13 +10,19 @@ interface D1DatabaseResult {
   uuid?: string;
 }
 
+export interface D1QueryResult<T> {
+  success?: boolean;
+  results?: T[];
+  meta?: Record<string, number | boolean | string | null>;
+}
+
 interface WorkerSettings {
   bindings?: Array<Record<string, unknown>>;
 }
 
 const api = async <T>(env: Bindings, path: string, init?: RequestInit): Promise<T> => {
-  if (!env.CLOUDFLARE_ACCOUNT_ID || !env.CLOUDFLARE_API_TOKEN || !env.CLOUDFLARE_WORKER_NAME) {
-    throw new Error('Cloudflare provisioning secrets are not configured.');
+  if (!env.CLOUDFLARE_ACCOUNT_ID || !env.CLOUDFLARE_API_TOKEN) {
+    throw new Error('Cloudflare D1 credentials are not configured.');
   }
   const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}${path}`, {
     ...init,
@@ -49,11 +55,22 @@ export const executeD1 = async (env: Bindings, databaseId: string, sql: string):
   });
 };
 
+export const queryD1 = async <T>(env: Bindings, databaseId: string, sql: string, params: unknown[]): Promise<D1QueryResult<T>> => {
+  const result = await api<D1QueryResult<T>[]>(env, `/d1/database/${databaseId}/query`, {
+    method: 'POST',
+    body: JSON.stringify({ sql, params }),
+  });
+  const query = result[0];
+  if (!query?.success) throw new Error('Organization D1 query failed.');
+  return query;
+};
+
 export const attachD1Binding = async (
   env: Bindings,
   bindingName: string,
   databaseId: string,
 ): Promise<void> => {
+  if (!env.CLOUDFLARE_WORKER_NAME) throw new Error('Cloudflare Worker name is not configured.');
   const script = encodeURIComponent(env.CLOUDFLARE_WORKER_NAME);
   const settings = await api<WorkerSettings>(env, `/workers/scripts/${script}/settings`);
   const bindings = (settings.bindings ?? []).filter((binding) => binding.name !== bindingName);
