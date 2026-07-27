@@ -1,3 +1,5 @@
+import { normalizeAttachments, type AttachmentContent } from './normalization';
+
 export interface EventDetails {
   title: string;
   startsAt: string;
@@ -9,6 +11,30 @@ export interface EventDetails {
 
 export const GEMINI_EXTRACTION_MAX_SOURCE_CHARS = 20_000;
 export const GEMINI_EXTRACTION_TIMEOUT_MS = 15_000;
+
+export type GeminiAttachment = AttachmentContent;
+
+interface GeminiResponse {
+  candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  error?: { message?: string };
+}
+
+interface GeminiPart {
+  text?: string;
+  inlineData?: { mimeType: string; data: string };
+}
+
+const geminiAttachmentParts = (attachments: GeminiAttachment[]): GeminiPart[] =>
+  normalizeAttachments(attachments).flatMap((attachment) => {
+    const filename = `Attachment filename: ${attachment.filename}`;
+    if (attachment.kind === 'text') {
+      return [{ text: `${filename}\nOriginal MIME type: ${attachment.originalMimeType}\n${attachment.text}` }];
+    }
+    return [
+      { text: filename },
+      { inlineData: { mimeType: attachment.originalMimeType, data: attachment.data } },
+    ];
+  });
 
 /** Accepts only complete Gemini JSON that is safe to turn into a Scheduled Event. */
 export const validatedEventDetails = (text: string): EventDetails | null => {
@@ -36,27 +62,55 @@ export const extractGeminiEventDetails = async (input: {
   apiKey: string;
   model: string;
   source: string;
+  attachments?: GeminiAttachment[];
   fetch?: typeof fetch;
 }): Promise<EventDetails | null> => {
+  const request = input.fetch ?? fetch;
+  const source = input.source.slice(0, GEMINI_EXTRACTION_MAX_SOURCE_CHARS);
+  let response: Response;
   try {
-    const request = input.fetch ?? fetch;
-    const source = input.source.slice(0, GEMINI_EXTRACTION_MAX_SOURCE_CHARS);
-    const response = await request(
+    response = await request(
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}:generateContent`,
       {
         method: 'POST',
         headers: { 'x-goog-api-key': input.apiKey, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: `Extract exactly one event as JSON with title, startsAt, endsAt, timeZone, location, and description. Do not infer missing dates or times.\n\n${source}` }] }],
-          generationConfig: { responseMimeType: 'application/json' },
+          contents: [{
+            role: 'user',
+            parts: [
+              { text: `Extract exactly one event as JSON with title, startsAt, endsAt, timeZone, location, and description. Do not infer missing dates or times.\n\n${source}` },
+              ...geminiAttachmentParts(input.attachments ?? []),
+            ],
+          }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: 'OBJECT',
+              properties: {
+                title: { type: 'STRING' },
+                startsAt: { type: 'STRING', format: 'date-time' },
+                endsAt: { type: 'STRING', format: 'date-time' },
+                timeZone: { type: 'STRING' },
+                location: { type: 'STRING' },
+                description: { type: 'STRING' },
+              },
+              required: ['title', 'startsAt', 'endsAt', 'timeZone', 'location', 'description'],
+            },
+          },
         }),
       },
     );
-    const body = await response.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-    if (!response.ok) return null;
-    const text = body.candidates?.flatMap((candidate) => candidate.content?.parts ?? []).map((part) => part.text ?? '').join('') ?? '';
-    return validatedEventDetails(text);
   } catch {
-    return null;
+    throw new Error('Gemini API に接続できませんでした。');
   }
+
+  let body: GeminiResponse;
+  try {
+    body = await response.json() as GeminiResponse;
+  } catch {
+    throw new Error('Gemini API から不正な応答が返されました。');
+  }
+  if (!response.ok) throw new Error(`Gemini API: ${body.error?.message?.trim() || `HTTP ${response.status}`}`);
+  const text = body.candidates?.flatMap((candidate) => candidate.content?.parts ?? []).map((part) => part.text ?? '').join('') ?? '';
+  return validatedEventDetails(text);
 };

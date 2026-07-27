@@ -1,9 +1,13 @@
+import { readFile } from 'node:fs/promises';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { app } from './api';
+import type { EventDetails } from './event-details';
 import {
   extractEventCandidate,
   runEnabledAutomations,
+  runOrganizationAutomation,
   selectActiveRule,
   sourceAttachments,
   sourceAttachmentSizes,
@@ -184,5 +188,290 @@ describe('Organization Automation Inbox scheduling', () => {
     await expect(exceptions.json()).resolves.toMatchObject({
       data: [{ state: 'open' }],
     });
+  });
+
+  it('extracts a Scheduled Event from a DOCX attachment in normal Automation Inbox processing', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    const docx = await readFile(new URL('../../../fixtures/gemini-file-probe/event-invitation.docx', import.meta.url));
+    const gmailDocx = docx.toString('base64')
+      .replaceAll('+', '-')
+      .replaceAll('/', '_')
+      .replace(/=+$/u, '');
+    let geminiRequest: { contents?: Array<{ parts?: Array<{ text?: string; inlineData?: { mimeType?: string; data?: string } }> }> } = {};
+    let calendarUrl = '';
+    let calendarRequest: { attachments?: Array<{ fileUrl?: string; title?: string; mimeType?: string }> } = {};
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('/history')) {
+        return new Response(JSON.stringify({
+          historyId: 'history-after-connection',
+          history: [{ messagesAdded: [{ message: { id: 'gmail-message-docx' } }] }],
+        }), { status: 200 });
+      }
+      if (url.includes('/attachments/attachment-docx')) {
+        return new Response(JSON.stringify({ data: gmailDocx }), { status: 200 });
+      }
+      if (url.includes('/messages/gmail-message-docx')) {
+        return new Response(JSON.stringify({
+          id: 'gmail-message-docx',
+          payload: {
+            headers: [
+              { name: 'Subject', value: '式典のお知らせ' },
+              { name: 'From', value: 'member@example.com' },
+            ],
+            body: { data: gmailBody('日時は添付ファイルをご確認ください。') },
+            parts: [{
+              filename: '式典案内.docx',
+              mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+              body: { attachmentId: 'attachment-docx', size: docx.byteLength },
+            }],
+          },
+        }), { status: 200 });
+      }
+      if (url.includes('generativelanguage.googleapis.com')) {
+        geminiRequest = JSON.parse(init?.body as string) as typeof geminiRequest;
+        const normalizedText = geminiRequest.contents?.[0]?.parts
+          ?.map((part) => part.text ?? '')
+          .join('\n') ?? '';
+        if (!normalizedText.includes('GEMINI-FILE-PROBE-001')
+          || !normalizedText.includes('2026-08-18')
+          || !normalizedText.includes('14:30')
+          || !normalizedText.includes('16:00')) {
+          return new Response(JSON.stringify({
+            error: { message: 'Normalized DOCX content was not provided.' },
+          }), { status: 400 });
+        }
+        return new Response(JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify({
+            title: '式典',
+            startsAt: '2026-09-12T14:00:00+09:00',
+            endsAt: '2026-09-12T16:00:00+09:00',
+            timeZone: 'Asia/Tokyo',
+            location: '名古屋',
+            description: '添付DOCXから抽出',
+          }) }] } }],
+        }), { status: 200 });
+      }
+      if (url.includes('upload/drive')) {
+        return new Response(JSON.stringify({ id: 'drive-file-docx', webViewLink: 'https://drive.example/docx' }), { status: 200 });
+      }
+      if (url.includes('/permissions')) return new Response('', { status: 200 });
+      if (url.includes('/calendar/v3/calendars/primary/events') && init?.method === 'POST') {
+        calendarUrl = url;
+        calendarRequest = JSON.parse(init.body as string) as typeof calendarRequest;
+      }
+      return new Response(JSON.stringify({ id: 'calendar-event-docx' }), { status: 200 });
+    }));
+
+    await runEnabledAutomations(fixture.environment);
+
+    expect(geminiRequest.contents?.[0]?.parts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        text: expect.stringContaining('GEMINI-FILE-PROBE-001'),
+      }),
+    ]));
+    expect(geminiRequest.contents?.[0]?.parts).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        inlineData: expect.objectContaining({
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        }),
+      }),
+    ]));
+    expect(calendarUrl).toContain('supportsAttachments=true');
+    expect(calendarRequest.attachments).toEqual([{
+      fileUrl: 'https://drive.example/docx',
+      title: '式典案内.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    }]);
+    const dashboard = await app.fetch(
+      fixture.request('/api/organizations/organization-1/dashboard'),
+      fixture.environment,
+    );
+    await expect(dashboard.json()).resolves.toMatchObject({
+      data: { upcomingEvents: 1, exceptions: 0 },
+    });
+  });
+
+  it('creates an Automation Exception when Gmail attachment retrieval fails', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    const requests: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      requests.push(url);
+      if (url.includes('/history')) {
+        return new Response(JSON.stringify({
+          historyId: 'history-after-connection',
+          history: [{ messagesAdded: [{ message: { id: 'gmail-message-failed-attachment' } }] }],
+        }), { status: 200 });
+      }
+      if (url.includes('/attachments/attachment-pdf')) {
+        return new Response(JSON.stringify({ error: { message: 'attachment unavailable' } }), { status: 503 });
+      }
+      return new Response(JSON.stringify({
+        id: 'gmail-message-failed-attachment',
+        payload: {
+          headers: [{ name: 'Subject', value: '添付をご確認ください' }],
+          parts: [{
+            filename: '案内.pdf',
+            mimeType: 'application/pdf',
+            body: { attachmentId: 'attachment-pdf', size: 9 },
+          }],
+        },
+      }), { status: 200 });
+    }));
+
+    await expect(runOrganizationAutomation(
+      fixture.environment,
+      'organization-1',
+      fixture.organization.binding,
+    )).resolves.toMatchObject({ created: 0, exceptions: 1 });
+    expect(requests.some((url) => url.includes('/calendar/v3/'))).toBe(false);
+  });
+
+  it('keeps the Calendar event as a draft when Drive publication fails', async () => {
+    fixture = await createAutomationTestApp();
+    let calendarRequest: { attachments?: unknown[] } = {};
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('/history')) {
+        return new Response(JSON.stringify({
+          historyId: 'history-after-connection',
+          history: [{ messagesAdded: [{ message: { id: 'gmail-message-drive-failure' } }] }],
+        }), { status: 200 });
+      }
+      if (url.includes('/attachments/attachment-pdf')) {
+        return new Response(JSON.stringify({ data: 'cGRmLWJ5dGVz' }), { status: 200 });
+      }
+      if (url.includes('/messages/gmail-message-drive-failure')) {
+        return new Response(JSON.stringify({
+          id: 'gmail-message-drive-failure',
+          payload: {
+            headers: [{ name: 'Subject', value: '例会のお知らせ' }],
+            body: { data: gmailBody('日時: 2026年8月3日 19:00〜21:30') },
+            parts: [{
+              filename: '式次第.pdf',
+              mimeType: 'application/pdf',
+              body: { attachmentId: 'attachment-pdf', size: 9 },
+            }],
+          },
+        }), { status: 200 });
+      }
+      if (url.includes('upload/drive')) {
+        return new Response(JSON.stringify({ error: { message: 'Drive upload failed' } }), { status: 503 });
+      }
+      if (url.includes('/calendar/v3/calendars/primary/events') && init?.method === 'POST') {
+        calendarRequest = JSON.parse(init.body as string) as typeof calendarRequest;
+        return new Response(JSON.stringify({ id: 'calendar-event-draft' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ error: { message: `unexpected request: ${url}` } }), { status: 500 });
+    }));
+
+    await expect(runOrganizationAutomation(
+      fixture.environment,
+      'organization-1',
+      fixture.organization.binding,
+    )).resolves.toMatchObject({ created: 0, exceptions: 1 });
+    expect(calendarRequest.attachments).toEqual([]);
+  });
+});
+
+describe('Manual mailbox test', () => {
+  it('previews an event whose date and time exist only in an XLSX attachment', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    const xlsx = await readFile(new URL('../../../fixtures/gemini-file-probe/event-invitation.xlsx', import.meta.url));
+    const gmailXlsx = xlsx.toString('base64')
+      .replaceAll('+', '-')
+      .replaceAll('/', '_')
+      .replace(/=+$/u, '');
+    let geminiRequest: { contents?: Array<{ parts?: Array<{ text?: string; inlineData?: { mimeType?: string; data?: string } }> }> } = {};
+    let calendarUrl = '';
+    let calendarRequest: { attachments?: Array<{ fileUrl?: string; title?: string; mimeType?: string }> } = {};
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('/attachments/attachment-xlsx')) {
+        return new Response(JSON.stringify({ data: gmailXlsx }), { status: 200 });
+      }
+      if (url.includes('/messages/gmail-message-attachment')) {
+        return new Response(JSON.stringify({
+          id: 'gmail-message-attachment',
+          payload: {
+            headers: [
+              { name: 'Subject', value: '名古屋名城RAC30周年記念式典のご案内' },
+              { name: 'From', value: 'member@example.com' },
+            ],
+            body: { data: gmailBody('詳しくは添付をご確認ください。') },
+            parts: [{
+              filename: '式典案内.xlsx',
+              mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              body: { attachmentId: 'attachment-xlsx', size: xlsx.byteLength },
+            }],
+          },
+        }), { status: 200 });
+      }
+      if (url.includes('generativelanguage.googleapis.com')) {
+        geminiRequest = JSON.parse(init?.body as string) as typeof geminiRequest;
+        const normalizedText = geminiRequest.contents?.[0]?.parts
+          ?.map((part) => part.text ?? '')
+          .join('\n') ?? '';
+        if (!normalizedText.includes('GEMINI-FILE-PROBE-001')
+          || !normalizedText.includes('2026-08-18')
+          || !normalizedText.includes('14:30')
+          || !normalizedText.includes('16:00')) {
+          return new Response(JSON.stringify({
+            error: { message: 'Normalized XLSX content was not provided.' },
+          }), { status: 400 });
+        }
+        return new Response(JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify({
+            title: 'Gemini ファイル解析テスト会議',
+            startsAt: '2026-08-18T14:30:00+09:00',
+            endsAt: '2026-08-18T16:00:00+09:00',
+            timeZone: 'Asia/Tokyo',
+            location: '名古屋イノベーションセンター 3階 会議室A',
+            description: '添付XLSXから抽出',
+          }) }] } }],
+        }), { status: 200 });
+      }
+      if (url.includes('upload/drive')) {
+        return new Response(JSON.stringify({ id: 'drive-file-xlsx', webViewLink: 'https://drive.example/xlsx' }), { status: 200 });
+      }
+      if (url.includes('/permissions')) return new Response('', { status: 200 });
+      if (url.includes('/calendar/v3/calendars/primary/events') && init?.method === 'POST') {
+        calendarUrl = url;
+        calendarRequest = JSON.parse(init.body as string) as typeof calendarRequest;
+        return new Response(JSON.stringify({ id: 'calendar-event-xlsx' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ error: { message: `unexpected request: ${url}` } }), { status: 500 });
+    }));
+
+    const previewResponse = await app.fetch(fixture.request(
+      '/api/organizations/organization-1/mail-tests/gmail-message-attachment/preview',
+      { method: 'POST' },
+    ), fixture.environment);
+    const preview = await previewResponse.json() as {
+      data: { event: EventDetails; confirmationToken: string };
+    };
+    const calendarResponse = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/mail-tests/calendar',
+      { confirmationToken: preview.data.confirmationToken },
+    ), fixture.environment);
+
+    expect(previewResponse.status).toBe(200);
+    expect(preview).toMatchObject({
+      data: { event: { title: 'Gemini ファイル解析テスト会議', startsAt: '2026-08-18T14:30:00+09:00' } },
+    });
+    expect(geminiRequest.contents?.[0]?.parts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ text: expect.stringContaining('GEMINI-FILE-PROBE-001') }),
+    ]));
+    expect(geminiRequest.contents?.[0]?.parts).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        inlineData: expect.objectContaining({
+          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        }),
+      }),
+    ]));
+    expect(calendarResponse.status).toBe(201);
+    expect(calendarUrl).toContain('supportsAttachments=true');
+    expect(calendarRequest.attachments).toEqual([{
+      fileUrl: 'https://drive.example/xlsx',
+      title: '式典案内.xlsx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    }]);
   });
 });
