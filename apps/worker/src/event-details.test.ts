@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { extractGeminiEventDetails, GEMINI_EXTRACTION_MAX_SOURCE_CHARS, validatedEventDetails } from './event-details';
@@ -100,50 +102,48 @@ describe('Gemini Event Details validation', () => {
     ]);
   });
 
-  it('does not let an unsupported XLSX attachment reject extraction from the rest of the Source Message', async () => {
+  it('extracts Event Details when the date and times exist only in an XLSX attachment', async () => {
+    const workbook = await readFile(new URL('../../../fixtures/gemini-file-probe/event-invitation.xlsx', import.meta.url));
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const requestBody = JSON.parse(String(init?.body)) as {
         contents: Array<{ parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> }>;
       };
-      const hasUnsupportedWorkbook = requestBody.contents[0]?.parts.some((part) =>
-        part.inlineData?.mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      return hasUnsupportedWorkbook
+      const normalizedText = requestBody.contents[0]?.parts.map((part) => part.text ?? '').join('\n') ?? '';
+      return normalizedText.includes('GEMINI-FILE-PROBE-001')
+        && normalizedText.includes('2026-08-18')
+        && normalizedText.includes('14:30')
+        && normalizedText.includes('16:00')
         ? new Response(JSON.stringify({
-          error: { message: 'Unsupported MIME type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
-        }), { status: 400 })
-        : new Response(JSON.stringify({
           candidates: [{ content: { parts: [{ text: JSON.stringify({
-            title: '30周年記念式典',
-            startsAt: '2026-10-03T10:00:00+09:00',
-            endsAt: '2026-10-03T12:00:00+09:00',
+            title: 'Gemini ファイル解析テスト会議',
+            startsAt: '2026-08-18T14:30:00+09:00',
+            endsAt: '2026-08-18T16:00:00+09:00',
             timeZone: 'Asia/Tokyo',
-            location: '',
-            description: '本文から抽出',
+            location: '名古屋イノベーションセンター 3階 会議室A',
+            description: 'XLSXから抽出',
           }) }] } }],
-        }), { status: 200 });
+        }), { status: 200 })
+        : new Response(JSON.stringify({ error: { message: 'Normalized XLSX content was not provided.' } }), { status: 400 });
     });
 
     const result = await extractGeminiEventDetails({
       apiKey: 'api-key',
       model: 'gemini-3.5-flash-lite',
-      source: '30周年記念式典 2026年10月3日 10:00-12:00',
+      source: '日時は添付ファイルをご確認ください。',
       attachments: [{
         attachmentId: 'attachment-xlsx',
-        filename: '出欠表.xlsx',
+        filename: 'event-invitation.xlsx',
         mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        size: 10,
-        data: 'eGxzeC1ieXRlcw==',
+        size: workbook.byteLength,
+        data: workbook.toString('base64'),
       }],
       fetch: fetchMock,
     });
 
-    const body = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string) as {
-      contents: Array<{ parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> }>;
-    };
-    expect(result).toMatchObject({ title: '30周年記念式典' });
-    expect(body.contents[0]?.parts).toContainEqual({
-      text: 'Attachment filename: 出欠表.xlsx (not sent to Gemini because this file type is unsupported)',
+    expect(result).toMatchObject({
+      title: 'Gemini ファイル解析テスト会議',
+      startsAt: '2026-08-18T14:30:00+09:00',
+      endsAt: '2026-08-18T16:00:00+09:00',
     });
-    expect(body.contents[0]?.parts.some((part) => part.inlineData)).toBe(false);
   });
 });

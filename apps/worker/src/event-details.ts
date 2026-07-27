@@ -1,3 +1,5 @@
+import { normalizeAttachments, type AttachmentContent } from './normalization';
+
 export interface EventDetails {
   title: string;
   startsAt: string;
@@ -10,13 +12,7 @@ export interface EventDetails {
 export const GEMINI_EXTRACTION_MAX_SOURCE_CHARS = 20_000;
 export const GEMINI_EXTRACTION_TIMEOUT_MS = 15_000;
 
-export interface GeminiAttachment {
-  attachmentId: string;
-  filename: string;
-  mimeType: string;
-  size: number;
-  data: string;
-}
+export type GeminiAttachment = AttachmentContent;
 
 interface GeminiResponse {
   candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
@@ -28,22 +24,17 @@ interface GeminiPart {
   inlineData?: { mimeType: string; data: string };
 }
 
-const GEMINI_UNSUPPORTED_INLINE_MIME_TYPES = new Set([
-  'application/vnd.ms-excel',
-  'application/vnd.oasis.opendocument.spreadsheet',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-]);
-
-const geminiAttachmentParts = (attachment: GeminiAttachment): GeminiPart[] => {
-  const filename = `Attachment filename: ${attachment.filename}`;
-  if (GEMINI_UNSUPPORTED_INLINE_MIME_TYPES.has(attachment.mimeType.toLowerCase())) {
-    return [{ text: `${filename} (not sent to Gemini because this file type is unsupported)` }];
-  }
-  return [
-    { text: filename },
-    { inlineData: { mimeType: attachment.mimeType, data: attachment.data } },
-  ];
-};
+const geminiAttachmentParts = (attachments: GeminiAttachment[]): GeminiPart[] =>
+  normalizeAttachments(attachments).flatMap((attachment) => {
+    const filename = `Attachment filename: ${attachment.filename}`;
+    if (attachment.kind === 'text') {
+      return [{ text: `${filename}\nOriginal MIME type: ${attachment.originalMimeType}\n${attachment.text}` }];
+    }
+    return [
+      { text: filename },
+      { inlineData: { mimeType: attachment.originalMimeType, data: attachment.data } },
+    ];
+  });
 
 /** Accepts only complete Gemini JSON that is safe to turn into a Scheduled Event. */
 export const validatedEventDetails = (text: string): EventDetails | null => {
@@ -88,7 +79,7 @@ export const extractGeminiEventDetails = async (input: {
             role: 'user',
             parts: [
               { text: `Extract exactly one event as JSON with title, startsAt, endsAt, timeZone, location, and description. Do not infer missing dates or times.\n\n${source}` },
-              ...(input.attachments?.flatMap(geminiAttachmentParts) ?? []),
+              ...geminiAttachmentParts(input.attachments ?? []),
             ],
           }],
           generationConfig: {
