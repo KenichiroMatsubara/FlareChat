@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
-import { SignedOutEntry } from './app';
+import { SignedOutEntry } from './entry';
 
 describe('signed-out application entry', () => {
   it('presents Organization creation and existing-member login as separate choices', () => {

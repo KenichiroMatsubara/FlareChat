@@ -13,6 +13,12 @@
   --paper: #fff;
 }
 
+.organization-picker { margin-right: 20px; }
+.organization-picker select { max-width: 190px; padding: 7px 28px 7px 10px; color: #e4eee4; background: #294532; border: 1px solid #55745e; border-radius: 7px; font-size: 11px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.app-topbar nav a { display: inline-flex; align-items: center; gap: 7px; padding: 0 14px; color: #d9e5da; border-bottom: 3px solid transparent; font-size: 12px; text-decoration: none; }
+.app-topbar nav a:hover, .app-topbar nav a.active { color: white; background: rgba(255,255,255,.08); border-bottom-color: #84c59a; }
+
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; min-height: 100vh; }
 button, input, select, textarea { font: inherit; }
