@@ -30,8 +30,38 @@ describe('Gemini Event Details validation', () => {
 
     expect(result).toMatchObject({ title: '例会' });
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('gemini-3.5-flash-lite:generateContent'), expect.objectContaining({ method: 'POST' }));
-    const body = JSON.parse(fetchMock.mock.calls[0]?.[1].body as string) as { contents: Array<{ parts: Array<{ text: string }> }> };
+    const body = JSON.parse(fetchMock.mock.calls[0]?.[1].body as string) as {
+      contents: Array<{ parts: Array<{ text: string }> }>;
+      generationConfig: {
+        responseSchema: {
+          required: string[];
+          properties: Record<string, { type: string }>;
+        };
+      };
+    };
     expect(body.contents[0]?.parts[0]?.text.length).toBeLessThanOrEqual(GEMINI_EXTRACTION_MAX_SOURCE_CHARS + 1_000);
+    expect(body.generationConfig.responseSchema.required).toEqual([
+      'title',
+      'startsAt',
+      'endsAt',
+      'timeZone',
+      'location',
+      'description',
+    ]);
+    expect(body.generationConfig.responseSchema.properties.location).toEqual({ type: 'STRING' });
+  });
+
+  it('reports the upstream Gemini error instead of disguising it as an invalid event', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: { message: 'Unsupported MIME type: text/calendar' },
+    }), { status: 400 }));
+
+    await expect(extractGeminiEventDetails({
+      apiKey: 'api-key',
+      model: 'gemini-3.5-flash-lite',
+      source: '案内',
+      fetch: fetchMock,
+    })).rejects.toThrow('Gemini API: Unsupported MIME type: text/calendar');
   });
 
   it('passes one PDF attachment body to Gemini with its filename and MIME type', async () => {

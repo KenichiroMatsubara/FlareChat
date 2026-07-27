@@ -18,6 +18,11 @@ export interface GeminiAttachment {
   data: string;
 }
 
+interface GeminiResponse {
+  candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  error?: { message?: string };
+}
+
 /** Accepts only complete Gemini JSON that is safe to turn into a Scheduled Event. */
 export const validatedEventDetails = (text: string): EventDetails | null => {
   try {
@@ -47,10 +52,11 @@ export const extractGeminiEventDetails = async (input: {
   attachments?: GeminiAttachment[];
   fetch?: typeof fetch;
 }): Promise<EventDetails | null> => {
+  const request = input.fetch ?? fetch;
+  const source = input.source.slice(0, GEMINI_EXTRACTION_MAX_SOURCE_CHARS);
+  let response: Response;
   try {
-    const request = input.fetch ?? fetch;
-    const source = input.source.slice(0, GEMINI_EXTRACTION_MAX_SOURCE_CHARS);
-    const response = await request(
+    response = await request(
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}:generateContent`,
       {
         method: 'POST',
@@ -66,15 +72,35 @@ export const extractGeminiEventDetails = async (input: {
               ]) ?? []),
             ],
           }],
-          generationConfig: { responseMimeType: 'application/json' },
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: 'OBJECT',
+              properties: {
+                title: { type: 'STRING' },
+                startsAt: { type: 'STRING', format: 'date-time' },
+                endsAt: { type: 'STRING', format: 'date-time' },
+                timeZone: { type: 'STRING' },
+                location: { type: 'STRING' },
+                description: { type: 'STRING' },
+              },
+              required: ['title', 'startsAt', 'endsAt', 'timeZone', 'location', 'description'],
+            },
+          },
         }),
       },
     );
-    const body = await response.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-    if (!response.ok) return null;
-    const text = body.candidates?.flatMap((candidate) => candidate.content?.parts ?? []).map((part) => part.text ?? '').join('') ?? '';
-    return validatedEventDetails(text);
   } catch {
-    return null;
+    throw new Error('Gemini API に接続できませんでした。');
   }
+
+  let body: GeminiResponse;
+  try {
+    body = await response.json() as GeminiResponse;
+  } catch {
+    throw new Error('Gemini API から不正な応答が返されました。');
+  }
+  if (!response.ok) throw new Error(`Gemini API: ${body.error?.message?.trim() || `HTTP ${response.status}`}`);
+  const text = body.candidates?.flatMap((candidate) => candidate.content?.parts ?? []).map((part) => part.text ?? '').join('') ?? '';
+  return validatedEventDetails(text);
 };
