@@ -1,5 +1,5 @@
-import { CalendarDays, CheckCircle2, Eye, EyeOff, Mail, Play, RefreshCw, Save, Settings, SlidersHorizontal } from 'lucide-react';
-import { useState } from 'react';
+import { CalendarDays, CheckCircle2, Copy, Eye, EyeOff, Mail, Play, RefreshCw, Save, Settings, SlidersHorizontal } from 'lucide-react';
+import { useRef, useState } from 'react';
 
 import type { DashboardProps } from './dashboard';
 
@@ -42,8 +42,20 @@ export const ConnectionsPage = (props: DashboardProps) => {
 export const MailboxTestPage = (props: DashboardProps) => {
   const settingsReady = Boolean(props.organization && props.canManage);
   const hasGemini = Boolean(props.connections?.ai.apiKeyConfigured);
+  const [geminiRequestCopied, setGeminiRequestCopied] = useState(false);
+  const [copyFeedbackId, setCopyFeedbackId] = useState(0);
+  const copyFeedbackTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const sendPreparedGeminiRequest = (): void => {
     if (props.mailTestGeminiRequest) props.onPreviewMailbox(props.mailTestGeminiRequest.id);
+  };
+  const copyPreparedGeminiRequest = (): void => {
+    if (!props.mailTestGeminiRequest) return;
+    void navigator.clipboard.writeText(JSON.stringify(props.mailTestGeminiRequest.request, null, 2)).then(() => {
+      setGeminiRequestCopied(true);
+      setCopyFeedbackId((current) => current + 1);
+      if (copyFeedbackTimer.current) clearTimeout(copyFeedbackTimer.current);
+      copyFeedbackTimer.current = setTimeout(() => setGeminiRequestCopied(false), 1_800);
+    });
   };
   return <section className="page-layout mail-test-page">
     <div className="page-title"><p>SAFE MANUAL TEST</p><h1>メールテスト</h1><span>{props.automation ? `${props.automation.email} の Gmail と Calendar だけを使用します。` : 'Googleでログインしてください。'}</span></div>
@@ -51,8 +63,8 @@ export const MailboxTestPage = (props: DashboardProps) => {
       {!hasGemini && <p className="dashboard-warning">メールテストには Gemini API キーが必要です。先に「接続設定」で保存してください。</p>}
       <section className="test-card"><div><p>1. FIND MAIL</p><h2>件名からメールを探す</h2><span>完全一致する件名を入力してください。</span></div><label>メール件名<input value={props.mailTestSubject} onChange={(event) => props.onMailTestSubjectChange(event.target.value)} maxLength={300} /></label><button className="primary" onClick={props.onSearchMailbox} disabled={props.mailTestBusy || !hasGemini}>{props.mailTestBusy ? '検索中…' : 'Gmailを検索'}</button></section>
       {props.mailTestMatches.length > 0 && <section className="test-card"><div><p>2. PREPARE GEMINI REQUEST</p><h2>Geminiへの送信内容を確認</h2><span>対象メールを選ぶと、Geminiへ送る変換済みリクエスト本文だけを表示します。まだGeminiには送信しません。</span></div><div className="mail-matches">{props.mailTestMatches.map((message) => <button key={message.id} className="mail-match" onClick={() => props.onPrepareMailbox(message.id)} disabled={props.mailTestBusy}><strong>{message.subject}</strong><small>{message.sender || '差出人なし'}</small></button>)}</div></section>}
-      {props.mailTestGeminiRequest && <section className="test-card event-preview"><div><p>3. REVIEW GEMINI REQUEST</p><h2>Geminiへ送るリクエスト本文</h2><span>APIキーは含まれません。内容を確認してから送信してください。</span></div><pre className="gemini-request">{JSON.stringify(props.mailTestGeminiRequest.request, null, 2)}</pre><button className="primary" onClick={sendPreparedGeminiRequest} disabled={props.mailTestBusy}>{props.mailTestBusy ? 'Geminiに送信中…' : 'この内容を Gemini に送って予定を抽出'}</button></section>}
-      {props.mailTestPreview && <section className="test-card event-preview"><div><p>4. REVIEW AND CREATE</p><h2>予定内容を確認</h2><span>確認後にだけ Google Calendar へ作成します。</span></div><dl><dt>予定名</dt><dd>{props.mailTestPreview.event.title}</dd><dt>日時</dt><dd>{formatted(props.mailTestPreview.event.startsAt)} 〜 {formatted(props.mailTestPreview.event.endsAt)}</dd><dt>場所</dt><dd>{props.mailTestPreview.event.location || '指定なし'}</dd><dt>説明</dt><dd>{props.mailTestPreview.event.description || '指定なし'}</dd></dl><button className="primary" onClick={props.onCreateCalendarEvent} disabled={props.mailTestBusy || Boolean(props.mailTestCreatedEventId)}>{props.mailTestCreatedEventId ? 'Calendarに作成済み' : props.mailTestBusy ? '作成中…' : 'この内容で Calendar に追加'}</button>{props.mailTestCreatedEventId && <p className="dashboard-success"><CheckCircle2 size={17} />テスト予定を作成しました。</p>}</section>}
+      {props.mailTestGeminiRequest && <section className="test-card event-preview"><div className="gemini-request-heading"><div><p>3. REVIEW GEMINI REQUEST</p><h2>Geminiへ送るリクエスト本文</h2><span>APIキーは含まれません。内容を確認してから送信してください。</span></div><button className={`secondary copy-request-button${geminiRequestCopied ? ' copied' : ''}`} onClick={copyPreparedGeminiRequest} aria-live="polite">{geminiRequestCopied ? <CheckCircle2 size={16} /> : <Copy size={16} />}{geminiRequestCopied ? <span key={copyFeedbackId} className="copy-feedback">コピーしました</span> : 'リクエスト全文をコピー'}</button></div><pre className="gemini-request">{JSON.stringify(props.mailTestGeminiRequest.request, null, 2)}</pre><div className="mail-test-actions"><button className="primary" onClick={sendPreparedGeminiRequest} disabled={props.mailTestBusy}>{props.mailTestBusy ? 'Geminiに送信中…' : 'この内容を Gemini に送って予定を抽出'}</button></div></section>}
+      {props.mailTestPreview && <section className="test-card event-preview"><div><p>4. REVIEW AND CREATE</p><h2>予定とタスク候補を確認</h2><span>予定は確認後にだけ Google Calendar へ作成します。タスク候補はメール全体に対して一度だけ抽出されます。</span></div><h3>予定（{props.mailTestPreview.events.length}件）</h3>{props.mailTestPreview.events.map((event, index) => <dl key={`${event.title}-${event.startsAt}`}><dt>予定 {index + 1}</dt><dd>{event.title}</dd><dt>日時</dt><dd>{formatted(event.startsAt)} 〜 {formatted(event.endsAt)}</dd><dt>場所</dt><dd>{event.location || '指定なし'}</dd><dt>説明</dt><dd>{event.description || '指定なし'}</dd></dl>)}<h3>期限タスク候補（{props.mailTestPreview.tasks.length}件）</h3>{props.mailTestPreview.tasks.length ? props.mailTestPreview.tasks.map((task) => <dl key={`${task.assigneeRole}-${task.deadline}-${task.title}`}><dt>{task.assigneeRole === 'organizer' ? '幹事' : '会計'}</dt><dd>{task.title}</dd><dt>期限</dt><dd>{task.deadline}</dd><dt>内容</dt><dd>{task.description}</dd></dl>) : <p>明示された登録・振込期限はありません。</p>}<button className="primary" onClick={props.onCreateCalendarEvent} disabled={props.mailTestBusy || Boolean(props.mailTestCreatedEventIds.length)}>{props.mailTestCreatedEventIds.length ? 'Calendarに作成済み' : props.mailTestBusy ? '作成中…' : `${props.mailTestPreview.events.length}件を Calendar に追加`}</button>{props.mailTestCreatedEventIds.length > 0 && <p className="dashboard-success"><CheckCircle2 size={17} />テスト予定 {props.mailTestCreatedEventIds.length}件を作成しました。</p>}</section>}
     </>}
   </section>;
 };

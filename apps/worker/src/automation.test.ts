@@ -464,7 +464,7 @@ describe('Manual mailbox test', () => {
       .replace(/=+$/u, '');
     let geminiRequest: { contents?: Array<{ parts?: Array<{ text?: string; inlineData?: { mimeType?: string; data?: string } }> }> } = {};
     let calendarUrl = '';
-    let calendarRequest: { attachments?: Array<{ fileUrl?: string; title?: string; mimeType?: string }> } = {};
+    const calendarRequests: Array<{ summary?: string; attachments?: Array<{ fileUrl?: string; title?: string; mimeType?: string }> }> = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes('/attachments/attachment-xlsx')) {
         return new Response(JSON.stringify({ data: gmailXlsx }), { status: 200 });
@@ -501,12 +501,14 @@ describe('Manual mailbox test', () => {
         }
         return new Response(JSON.stringify({
           candidates: [{ content: { parts: [{ text: JSON.stringify({
-            title: 'Gemini ファイル解析テスト会議',
-            startsAt: '2026-08-18T14:30:00+09:00',
-            endsAt: '2026-08-18T16:00:00+09:00',
-            timeZone: 'Asia/Tokyo',
-            location: '名古屋イノベーションセンター 3階 会議室A',
-            description: '添付XLSXから抽出',
+            events: [
+              { title: 'Gemini ファイル解析テスト会議', startsAt: '2026-08-18T14:30:00+09:00', endsAt: '2026-08-18T16:00:00+09:00', timeZone: 'Asia/Tokyo', location: '名古屋イノベーションセンター 3階 会議室A', description: '添付XLSXから抽出' },
+              { title: 'テスト懇親会', startsAt: '2026-08-18T17:00:00+09:00', endsAt: '2026-08-18T19:00:00+09:00', timeZone: 'Asia/Tokyo', location: '名古屋イノベーションセンター 1階', description: '式典後の懇親会' },
+            ],
+            tasks: [
+              { title: '出席登録を完了する', deadline: '2026-08-10', assigneeRole: 'organizer', description: '登録フォームを送信する' },
+              { title: '参加費を振り込む', deadline: '2026-08-12', assigneeRole: 'treasurer', description: '指定口座へ振込する' },
+            ],
           }) }] } }],
         }), { status: 200 });
       }
@@ -516,7 +518,7 @@ describe('Manual mailbox test', () => {
       if (url.includes('/permissions')) return new Response('', { status: 200 });
       if (url.includes('/calendar/v3/calendars/primary/events') && init?.method === 'POST') {
         calendarUrl = url;
-        calendarRequest = JSON.parse(init.body as string) as typeof calendarRequest;
+        calendarRequests.push(JSON.parse(init.body as string) as typeof calendarRequests[number]);
         return new Response(JSON.stringify({ id: 'calendar-event-xlsx' }), { status: 200 });
       }
       return new Response(JSON.stringify({ error: { message: `unexpected request: ${url}` } }), { status: 500 });
@@ -544,7 +546,7 @@ describe('Manual mailbox test', () => {
       { method: 'POST' },
     ), fixture.environment);
     const preview = await previewResponse.json() as {
-      data: { event: EventDetails; confirmationToken: string };
+      data: { events: EventDetails[]; tasks: Array<{ assigneeRole: string }>; confirmationToken: string };
     };
     const calendarResponse = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/mail-tests/calendar',
@@ -553,7 +555,10 @@ describe('Manual mailbox test', () => {
 
     expect(previewResponse.status).toBe(200);
     expect(preview).toMatchObject({
-      data: { event: { title: 'Gemini ファイル解析テスト会議', startsAt: '2026-08-18T14:30:00+09:00' } },
+      data: {
+        events: [{ title: 'Gemini ファイル解析テスト会議', startsAt: '2026-08-18T14:30:00+09:00' }, { title: 'テスト懇親会' }],
+        tasks: [{ assigneeRole: 'organizer' }, { assigneeRole: 'treasurer' }],
+      },
     });
     expect(geminiRequest.contents?.[0]?.parts).toEqual(expect.arrayContaining([
       expect.objectContaining({ text: expect.stringContaining('GEMINI-FILE-PROBE-001') }),
@@ -571,7 +576,9 @@ describe('Manual mailbox test', () => {
     }));
     expect(calendarResponse.status).toBe(201);
     expect(calendarUrl).toContain('supportsAttachments=true');
-    expect(calendarRequest.attachments).toEqual([{
+    expect(calendarRequests).toHaveLength(2);
+    expect(calendarRequests.map((request) => request.summary)).toEqual(['Gemini ファイル解析テスト会議', 'テスト懇親会']);
+    expect(calendarRequests[0]?.attachments).toEqual([{
       fileUrl: 'https://drive.example/xlsx',
       title: '式典案内.xlsx',
       mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

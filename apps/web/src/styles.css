@@ -151,3 +151,12 @@ button.secondary { color: #4a524a; background: white; border: 1px solid #dce0d9;
 }
 
 .gemini-request { max-height: 420px; margin: 0; padding: 14px; overflow: auto; color: #2d4034; background: #f4f8f4; border: 1px solid #dce9de; border-radius: 9px; font-size: 11px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mail-test-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+.gemini-request-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.gemini-request-heading p { margin: 0; color: #558166; font-size: 10px; font-weight: 700; letter-spacing: 1.5px; }
+.gemini-request-heading .secondary { flex: 0 0 auto; }
+.copy-request-button { color: #356c4b !important; background: #fff !important; border-color: #b7d5c0 !important; }
+.copy-request-button:hover { color: #245b3a !important; background: #f1f8f3 !important; border-color: #82b692 !important; }
+.copy-request-button.copied { color: #21643e !important; background: #e4f3e8 !important; border-color: #91c7a0 !important; }
+.copy-feedback { animation: copy-feedback-pulse .45s ease-out; }
+@keyframes copy-feedback-pulse { from { opacity: .25; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }

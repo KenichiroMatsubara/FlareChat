@@ -40,7 +40,7 @@ export interface DashboardProps {
   mailTestGeminiRequest: MailboxTestGeminiRequest | null;
   mailTestPreview: MailboxTestPreview | null;
   mailTestBusy: boolean;
-  mailTestCreatedEventId: string;
+  mailTestCreatedEventIds: string[];
   onMailTestSubjectChange: (value: string) => void;
   onSearchMailbox: () => void;
   onPrepareMailbox: (messageId: string) => void;

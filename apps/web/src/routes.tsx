@@ -166,7 +166,7 @@ interface OrganizationContextValue extends OrganizationRouteData {
   mailTestGeminiRequest: MailboxTestGeminiRequest | null;
   mailTestPreview: MailboxTestPreview | null;
   mailTestBusy: boolean;
-  mailTestCreatedEventId: string;
+  mailTestCreatedEventIds: string[];
   settingsBusy: boolean;
   ruleBusy: boolean;
   setLineChannelAccessToken: (value: string) => void;
@@ -206,7 +206,7 @@ export const OrganizationLayout = () => {
   const [mailTestGeminiRequest, setMailTestGeminiRequest] = useState<MailboxTestGeminiRequest | null>(null);
   const [mailTestPreview, setMailTestPreview] = useState<MailboxTestPreview | null>(null);
   const [mailTestBusy, setMailTestBusy] = useState(false);
-  const [mailTestCreatedEventId, setMailTestCreatedEventId] = useState('');
+  const [mailTestCreatedEventIds, setMailTestCreatedEventIds] = useState<string[]>([]);
 
   useEffect(() => {
     setData(initial);
@@ -230,17 +230,17 @@ export const OrganizationLayout = () => {
     setData((current) => ({ ...current, connections })); setLineChannelAccessToken(''); setLineChannelSecret(''); setGeminiApiKey('');
   }, setSettingsBusy);
   const testGemini = () => void withError(async () => { const result = await api.testGeminiConnection(data.organization.organizationId, geminiTestPrompt, aiModel); setGeminiTestResult(result.text); }, setGeminiTestBusy);
-  const searchMailbox = () => void withError(async () => { setMailTestGeminiRequest(null); setMailTestPreview(null); setMailTestCreatedEventId(''); setMailTestMatches((await api.searchMailboxForTest(data.organization.organizationId, mailTestSubject.trim())).messages); }, setMailTestBusy);
-  const prepareMailbox = (messageId: string) => void withError(async () => { setMailTestGeminiRequest(await api.prepareMailboxTestGeminiRequest(data.organization.organizationId, messageId)); setMailTestPreview(null); setMailTestCreatedEventId(''); }, setMailTestBusy);
+  const searchMailbox = () => void withError(async () => { setMailTestGeminiRequest(null); setMailTestPreview(null); setMailTestCreatedEventIds([]); setMailTestMatches((await api.searchMailboxForTest(data.organization.organizationId, mailTestSubject.trim())).messages); }, setMailTestBusy);
+  const prepareMailbox = (messageId: string) => void withError(async () => { setMailTestGeminiRequest(await api.prepareMailboxTestGeminiRequest(data.organization.organizationId, messageId)); setMailTestPreview(null); setMailTestCreatedEventIds([]); }, setMailTestBusy);
   const previewMailbox = (messageId: string) => void withError(async () => {
     if (mailTestGeminiRequest?.id !== messageId) throw new Error('先に Gemini への送信内容を確認してください。');
     setMailTestPreview(await api.previewMailboxTestEvent(data.organization.organizationId, messageId));
-    setMailTestCreatedEventId('');
+    setMailTestCreatedEventIds([]);
   }, setMailTestBusy);
-  const createCalendarEvent = () => void withError(async () => { if (mailTestPreview) setMailTestCreatedEventId((await api.createMailboxTestCalendarEvent(data.organization.organizationId, mailTestPreview.confirmationToken)).eventId); }, setMailTestBusy);
+  const createCalendarEvent = () => void withError(async () => { if (mailTestPreview) setMailTestCreatedEventIds((await api.createMailboxTestCalendarEvent(data.organization.organizationId, mailTestPreview.confirmationToken)).eventIds); }, setMailTestBusy);
   const createRule = async (input: OrganizationRuleInput): Promise<void> => withError(async () => { const rule = await api.createOrganizationRule(data.organization.organizationId, input); setData((current) => ({ ...current, rules: [...current.rules, rule] })); }, setRuleBusy);
   const logout = () => void withError(async () => { await api.logout(); navigate('/', { replace: true }); }, setBusy);
-  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveConnections, testGemini, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, lineChannelAccessToken, lineChannelSecret, geminiApiKey, aiModel, geminiTestPrompt, geminiTestResult, geminiTestBusy, mailTestSubject, mailTestMatches, mailTestGeminiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventId, settingsBusy, ruleBusy, setLineChannelAccessToken, setLineChannelSecret, setGeminiApiKey, setAiModel, setGeminiTestPrompt, setMailTestSubject, logout };
+  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveConnections, testGemini, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, lineChannelAccessToken, lineChannelSecret, geminiApiKey, aiModel, geminiTestPrompt, geminiTestResult, geminiTestBusy, mailTestSubject, mailTestMatches, mailTestGeminiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, settingsBusy, ruleBusy, setLineChannelAccessToken, setLineChannelSecret, setGeminiApiKey, setAiModel, setGeminiTestPrompt, setMailTestSubject, logout };
   return <OrganizationContext.Provider value={value}><Outlet /></OrganizationContext.Provider>;
 };
 
@@ -282,7 +282,7 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     mailTestGeminiRequest={value.mailTestGeminiRequest}
     mailTestPreview={value.mailTestPreview}
     mailTestBusy={value.mailTestBusy}
-    mailTestCreatedEventId={value.mailTestCreatedEventId}
+    mailTestCreatedEventIds={value.mailTestCreatedEventIds}
     onMailTestSubjectChange={value.setMailTestSubject}
     onSearchMailbox={value.searchMailbox}
     onPrepareMailbox={value.prepareMailbox}

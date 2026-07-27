@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { extractGeminiEventDetails, GEMINI_EXTRACTION_MAX_SOURCE_CHARS, validatedEventDetails } from './event-details';
+import { extractGeminiEventDetails, validatedEventDetails, validatedMailExtraction } from './event-details';
 
 describe('Gemini Event Details validation', () => {
   it('accepts one complete, explicitly timed Event Candidate and rejects unsafe output', () => {
@@ -28,9 +28,10 @@ describe('Gemini Event Details validation', () => {
   it('uses a bounded Gemini request and accepts only a validated JSON candidate', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ title: '例会', startsAt: '2026-08-03T19:00:00+09:00', endsAt: '2026-08-03T21:00:00+09:00', timeZone: 'Asia/Tokyo', location: '', description: '月例会' }) }] } }] }), { status: 200 }));
 
-    const result = await extractGeminiEventDetails({ apiKey: 'api-key', model: 'gemini-3.5-flash-lite', source: 'A'.repeat(GEMINI_EXTRACTION_MAX_SOURCE_CHARS + 10), fetch: fetchMock });
+    const source = 'A'.repeat(20_010);
+    const result = await extractGeminiEventDetails({ apiKey: 'api-key', model: 'gemini-3.5-flash-lite', source, fetch: fetchMock });
 
-    expect(result).toMatchObject({ title: '例会' });
+    expect(result).toMatchObject({ events: [{ title: '例会' }], tasks: [] });
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('gemini-3.5-flash-lite:generateContent'), expect.objectContaining({ method: 'POST' }));
     const body = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string) as {
       contents: Array<{ parts: Array<{ text: string }> }>;
@@ -41,16 +42,10 @@ describe('Gemini Event Details validation', () => {
         };
       };
     };
-    expect(body.contents[0]?.parts[0]?.text.length).toBeLessThanOrEqual(GEMINI_EXTRACTION_MAX_SOURCE_CHARS + 1_000);
-    expect(body.generationConfig.responseSchema.required).toEqual([
-      'title',
-      'startsAt',
-      'endsAt',
-      'timeZone',
-      'location',
-      'description',
-    ]);
-    expect(body.generationConfig.responseSchema.properties.location).toEqual({ type: 'STRING' });
+    expect(body.contents[0]?.parts[0]?.text).toContain(source);
+    expect(body.generationConfig.responseSchema.required).toEqual(['events', 'tasks']);
+    expect(body.generationConfig.responseSchema.properties.events).toMatchObject({ type: 'ARRAY' });
+    expect(body.contents[0]?.parts[0]?.text).toContain('ceremony and its banquet');
   });
 
   it('reports the upstream Gemini error instead of disguising it as an invalid event', async () => {
@@ -185,9 +180,28 @@ describe('Gemini Event Details validation', () => {
     });
 
     expect(result).toMatchObject({
-      title: 'Gemini ファイル解析テスト会議',
-      startsAt: '2026-08-18T14:30:00+09:00',
-      endsAt: '2026-08-18T16:00:00+09:00',
+      events: [{
+        title: 'Gemini ファイル解析テスト会議',
+        startsAt: '2026-08-18T14:30:00+09:00',
+        endsAt: '2026-08-18T16:00:00+09:00',
+      }],
+      tasks: [],
+    });
+  });
+
+  it('keeps separately scheduled programs apart and creates one deadline task per kind', () => {
+    expect(validatedMailExtraction(JSON.stringify({
+      events: [
+        { title: '30周年記念式典', startsAt: '2026-05-30T13:00:00+09:00', endsAt: '2026-05-30T16:00:00+09:00', timeZone: 'Asia/Tokyo', location: 'ホテル名古屋ガーデンパレス', description: '記念式典' },
+        { title: '30周年記念祝宴', startsAt: '2026-05-30T17:30:00+09:00', endsAt: '2026-05-30T19:30:00+09:00', timeZone: 'Asia/Tokyo', location: 'スノーピークカフェ', description: '祝宴' },
+      ],
+      tasks: [
+        { title: '出席登録を完了する', deadline: '2026-05-10', assigneeRole: 'organizer', description: '登録用紙を返信する' },
+        { title: '参加費を振り込む', deadline: '2026-05-15', assigneeRole: 'treasurer', description: '指定口座へ振込する' },
+      ],
+    }))).toMatchObject({
+      events: [{ title: '30周年記念式典' }, { title: '30周年記念祝宴' }],
+      tasks: [{ assigneeRole: 'organizer' }, { assigneeRole: 'treasurer' }],
     });
   });
 });

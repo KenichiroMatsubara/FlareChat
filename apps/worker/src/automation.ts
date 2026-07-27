@@ -2,7 +2,7 @@ import { and, count, eq, isNotNull } from 'drizzle-orm';
 
 import { decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
 import { fromBase64Url } from './encoding';
-import { buildGeminiEventDetailsRequest, type EventDetails, type GeminiEventDetailsRequest } from './event-details';
+import { buildGeminiEventDetailsRequest, type EventDetails, type GeminiEventDetailsRequest, type MailExtraction } from './event-details';
 import type { SourceAttachmentContent } from './drive-attachments';
 import type { GoogleTokenSet } from './google';
 import { productionAutomationDependencies } from './automation/providers';
@@ -209,14 +209,14 @@ const accessTokenForInbox = async (
 };
 
 /** Uses the Organization-scoped Gemini connection when it is configured. */
-const geminiDetails = async (
+const geminiExtraction = async (
   env: Bindings,
   organizationId: string,
   database: D1Database,
   source: string,
   attachments: SourceAttachmentContent[],
   dependencies: AutomationDependencies,
-): Promise<EventDetails | null | undefined> => {
+): Promise<MailExtraction | null | undefined> => {
   const connection = await drizzleOrganizationDatabase(database).select().from(connections)
     .where(and(eq(connections.kind, 'ai'), eq(connections.status, 'active'))).limit(1).get();
   if (!connection) return undefined;
@@ -236,27 +236,27 @@ const geminiDetails = async (
   }
 };
 
-const geminiCandidate = async (
+const geminiCandidates = async (
   env: Bindings,
   organizationId: string,
   database: D1Database,
   source: string,
   attachments: SourceAttachmentContent[],
   dependencies: AutomationDependencies,
-): Promise<EventCandidate | null | undefined> => {
-  const details = await geminiDetails(env, organizationId, database, source, attachments, dependencies);
-  return details && { title: details.title, startsAt: details.startsAt, endsAt: details.endsAt };
+): Promise<EventCandidate[] | null | undefined> => {
+  const extraction = await geminiExtraction(env, organizationId, database, source, attachments, dependencies);
+  return extraction && extraction.events.map((event) => ({ title: event.title, startsAt: event.startsAt, endsAt: event.endsAt }));
 };
 
 /** Reuses the production AI provider for a confirmed, manual Mailbox Test preview. */
-const extractMailboxTestEvent = async (
+const extractMailboxTestPackage = async (
   env: Bindings,
   organizationId: string,
   database: D1Database,
   source: string,
   attachments: SourceAttachmentContent[],
   dependencies: AutomationDependencies,
-): Promise<EventDetails | null> => {
+): Promise<MailExtraction | null> => {
   const connection = await drizzleOrganizationDatabase(database).select().from(connections)
     .where(and(eq(connections.kind, 'ai'), eq(connections.status, 'active'))).limit(1).get();
   if (!connection) throw new Error('先に Gemini API キーを保存してください。');
@@ -363,13 +363,13 @@ export const readMailboxTestSource = async (
 ): Promise<MailboxTestSource> => readMailboxTestSourceWithGoogle(env, organizationId, database, messageId, productionDependencies);
 
 /** Creates a Calendar event only after a separately confirmed, encrypted test preview. */
-const createMailboxTestCalendarEventWithGoogle = async (
+const createMailboxTestCalendarEventsWithGoogle = async (
   env: Bindings,
   organizationId: string,
   database: D1Database,
-  input: { messageId: string; event: EventDetails },
+  input: { messageId: string; events: EventDetails[] },
   dependencies: AutomationDependencies,
-): Promise<{ eventId: string }> => {
+): Promise<{ eventIds: string[] }> => {
   const accessToken = await accessTokenForInbox(env, organizationId, database, await activeAutomationInbox(database), dependencies);
   const message = await mailboxMessage(dependencies.google, accessToken, input.messageId);
   const attachments = sourceAttachments(message.payload);
@@ -388,31 +388,34 @@ const createMailboxTestCalendarEventWithGoogle = async (
   }
   const calendarUrl = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
   if (publications.length) calendarUrl.searchParams.set('supportsAttachments', 'true');
-  const event = await dependencies.google.request<CalendarEvent>(accessToken, calendarUrl.toString(), {
-    method: 'POST',
-    body: JSON.stringify({
-      summary: input.event.title,
-      description: `${input.event.description}\n\nMail Automation の手動テストで Gmail メッセージ ${input.messageId} から作成しました。`.trim(),
-      location: input.event.location,
-      start: { dateTime: input.event.startsAt, timeZone: input.event.timeZone },
-      end: { dateTime: input.event.endsAt, timeZone: input.event.timeZone },
-      attachments: publications.map(({ attachment, publication }) => ({
-        fileUrl: publication.publicUrl,
-        title: attachment.filename,
-        mimeType: attachment.mimeType,
-      })),
-    }),
-  });
-  if (!event.id) throw new Error('Google Calendar が予定 ID を返しませんでした。');
-  return { eventId: event.id };
+  const created = await Promise.all(input.events.map(async (details) => {
+    const event = await dependencies.google.request<CalendarEvent>(accessToken, calendarUrl.toString(), {
+      method: 'POST',
+      body: JSON.stringify({
+        summary: details.title,
+        description: `${details.description}\n\nMail Automation の手動テストで Gmail メッセージ ${input.messageId} から作成しました。`.trim(),
+        location: details.location,
+        start: { dateTime: details.startsAt, timeZone: details.timeZone },
+        end: { dateTime: details.endsAt, timeZone: details.timeZone },
+        attachments: publications.map(({ attachment, publication }) => ({
+          fileUrl: publication.publicUrl,
+          title: attachment.filename,
+          mimeType: attachment.mimeType,
+        })),
+      }),
+    });
+    if (!event.id) throw new Error('Google Calendar が予定 ID を返しませんでした。');
+    return event.id;
+  }));
+  return { eventIds: created };
 };
 
 export const createMailboxTestCalendarEvent = async (
   env: Bindings,
   organizationId: string,
   database: D1Database,
-  input: { messageId: string; event: EventDetails },
-): Promise<{ eventId: string }> => createMailboxTestCalendarEventWithGoogle(env, organizationId, database, input, productionDependencies);
+  input: { messageId: string; events: EventDetails[] },
+): Promise<{ eventIds: string[] }> => createMailboxTestCalendarEventsWithGoogle(env, organizationId, database, input, productionDependencies);
 
 const processOrganizationMessage = async (
   dependencies: AutomationDependencies,
@@ -491,8 +494,8 @@ const processOrganizationMessage = async (
       .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
   }
-  const aiCandidate = await geminiCandidate(env, organizationId, database, `${subject}\n${body}`, attachmentContents, dependencies);
-  if (aiCandidate === null) {
+  const aiCandidates = await geminiCandidates(env, organizationId, database, `${subject}\n${body}`, attachmentContents, dependencies);
+  if (aiCandidates === null) {
     await db.insert(automationExceptions).values({
       id: crypto.randomUUID(),
       sourceMessageId,
@@ -505,8 +508,9 @@ const processOrganizationMessage = async (
       .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
   }
-  const candidate = aiCandidate ?? extractEventCandidate(subject, body);
-  if (!candidate) {
+  const fallbackCandidate = extractEventCandidate(subject, body);
+  const candidates = aiCandidates ?? (fallbackCandidate ? [fallbackCandidate] : []);
+  if (!candidates.length) {
     await db.update(sourceMessages).set({ state: 'skipped', processedAt: now() })
       .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
@@ -524,54 +528,56 @@ const processOrganizationMessage = async (
   }] : []);
   const calendarUrl = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
   if (calendarAttachments.length) calendarUrl.searchParams.set('supportsAttachments', 'true');
-  const event = await dependencies.google.request<CalendarEvent>(accessToken, calendarUrl.toString(), {
-    method: 'POST',
-    body: JSON.stringify({
-      summary: candidate.title,
-      description: `Mail Automation が Gmail メッセージ ${gmailMessageId} から作成しました。${publicUrls.length ? `\n\n添付ファイル:\n${publicUrls.join('\n')}` : ''}`,
-      start: { dateTime: candidate.startsAt, timeZone: 'Asia/Tokyo' },
-      end: { dateTime: candidate.endsAt, timeZone: 'Asia/Tokyo' },
-      attachments: calendarAttachments,
-    }),
-  });
-  if (!event.id) throw new Error('Google Calendar did not return an event ID.');
-  const eventId = crypto.randomUUID();
-  const eventCreatedAt = now();
-  await db.insert(events).values({
-    id: eventId,
-    organizationId,
-    ruleId: rule.id,
-    sourceMessageId,
-    googleEventId: event.id,
-    title: candidate.title,
-    startsAt: candidate.startsAt,
-    endsAt: candidate.endsAt,
-    status: publicationFailed ? 'draft' : 'scheduled',
-    createdAt: eventCreatedAt,
-    updatedAt: eventCreatedAt,
-  }).run();
-  for (const { attachment, publication } of publications) {
-    await db.insert(eventAttachments).values({
-      id: crypto.randomUUID(),
-      eventId,
-      gmailAttachmentId: attachment.attachmentId,
-      filename: attachment.filename,
-      mimeType: attachment.mimeType,
-      byteSize: attachment.size,
-      driveFileId: publication.driveFileId,
-      publicUrl: publication.publicUrl,
-      outcome: publication.outcome,
-      createdAt: now(),
+  for (const candidate of candidates) {
+    const event = await dependencies.google.request<CalendarEvent>(accessToken, calendarUrl.toString(), {
+      method: 'POST',
+      body: JSON.stringify({
+        summary: candidate.title,
+        description: `Mail Automation が Gmail メッセージ ${gmailMessageId} から作成しました。${publicUrls.length ? `\n\n添付ファイル:\n${publicUrls.join('\n')}` : ''}`,
+        start: { dateTime: candidate.startsAt, timeZone: 'Asia/Tokyo' },
+        end: { dateTime: candidate.endsAt, timeZone: 'Asia/Tokyo' },
+        attachments: calendarAttachments,
+      }),
+    });
+    if (!event.id) throw new Error('Google Calendar did not return an event ID.');
+    const eventId = crypto.randomUUID();
+    const eventCreatedAt = now();
+    await db.insert(events).values({
+      id: eventId,
+      organizationId,
+      ruleId: rule.id,
+      sourceMessageId,
+      googleEventId: event.id,
+      title: candidate.title,
+      startsAt: candidate.startsAt,
+      endsAt: candidate.endsAt,
+      status: publicationFailed ? 'draft' : 'scheduled',
+      createdAt: eventCreatedAt,
+      updatedAt: eventCreatedAt,
     }).run();
-    await db.insert(deliveries).values({
-      id: crypto.randomUUID(),
-      eventId,
-      channel: 'drive',
-      destination: attachment.filename,
-      outcome: publication.outcome,
-      externalId: publication.driveFileId,
-      createdAt: now(),
-    }).run();
+    for (const { attachment, publication } of publications) {
+      await db.insert(eventAttachments).values({
+        id: crypto.randomUUID(),
+        eventId,
+        gmailAttachmentId: attachment.attachmentId,
+        filename: attachment.filename,
+        mimeType: attachment.mimeType,
+        byteSize: attachment.size,
+        driveFileId: publication.driveFileId,
+        publicUrl: publication.publicUrl,
+        outcome: publication.outcome,
+        createdAt: now(),
+      }).run();
+      await db.insert(deliveries).values({
+        id: crypto.randomUUID(),
+        eventId,
+        channel: 'drive',
+        destination: attachment.filename,
+        outcome: publication.outcome,
+        externalId: publication.driveFileId,
+        createdAt: now(),
+      }).run();
+    }
   }
   if (publicationFailed) {
     await db.insert(automationExceptions).values({
@@ -710,10 +716,10 @@ export const createAutomation = (
         searchMailboxForTestWithGoogle(env, input.organizationId, input.database, input.subject, dependencies),
       readSource: (input: { organizationId: string; database: D1Database; messageId: string }): Promise<MailboxTestSource> =>
         readMailboxTestSourceWithGoogle(env, input.organizationId, input.database, input.messageId, dependencies),
-      createCalendarEvent: (input: { organizationId: string; database: D1Database; messageId: string; event: EventDetails }): Promise<{ eventId: string }> =>
-        createMailboxTestCalendarEventWithGoogle(env, input.organizationId, input.database, { messageId: input.messageId, event: input.event }, dependencies),
-      extractEvent: (input: { organizationId: string; database: D1Database; source: string; attachments: SourceAttachmentContent[] }): Promise<EventDetails | null> =>
-        extractMailboxTestEvent(env, input.organizationId, input.database, input.source, input.attachments, dependencies),
+      createCalendarEvents: (input: { organizationId: string; database: D1Database; messageId: string; events: EventDetails[] }): Promise<{ eventIds: string[] }> =>
+        createMailboxTestCalendarEventsWithGoogle(env, input.organizationId, input.database, { messageId: input.messageId, events: input.events }, dependencies),
+      extractPackage: (input: { organizationId: string; database: D1Database; source: string; attachments: SourceAttachmentContent[] }): Promise<MailExtraction | null> =>
+        extractMailboxTestPackage(env, input.organizationId, input.database, input.source, input.attachments, dependencies),
       previewGeminiRequest: (input: { source: string; attachments: SourceAttachmentContent[] }): Promise<GeminiEventDetailsRequest> =>
         previewMailboxTestGeminiRequest(env, input),
     },

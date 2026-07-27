@@ -103,14 +103,20 @@ export interface MailboxTestMatch {
 }
 
 export interface MailboxTestPreview extends MailboxTestMatch {
-  event: {
+  events: Array<{
     title: string;
     startsAt: string;
     endsAt: string;
     timeZone: string;
     location: string;
     description: string;
-  };
+  }>;
+  tasks: Array<{
+    title: string;
+    deadline: string;
+    assigneeRole: 'organizer' | 'treasurer';
+    description: string;
+  }>;
   confirmationToken: string;
   expiresAt: string;
 }
@@ -190,7 +196,7 @@ export const api = {
   previewMailboxTestEvent: (organizationId: string, messageId: string): Promise<MailboxTestPreview> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/${encodeURIComponent(messageId)}/preview`, {
     method: 'POST',
   }),
-  createMailboxTestCalendarEvent: (organizationId: string, confirmationToken: string): Promise<{ eventId: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/calendar`, {
+  createMailboxTestCalendarEvent: (organizationId: string, confirmationToken: string): Promise<{ eventIds: string[] }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/calendar`, {
     method: 'POST',
     body: JSON.stringify({ confirmationToken }),
   }),

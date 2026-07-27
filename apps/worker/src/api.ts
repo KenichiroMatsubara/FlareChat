@@ -16,7 +16,7 @@ import { createRequestContext } from './routes/request-context';
 import { typedListRoutes } from './routes/typed-lists';
 import type { Bindings, ConnectionRow, SessionRow } from './types';
 import type { CipherEnvelope } from './cryptography';
-import type { EventDetails } from './event-details';
+import type { EventDetails, MailExtraction, TaskDetails } from './event-details';
 import { controlDatabase as drizzleControlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
 import { createOrganizationStore } from './storage/organization-store';
 import { members, organizations, recoveryRequests } from './storage/control-schema';
@@ -91,7 +91,7 @@ const MAIL_TEST_WINDOW_MS = 15 * 60 * 1_000;
 
 interface MailTestConfirmation {
   messageId: string;
-  event: EventDetails;
+  extraction: MailExtraction;
   expiresAt: string;
 }
 
@@ -107,6 +107,22 @@ const isEventDetails = (value: unknown): value is EventDetails => {
     && Number.isFinite(Date.parse(event.startsAt))
     && Number.isFinite(Date.parse(event.endsAt))
     && Date.parse(event.startsAt) < Date.parse(event.endsAt);
+};
+
+const isTaskDetails = (value: unknown): value is TaskDetails => {
+  if (!value || typeof value !== 'object') return false;
+  const task = value as Partial<TaskDetails>;
+  return typeof task.title === 'string' && Boolean(task.title.trim())
+    && typeof task.deadline === 'string' && /^\d{4}-\d{2}-\d{2}$/u.test(task.deadline)
+    && (task.assigneeRole === 'organizer' || task.assigneeRole === 'treasurer')
+    && typeof task.description === 'string' && Boolean(task.description.trim());
+};
+
+const isMailExtraction = (value: unknown): value is MailExtraction => {
+  if (!value || typeof value !== 'object') return false;
+  const extraction = value as Partial<MailExtraction>;
+  return Array.isArray(extraction.events) && extraction.events.length > 0 && extraction.events.every(isEventDetails)
+    && Array.isArray(extraction.tasks) && extraction.tasks.every(isTaskDetails);
 };
 
 const connectionContext = (organizationId: string, kind: 'line' | 'ai'): string => `organization-connection:${organizationId}:${kind}`;
@@ -295,16 +311,16 @@ app.post('/api/organizations/:organizationId/mail-tests/:messageId/preview', asy
     const messageId = context.req.param('messageId');
     if (!/^[A-Za-z0-9_-]{1,200}$/u.test(messageId)) return failure(context, 'Gmail メッセージ ID が不正です。');
     const source = await createAutomation(context.env).mailboxTest.readSource({ organizationId, database: access.database, messageId });
-    const event = await createAutomation(context.env).mailboxTest.extractEvent({
+    const extraction = await createAutomation(context.env).mailboxTest.extractPackage({
       organizationId,
       database: access.database,
       source: source.source,
       attachments: source.attachments,
     });
-    if (!event) return failure(context, 'メールから安全な予定を抽出できませんでした。日付・開始時刻・終了時刻を確認してください。');
-    const confirmation: MailTestConfirmation = { messageId, event, expiresAt: expiresIn(MAIL_TEST_WINDOW_MS) };
+    if (!extraction) return failure(context, 'メールから安全な予定を抽出できませんでした。日付・開始時刻・終了時刻を確認してください。');
+    const confirmation: MailTestConfirmation = { messageId, extraction, expiresAt: expiresIn(MAIL_TEST_WINDOW_MS) };
     const token = JSON.stringify(await encrypt(JSON.stringify(confirmation), await organizationKeyForRequest(context.env, organizationId), mailTestContext(organizationId)));
-    return json(context, { id: source.id, subject: source.subject, sender: source.sender, event, confirmationToken: token, expiresAt: confirmation.expiresAt });
+    return json(context, { id: source.id, subject: source.subject, sender: source.sender, ...extraction, confirmationToken: token, expiresAt: confirmation.expiresAt });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'AI による予定の抽出に失敗しました。';
     return failure(context, message, message === 'Authentication is required.' ? 401 : 500);
@@ -320,14 +336,14 @@ app.post('/api/organizations/:organizationId/mail-tests/calendar', async (contex
     const input = await context.req.json<{ confirmationToken?: string }>();
     if (!input.confirmationToken || input.confirmationToken.length > 10_000) return failure(context, '確認用トークンがありません。先に AI 抽出を実行してください。');
     const confirmation = JSON.parse(await decrypt(JSON.parse(input.confirmationToken) as CipherEnvelope, await organizationKeyForRequest(context.env, organizationId), mailTestContext(organizationId))) as Partial<MailTestConfirmation>;
-    if (typeof confirmation.messageId !== 'string' || !isEventDetails(confirmation.event) || typeof confirmation.expiresAt !== 'string' || Date.parse(confirmation.expiresAt) <= Date.now()) {
+    if (typeof confirmation.messageId !== 'string' || !isMailExtraction(confirmation.extraction) || typeof confirmation.expiresAt !== 'string' || Date.parse(confirmation.expiresAt) <= Date.now()) {
       return failure(context, 'プレビューの有効期限が切れました。もう一度 AI 抽出を実行してください。', 409);
     }
-    return json(context, await createAutomation(context.env).mailboxTest.createCalendarEvent({
+    return json(context, await createAutomation(context.env).mailboxTest.createCalendarEvents({
       organizationId,
       database: access.database,
       messageId: confirmation.messageId,
-      event: confirmation.event,
+      events: confirmation.extraction.events,
     }), 201);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Google Calendar へのテスト予定作成に失敗しました。';
