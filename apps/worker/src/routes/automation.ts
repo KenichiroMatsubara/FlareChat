@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 
-import { runOrganizationAutomation } from '../automation';
+import { createAutomation } from '../automation';
 import { failure, json } from '../response';
 import { createRequestContext } from './request-context';
 import type { Bindings } from '../types';
@@ -26,7 +26,10 @@ automationRoutes.post('/organizations/:organizationId/automation/run', async (co
   try {
     const access = await createRequestContext(context.req.raw, context.env).organization(context.req.param('organizationId'));
     if (!access.database) throw new Error('Organization database is not available.');
-    return json(context, await runOrganizationAutomation(context.env, access.organization.id, access.database));
+    return json(context, await createAutomation(context.env).runOrganization({
+      organizationId: access.organization.id,
+      database: access.database,
+    }));
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : '自動化を実行できませんでした。', 409);
   }

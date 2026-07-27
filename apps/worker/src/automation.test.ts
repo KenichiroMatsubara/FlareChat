@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { app } from './api';
 import type { EventDetails } from './event-details';
 import {
+  createAutomation,
   extractEventCandidate,
   runEnabledAutomations,
   runOrganizationAutomation,
@@ -87,6 +88,41 @@ describe('Source Message event extraction', () => {
 });
 
 describe('Organization Automation Inbox scheduling', () => {
+  it('creates a Scheduled Event through the Automation interface with an injected Google adapter', async () => {
+    fixture = await createAutomationTestApp();
+    const automation = createAutomation(fixture.environment, {
+      google: {
+        request: async <T>(_accessToken: string, url: string): Promise<T> => {
+          if (url.includes('/history')) return {
+            historyId: 'history-after-connection',
+            history: [{ messagesAdded: [{ message: { id: 'gmail-message-port' } }] }],
+          } as T;
+          if (url.includes('/messages/gmail-message-port')) return {
+            id: 'gmail-message-port',
+            payload: {
+              headers: [
+                { name: 'Subject', value: '例会のお知らせ' },
+                { name: 'From', value: 'member@example.com' },
+              ],
+              body: { data: gmailBody('日時: 2026年8月3日 19:00〜21:30') },
+            },
+          } as T;
+          return { id: 'calendar-event-port' } as T;
+        },
+      },
+    });
+
+    await expect(automation.runOrganization({
+      organizationId: 'organization-1',
+      database: fixture.organization.binding,
+    })).resolves.toEqual({ scanned: 1, created: 1, skipped: 0, exceptions: 0 });
+    const dashboard = await app.fetch(
+      fixture.request('/api/organizations/organization-1/dashboard'),
+      fixture.environment,
+    );
+    await expect(dashboard.json()).resolves.toMatchObject({ data: { upcomingEvents: 1 } });
+  });
+
   it('runs an Automation Inbox only after an authorized member enables it', async () => {
     fixture = await createAutomationTestApp({ enabled: false });
     const requests: string[] = [];
@@ -373,6 +409,32 @@ describe('Organization Automation Inbox scheduling', () => {
 });
 
 describe('Manual mailbox test', () => {
+  it('returns exact-subject matches through the injected Google adapter', async () => {
+    fixture = await createAutomationTestApp();
+    const automation = createAutomation(fixture.environment, {
+      google: {
+        request: async <T>(_accessToken: string, url: string): Promise<T> => {
+          if (url.includes('/messages?')) return { messages: [{ id: 'mailbox-port-message' }] } as T;
+          return {
+            id: 'mailbox-port-message',
+            payload: {
+              headers: [
+                { name: 'Subject', value: '手動テスト' },
+                { name: 'From', value: 'member@example.com' },
+              ],
+            },
+          } as T;
+        },
+      },
+    });
+
+    await expect(automation.mailboxTest.search({
+      organizationId: 'organization-1',
+      database: fixture.organization.binding,
+      subject: '手動テスト',
+    })).resolves.toEqual([{ id: 'mailbox-port-message', subject: '手動テスト', sender: 'member@example.com' }]);
+  });
+
   it('previews an event whose date and time exist only in an XLSX attachment', async () => {
     fixture = await createAutomationTestApp({ ai: true });
     const xlsx = await readFile(new URL('../../../fixtures/gemini-file-probe/event-invitation.xlsx', import.meta.url));

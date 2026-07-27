@@ -1,11 +1,11 @@
 import { app } from './api';
-import { runDueJobs } from './jobs';
+import { runBackgroundWork } from './background/runner';
 
 import type { Bindings } from './types';
 
 export default {
   fetch: app.fetch,
   scheduled: async (_controller: ScheduledController, env: Bindings, context: ExecutionContext) => {
-    context.waitUntil(runDueJobs(env));
+    context.waitUntil(runBackgroundWork(env));
   },
 } satisfies ExportedHandler<Bindings>;

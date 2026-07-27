@@ -4,7 +4,7 @@ import { and, asc, count, desc, eq, gt, gte, inArray, isNull, max, ne } from 'dr
 
 import { canUpdateAttendance, discoveredLineDestinations, displayRecipientIdentifier, verifyLineWebhookSignature } from '@mail/domain';
 
-import { createMailboxTestCalendarEvent, readMailboxTestSource, searchMailboxForTest } from './automation';
+import { createAutomation } from './automation';
 import { decrypt, encrypt } from './cryptography';
 import { randomToken } from './encoding';
 import { readRecoveryReceipt, restoreDeliveryRecordFromReceipt } from './recovery-receipts';
@@ -16,8 +16,7 @@ import { createRequestContext } from './routes/request-context';
 import { typedListRoutes } from './routes/typed-lists';
 import type { Bindings, ConnectionRow, SessionRow } from './types';
 import type { CipherEnvelope } from './cryptography';
-import { extractGeminiEventDetails } from './event-details';
-import type { EventDetails, GeminiAttachment } from './event-details';
+import type { EventDetails } from './event-details';
 import { controlDatabase as drizzleControlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
 import { createOrganizationStore } from './storage/organization-store';
 import { members, organizations, recoveryRequests } from './storage/control-schema';
@@ -108,23 +107,6 @@ const isEventDetails = (value: unknown): value is EventDetails => {
     && Number.isFinite(Date.parse(event.startsAt))
     && Number.isFinite(Date.parse(event.endsAt))
     && Date.parse(event.startsAt) < Date.parse(event.endsAt);
-};
-
-const extractMailTestEvent = async (
-  env: Bindings,
-  organizationId: string,
-  database: D1Database,
-  source: string,
-  attachments: GeminiAttachment[],
-): Promise<EventDetails | null> => {
-  const connection = await drizzleOrganizationDatabase(database).select().from(organizationConnections)
-    .where(and(eq(organizationConnections.kind, 'ai'), eq(organizationConnections.status, 'active'))).limit(1).get();
-  if (!connection) throw new Error('先に Gemini API キーを保存してください。');
-  const credential = await connectionCredential(connection, await organizationKeyForRequest(env, organizationId), organizationId, 'ai');
-  if (credential.provider !== 'Google Gemini API' || !credential.apiKey) throw new Error('先に Gemini API キーを保存してください。');
-  const model = credential.model || DEFAULT_GEMINI_MODEL;
-  if (!isGeminiModel(model)) throw new Error('Gemini モデルは gemini-3.5-flash-lite または gemini-3.6-flash を選択してください。');
-  return extractGeminiEventDetails({ apiKey: credential.apiKey, model, source, attachments });
 };
 
 const connectionContext = (organizationId: string, kind: 'line' | 'ai'): string => `organization-connection:${organizationId}:${kind}`;
@@ -279,7 +261,7 @@ app.post('/api/organizations/:organizationId/mail-tests/search', async (context)
     if (!subject || subject.length > 300) return failure(context, '件名は 1〜300 文字で入力してください。');
     const automation = await createOrganizationStore(drizzleOrganizationDatabase(access.database)).currentAutomation();
     if (!automation) return failure(context, 'Automation Inbox が見つかりません。', 404);
-    return json(context, { accountEmail: automation.email, messages: await searchMailboxForTest(context.env, organizationId, access.database, subject) });
+    return json(context, { accountEmail: automation.email, messages: await createAutomation(context.env).mailboxTest.search({ organizationId, database: access.database, subject }) });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Gmail の検索に失敗しました。';
     return failure(context, message, message === 'Authentication is required.' ? 401 : 500);
@@ -294,8 +276,13 @@ app.post('/api/organizations/:organizationId/mail-tests/:messageId/preview', asy
     if (!access.database) return failure(context, '組織DBに接続できません。接続設定は保存されていません。', 503);
     const messageId = context.req.param('messageId');
     if (!/^[A-Za-z0-9_-]{1,200}$/u.test(messageId)) return failure(context, 'Gmail メッセージ ID が不正です。');
-    const source = await readMailboxTestSource(context.env, organizationId, access.database, messageId);
-    const event = await extractMailTestEvent(context.env, organizationId, access.database, source.source, source.attachments);
+    const source = await createAutomation(context.env).mailboxTest.readSource({ organizationId, database: access.database, messageId });
+    const event = await createAutomation(context.env).mailboxTest.extractEvent({
+      organizationId,
+      database: access.database,
+      source: source.source,
+      attachments: source.attachments,
+    });
     if (!event) return failure(context, 'メールから安全な予定を抽出できませんでした。日付・開始時刻・終了時刻を確認してください。');
     const confirmation: MailTestConfirmation = { messageId, event, expiresAt: expiresIn(MAIL_TEST_WINDOW_MS) };
     const token = JSON.stringify(await encrypt(JSON.stringify(confirmation), await organizationKeyForRequest(context.env, organizationId), mailTestContext(organizationId)));
@@ -318,7 +305,12 @@ app.post('/api/organizations/:organizationId/mail-tests/calendar', async (contex
     if (typeof confirmation.messageId !== 'string' || !isEventDetails(confirmation.event) || typeof confirmation.expiresAt !== 'string' || Date.parse(confirmation.expiresAt) <= Date.now()) {
       return failure(context, 'プレビューの有効期限が切れました。もう一度 AI 抽出を実行してください。', 409);
     }
-    return json(context, await createMailboxTestCalendarEvent(context.env, organizationId, access.database, { messageId: confirmation.messageId, event: confirmation.event }), 201);
+    return json(context, await createAutomation(context.env).mailboxTest.createCalendarEvent({
+      organizationId,
+      database: access.database,
+      messageId: confirmation.messageId,
+      event: confirmation.event,
+    }), 201);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Google Calendar へのテスト予定作成に失敗しました。';
     return failure(context, message, message === 'Authentication is required.' ? 401 : 500);
