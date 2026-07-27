@@ -13,6 +13,7 @@ import { failure, json } from './response';
 import { entryRoutes, oauthRoutes } from './routes/entry';
 import { automationRoutes } from './routes/automation';
 import { createRequestContext } from './routes/request-context';
+import { typedListRoutes } from './routes/typed-lists';
 import type { Bindings, ConnectionRow, SessionRow } from './types';
 import type { CipherEnvelope } from './cryptography';
 import { extractGeminiEventDetails } from './event-details';
@@ -72,6 +73,7 @@ const app = new Hono<{ Bindings: Bindings }>();
 app.use('/api/*', cors({ origin: (origin) => origin || 'http://localhost:5173', credentials: true }));
 app.route('/api', entryRoutes);
 app.route('/api', automationRoutes);
+app.route('/api', typedListRoutes);
 app.route('/', oauthRoutes);
 
 const now = (): string => new Date().toISOString();
