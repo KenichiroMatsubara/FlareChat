@@ -30,7 +30,7 @@ describe('Gemini Event Details validation', () => {
 
     expect(result).toMatchObject({ title: '例会' });
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('gemini-3.5-flash-lite:generateContent'), expect.objectContaining({ method: 'POST' }));
-    const body = JSON.parse(fetchMock.mock.calls[0]?.[1].body as string) as {
+    const body = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string) as {
       contents: Array<{ parts: Array<{ text: string }> }>;
       generationConfig: {
         responseSchema: {
@@ -100,25 +100,36 @@ describe('Gemini Event Details validation', () => {
     ]);
   });
 
-  it('uses the same Gemini attachment path for an XLSX workbook', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      candidates: [{ content: { parts: [{ text: JSON.stringify({
-        title: '年間行事',
-        startsAt: '2026-10-03T10:00:00+09:00',
-        endsAt: '2026-10-03T12:00:00+09:00',
-        timeZone: 'Asia/Tokyo',
-        location: '',
-        description: '添付XLSXから抽出',
-      }) }] } }],
-    }), { status: 200 }));
+  it('does not let an unsupported XLSX attachment reject extraction from the rest of the Source Message', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const requestBody = JSON.parse(String(init?.body)) as {
+        contents: Array<{ parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> }>;
+      };
+      const hasUnsupportedWorkbook = requestBody.contents[0]?.parts.some((part) =>
+        part.inlineData?.mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      return hasUnsupportedWorkbook
+        ? new Response(JSON.stringify({
+          error: { message: 'Unsupported MIME type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+        }), { status: 400 })
+        : new Response(JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify({
+            title: '30周年記念式典',
+            startsAt: '2026-10-03T10:00:00+09:00',
+            endsAt: '2026-10-03T12:00:00+09:00',
+            timeZone: 'Asia/Tokyo',
+            location: '',
+            description: '本文から抽出',
+          }) }] } }],
+        }), { status: 200 });
+    });
 
-    await extractGeminiEventDetails({
+    const result = await extractGeminiEventDetails({
       apiKey: 'api-key',
       model: 'gemini-3.5-flash-lite',
-      source: '年間行事',
+      source: '30周年記念式典 2026年10月3日 10:00-12:00',
       attachments: [{
         attachmentId: 'attachment-xlsx',
-        filename: '年間行事.xlsx',
+        filename: '出欠表.xlsx',
         mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         size: 10,
         data: 'eGxzeC1ieXRlcw==',
@@ -126,14 +137,13 @@ describe('Gemini Event Details validation', () => {
       fetch: fetchMock,
     });
 
-    const body = JSON.parse(fetchMock.mock.calls[0]?.[1].body as string) as {
+    const body = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string) as {
       contents: Array<{ parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> }>;
     };
+    expect(result).toMatchObject({ title: '30周年記念式典' });
     expect(body.contents[0]?.parts).toContainEqual({
-      inlineData: {
-        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        data: 'eGxzeC1ieXRlcw==',
-      },
+      text: 'Attachment filename: 出欠表.xlsx (not sent to Gemini because this file type is unsupported)',
     });
+    expect(body.contents[0]?.parts.some((part) => part.inlineData)).toBe(false);
   });
 });

@@ -23,6 +23,28 @@ interface GeminiResponse {
   error?: { message?: string };
 }
 
+interface GeminiPart {
+  text?: string;
+  inlineData?: { mimeType: string; data: string };
+}
+
+const GEMINI_UNSUPPORTED_INLINE_MIME_TYPES = new Set([
+  'application/vnd.ms-excel',
+  'application/vnd.oasis.opendocument.spreadsheet',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+]);
+
+const geminiAttachmentParts = (attachment: GeminiAttachment): GeminiPart[] => {
+  const filename = `Attachment filename: ${attachment.filename}`;
+  if (GEMINI_UNSUPPORTED_INLINE_MIME_TYPES.has(attachment.mimeType.toLowerCase())) {
+    return [{ text: `${filename} (not sent to Gemini because this file type is unsupported)` }];
+  }
+  return [
+    { text: filename },
+    { inlineData: { mimeType: attachment.mimeType, data: attachment.data } },
+  ];
+};
+
 /** Accepts only complete Gemini JSON that is safe to turn into a Scheduled Event. */
 export const validatedEventDetails = (text: string): EventDetails | null => {
   try {
@@ -66,10 +88,7 @@ export const extractGeminiEventDetails = async (input: {
             role: 'user',
             parts: [
               { text: `Extract exactly one event as JSON with title, startsAt, endsAt, timeZone, location, and description. Do not infer missing dates or times.\n\n${source}` },
-              ...(input.attachments?.flatMap((attachment) => [
-                { text: `Attachment filename: ${attachment.filename}` },
-                { inlineData: { mimeType: attachment.mimeType, data: attachment.data } },
-              ]) ?? []),
+              ...(input.attachments?.flatMap(geminiAttachmentParts) ?? []),
             ],
           }],
           generationConfig: {
