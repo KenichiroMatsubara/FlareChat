@@ -1,4 +1,5 @@
-import { normalizeAttachments, type AttachmentContent } from './normalization';
+import { convertAttachmentsForEventExtraction, type MarkdownConverter } from './attachment-conversion';
+import type { AttachmentContent } from './normalization';
 
 export interface EventDetails {
   title: string;
@@ -24,16 +25,13 @@ interface GeminiPart {
   inlineData?: { mimeType: string; data: string };
 }
 
-const geminiAttachmentParts = (attachments: GeminiAttachment[]): GeminiPart[] =>
-  normalizeAttachments(attachments).flatMap((attachment) => {
+const geminiAttachmentParts = async (
+  attachments: GeminiAttachment[],
+  markdown?: MarkdownConverter,
+): Promise<GeminiPart[]> =>
+  (await convertAttachmentsForEventExtraction(attachments, markdown)).map((attachment) => {
     const filename = `Attachment filename: ${attachment.filename}`;
-    if (attachment.kind === 'text') {
-      return [{ text: `${filename}\nOriginal MIME type: ${attachment.originalMimeType}\n${attachment.text}` }];
-    }
-    return [
-      { text: filename },
-      { inlineData: { mimeType: attachment.originalMimeType, data: attachment.data } },
-    ];
+    return { text: `${filename}\nOriginal MIME type: ${attachment.originalMimeType}\n${attachment.text}` };
   });
 
 /** Accepts only complete Gemini JSON that is safe to turn into a Scheduled Event. */
@@ -63,10 +61,12 @@ export const extractGeminiEventDetails = async (input: {
   model: string;
   source: string;
   attachments?: GeminiAttachment[];
+  markdown?: MarkdownConverter;
   fetch?: typeof fetch;
 }): Promise<EventDetails | null> => {
   const request = input.fetch ?? fetch;
   const source = input.source.slice(0, GEMINI_EXTRACTION_MAX_SOURCE_CHARS);
+  const attachments = await geminiAttachmentParts(input.attachments ?? [], input.markdown);
   let response: Response;
   try {
     response = await request(
@@ -79,7 +79,7 @@ export const extractGeminiEventDetails = async (input: {
             role: 'user',
             parts: [
               { text: `Extract exactly one event as JSON with title, startsAt, endsAt, timeZone, location, and description. Do not infer missing dates or times.\n\n${source}` },
-              ...geminiAttachmentParts(input.attachments ?? []),
+              ...attachments,
             ],
           }],
           generationConfig: {

@@ -228,6 +228,14 @@ describe('Organization Automation Inbox scheduling', () => {
 
   it('extracts a Scheduled Event from a DOCX attachment in normal Automation Inbox processing', async () => {
     fixture = await createAutomationTestApp({ ai: true });
+    const markdown = { toMarkdown: vi.fn().mockResolvedValue({
+      format: 'markdown',
+      name: '式典案内.docx',
+      mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      tokens: 30,
+      data: '# GEMINI-FILE-PROBE-001\n日時: 2026-08-18 14:30-16:00\n会場: 名古屋',
+    }) };
+    (fixture.environment as unknown as { AI: typeof markdown }).AI = markdown;
     const docx = await readFile(new URL('../../../fixtures/gemini-file-probe/event-invitation.docx', import.meta.url));
     const gmailDocx = docx.toString('base64')
       .replaceAll('+', '-')
@@ -305,6 +313,10 @@ describe('Organization Automation Inbox scheduling', () => {
         text: expect.stringContaining('GEMINI-FILE-PROBE-001'),
       }),
     ]));
+    expect(markdown.toMarkdown).toHaveBeenCalledWith(expect.objectContaining({
+      name: '式典案内.docx',
+      blob: expect.any(Blob),
+    }));
     expect(geminiRequest.contents?.[0]?.parts).not.toEqual(expect.arrayContaining([
       expect.objectContaining({
         inlineData: expect.objectContaining({
@@ -437,6 +449,14 @@ describe('Manual mailbox test', () => {
 
   it('previews an event whose date and time exist only in an XLSX attachment', async () => {
     fixture = await createAutomationTestApp({ ai: true });
+    const markdown = { toMarkdown: vi.fn().mockResolvedValue({
+      format: 'markdown',
+      name: '式典案内.xlsx',
+      mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      tokens: 32,
+      data: '# GEMINI-FILE-PROBE-001\n日時: 2026-08-18 14:30-16:00\n会場: 名古屋イノベーションセンター 3階 会議室A',
+    }) };
+    (fixture.environment as unknown as { AI: typeof markdown }).AI = markdown;
     const xlsx = await readFile(new URL('../../../fixtures/gemini-file-probe/event-invitation.xlsx', import.meta.url));
     const gmailXlsx = xlsx.toString('base64')
       .replaceAll('+', '-')
@@ -528,6 +548,10 @@ describe('Manual mailbox test', () => {
         }),
       }),
     ]));
+    expect(markdown.toMarkdown).toHaveBeenCalledWith(expect.objectContaining({
+      name: '式典案内.xlsx',
+      blob: expect.any(Blob),
+    }));
     expect(calendarResponse.status).toBe(201);
     expect(calendarUrl).toContain('supportsAttachments=true');
     expect(calendarRequest.attachments).toEqual([{

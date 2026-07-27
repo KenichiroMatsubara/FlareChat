@@ -66,7 +66,7 @@ describe('Gemini Event Details validation', () => {
     })).rejects.toThrow('Gemini API: Unsupported MIME type: text/calendar');
   });
 
-  it('passes one PDF attachment body to Gemini with its filename and MIME type', async () => {
+  it('passes converted PDF text, rather than its source bytes, to Gemini', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       candidates: [{ content: { parts: [{ text: JSON.stringify({
         title: '30周年記念式典',
@@ -77,6 +77,16 @@ describe('Gemini Event Details validation', () => {
         description: '添付PDFから抽出',
       }) }] } }],
     }), { status: 200 }));
+
+    const markdown = {
+      toMarkdown: vi.fn().mockResolvedValue({
+        format: 'markdown',
+        name: '式典案内.pdf',
+        mimetype: 'application/pdf',
+        tokens: 24,
+        data: '# 30周年記念式典\n日時: 2026-09-12 14:00-16:00\n会場: 名古屋',
+      }),
+    };
 
     await extractGeminiEventDetails({
       apiKey: 'api-key',
@@ -90,16 +100,50 @@ describe('Gemini Event Details validation', () => {
         data: 'cGRmLWJ5dGVz',
       }],
       fetch: fetchMock,
-    });
+      markdown,
+    } as Parameters<typeof extractGeminiEventDetails>[0]);
 
     const body = JSON.parse(fetchMock.mock.calls[0]?.[1].body as string) as {
       contents: Array<{ parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> }>;
     };
     expect(body.contents[0]?.parts).toEqual([
       expect.objectContaining({ text: expect.stringContaining('名古屋名城RAC30周年記念式典のご案内') }),
-      { text: 'Attachment filename: 式典案内.pdf' },
-      { inlineData: { mimeType: 'application/pdf', data: 'cGRmLWJ5dGVz' } },
+      expect.objectContaining({ text: expect.stringContaining('30周年記念式典') }),
     ]);
+    expect(JSON.stringify(body)).not.toContain('cGRmLWJ5dGVz');
+    expect(markdown.toMarkdown).toHaveBeenCalledWith(expect.objectContaining({
+      name: '式典案内.pdf',
+      blob: expect.any(Blob),
+    }));
+  });
+
+  it('does not call Gemini with an attachment omitted after its conversion fails', async () => {
+    const fetchMock = vi.fn();
+    const markdown = {
+      toMarkdown: vi.fn().mockResolvedValue({
+        format: 'error' as const,
+        name: 'scanned.pdf',
+        mimetype: 'application/pdf',
+        error: 'Workers AI free allocation exceeded',
+      }),
+    };
+
+    await expect(extractGeminiEventDetails({
+      apiKey: 'api-key',
+      model: 'gemini-3.5-flash-lite',
+      source: '添付をご確認ください。',
+      attachments: [{
+        attachmentId: 'scanned-pdf',
+        filename: 'scanned.pdf',
+        mimeType: 'application/pdf',
+        size: 9,
+        data: 'cGRmLWJ5dGVz',
+      }],
+      markdown,
+      fetch: fetchMock,
+    })).rejects.toThrow('Workers AI free allocation exceeded');
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('extracts Event Details when the date and times exist only in an XLSX attachment', async () => {

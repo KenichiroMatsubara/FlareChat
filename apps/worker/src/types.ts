@@ -1,4 +1,7 @@
+import type { MarkdownConverter } from './attachment-conversion';
+
 export interface Bindings {
+  AI: MarkdownConverter;
   CONTROL_DB: D1Database;
   RECOVERY_RECEIPTS: R2Bucket;
   ASSETS: Fetcher;

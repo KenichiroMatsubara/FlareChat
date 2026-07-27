@@ -224,7 +224,13 @@ const geminiDetails = async (
     const key = await organizationKeyFor(env, organizationId);
     const credential = JSON.parse(await decrypt(JSON.parse(connection.credential), key, `organization-connection:${organizationId}:ai`)) as { provider?: string; apiKey?: string; model?: string };
     if (credential.provider !== 'Google Gemini API' || !credential.apiKey || !credential.model) return null;
-    return dependencies.gemini.extract({ apiKey: credential.apiKey, model: credential.model, source, attachments });
+    return dependencies.gemini.extract({
+      apiKey: credential.apiKey,
+      model: credential.model,
+      source,
+      attachments,
+      markdown: env.AI,
+    });
   } catch {
     return null;
   }
@@ -263,7 +269,13 @@ const extractMailboxTestEvent = async (
   if (credential.provider !== 'Google Gemini API' || !credential.apiKey) throw new Error('先に Gemini API キーを保存してください。');
   const model = credential.model || DEFAULT_GEMINI_MODEL;
   if (!isGeminiModel(model)) throw new Error('Gemini モデルは gemini-3.5-flash-lite または gemini-3.6-flash を選択してください。');
-  return dependencies.gemini.extract({ apiKey: credential.apiKey, model, source, attachments });
+  return dependencies.gemini.extract({
+    apiKey: credential.apiKey,
+    model,
+    source,
+    attachments,
+    markdown: env.AI,
+  });
 };
 
 const mailboxMessage = async (google: GoogleAutomationPort, accessToken: string, messageId: string): Promise<GmailMessage> =>
