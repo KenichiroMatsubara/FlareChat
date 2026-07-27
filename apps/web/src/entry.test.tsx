@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
-import { SignedOutEntry } from './app';
+import { DEFAULT_MAIL_TEST_SUBJECT, SignedOutEntry } from './app';
 
 describe('signed-out application entry', () => {
   it('presents Organization creation and existing-member login as separate choices', () => {
@@ -12,5 +12,11 @@ describe('signed-out application entry', () => {
     expect(markup).toContain('新しいOrganizationを作る');
     expect(markup).toContain('既存Organizationへログイン');
     expect(markup).toMatch(/class="[^"]*secondary[^"]*entry-login[^"]*"/u);
+  });
+});
+
+describe('manual mailbox test defaults', () => {
+  it('starts with the Nagoya Meijo RAC anniversary subject', () => {
+    expect(DEFAULT_MAIL_TEST_SUBJECT).toBe('名古屋名城RAC30周年記念式典のご案内');
   });
 });

@@ -7,6 +7,8 @@ import { api } from './api';
 import type { AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, MailboxTestMatch, MailboxTestPreview, OrganizationConnections, OrganizationDashboard, OrganizationRule, OrganizationRuleInput } from './api';
 import { Dashboard } from './dashboard';
 
+export const DEFAULT_MAIL_TEST_SUBJECT = '名古屋名城RAC30周年記念式典のご案内';
+
 const formatted = (value: string | null): string => value
   ? new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
   : 'まだ実行していません';
@@ -67,7 +69,7 @@ export const App = () => {
   const [geminiTestPrompt, setGeminiTestPrompt] = useState('日本の首都を一文で教えてください。');
   const [geminiTestResult, setGeminiTestResult] = useState('');
   const [geminiTestBusy, setGeminiTestBusy] = useState(false);
-  const [mailTestSubject, setMailTestSubject] = useState('田原ローターアクト招待行事のご案内（締切：7月18日）');
+  const [mailTestSubject, setMailTestSubject] = useState(DEFAULT_MAIL_TEST_SUBJECT);
   const [mailTestMatches, setMailTestMatches] = useState<MailboxTestMatch[]>([]);
   const [mailTestPreview, setMailTestPreview] = useState<MailboxTestPreview | null>(null);
   const [mailTestBusy, setMailTestBusy] = useState(false);

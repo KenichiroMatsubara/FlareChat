@@ -21,7 +21,7 @@ import { failure, json } from './response';
 import type { Bindings, ConnectionRow, OrganizationRow, SessionRow } from './types';
 import type { CipherEnvelope } from './cryptography';
 import { extractGeminiEventDetails } from './event-details';
-import type { EventDetails } from './event-details';
+import type { EventDetails, GeminiAttachment } from './event-details';
 import { controlDatabase as drizzleControlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
 import { createOrganizationStore } from './storage/organization-store';
 import {
@@ -179,6 +179,7 @@ const extractMailTestEvent = async (
   organizationId: string,
   database: D1Database,
   source: string,
+  attachments: GeminiAttachment[],
 ): Promise<EventDetails | null> => {
   const connection = await drizzleOrganizationDatabase(database).select().from(organizationConnections)
     .where(and(eq(organizationConnections.kind, 'ai'), eq(organizationConnections.status, 'active'))).limit(1).get();
@@ -187,7 +188,7 @@ const extractMailTestEvent = async (
   if (credential.provider !== 'Google Gemini API' || !credential.apiKey) throw new Error('先に Gemini API キーを保存してください。');
   const model = credential.model || DEFAULT_GEMINI_MODEL;
   if (!isGeminiModel(model)) throw new Error('Gemini モデルは gemini-3.5-flash-lite または gemini-3.6-flash を選択してください。');
-  return extractGeminiEventDetails({ apiKey: credential.apiKey, model, source });
+  return extractGeminiEventDetails({ apiKey: credential.apiKey, model, source, attachments });
 };
 
 const connectionContext = (organizationId: string, kind: 'line' | 'ai'): string => `organization-connection:${organizationId}:${kind}`;
@@ -480,7 +481,7 @@ app.post('/api/organizations/:organizationId/mail-tests/:messageId/preview', asy
     const messageId = context.req.param('messageId');
     if (!/^[A-Za-z0-9_-]{1,200}$/u.test(messageId)) return failure(context, 'Gmail メッセージ ID が不正です。');
     const source = await readMailboxTestSource(context.env, organizationId, access.database, messageId);
-    const event = await extractMailTestEvent(context.env, organizationId, access.database, source.source);
+    const event = await extractMailTestEvent(context.env, organizationId, access.database, source.source, source.attachments);
     if (!event) return failure(context, 'メールから安全な予定を抽出できませんでした。日付・開始時刻・終了時刻を確認してください。');
     const confirmation: MailTestConfirmation = { messageId, event, expiresAt: expiresIn(MAIL_TEST_WINDOW_MS) };
     const token = JSON.stringify(await encrypt(JSON.stringify(confirmation), await organizationKeyForRequest(context.env, organizationId), mailTestContext(organizationId)));

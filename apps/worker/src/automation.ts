@@ -4,7 +4,8 @@ import { decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptograp
 import { fromBase64Url } from './encoding';
 import { extractGeminiEventDetails } from './event-details';
 import type { EventDetails } from './event-details';
-import { publishDriveAttachment } from './drive-attachments';
+import { publishDriveAttachment, readGmailAttachments } from './drive-attachments';
+import type { SourceAttachmentContent } from './drive-attachments';
 import { refreshGoogleToken } from './google';
 import type { GoogleTokenSet } from './google';
 import { organizationDatabase } from './organization-db';
@@ -76,6 +77,7 @@ export interface MailboxTestMatch {
 
 export interface MailboxTestSource extends MailboxTestMatch {
   source: string;
+  attachments: SourceAttachmentContent[];
 }
 
 export interface ActiveRule {
@@ -214,6 +216,7 @@ const geminiDetails = async (
   organizationId: string,
   database: D1Database,
   source: string,
+  attachments: SourceAttachmentContent[],
 ): Promise<EventDetails | null | undefined> => {
   const connection = await drizzleOrganizationDatabase(database).select().from(connections)
     .where(and(eq(connections.kind, 'ai'), eq(connections.status, 'active'))).limit(1).get();
@@ -222,7 +225,7 @@ const geminiDetails = async (
     const key = await organizationKeyFor(env, organizationId);
     const credential = JSON.parse(await decrypt(JSON.parse(connection.credential), key, `organization-connection:${organizationId}:ai`)) as { provider?: string; apiKey?: string; model?: string };
     if (credential.provider !== 'Google Gemini API' || !credential.apiKey || !credential.model) return null;
-    return extractGeminiEventDetails({ apiKey: credential.apiKey, model: credential.model, source });
+    return extractGeminiEventDetails({ apiKey: credential.apiKey, model: credential.model, source, attachments });
   } catch {
     return null;
   }
@@ -233,8 +236,9 @@ const geminiCandidate = async (
   organizationId: string,
   database: D1Database,
   source: string,
+  attachments: SourceAttachmentContent[],
 ): Promise<EventCandidate | null | undefined> => {
-  const details = await geminiDetails(env, organizationId, database, source);
+  const details = await geminiDetails(env, organizationId, database, source, attachments);
   return details && { title: details.title, startsAt: details.startsAt, endsAt: details.endsAt };
 };
 
@@ -284,7 +288,16 @@ export const readMailboxTestSource = async (
   if (!message.id) throw new Error('Gmail メッセージを取得できませんでした。');
   const subject = subjectOf(message.payload);
   const body = decodedBody(message.payload) || (message.snippet ?? '');
-  return { id: message.id, subject, sender: senderOf(message.payload), source: `${subject}\n${body}` };
+  const attachments = sourceAttachments(message.payload);
+  const intake = validateAttachmentIntake(attachments.map((attachment) => attachment.size));
+  if (!intake.accepted) throw new Error('Source Message attachments exceed the configured intake limit.');
+  return {
+    id: message.id,
+    subject,
+    sender: senderOf(message.payload),
+    source: `${subject}\n${body}`,
+    attachments: await readGmailAttachments({ accessToken, gmailMessageId: message.id, attachments }),
+  };
 };
 
 /** Creates a Calendar event only after a separately confirmed, encrypted test preview. */
@@ -295,7 +308,24 @@ export const createMailboxTestCalendarEvent = async (
   input: { messageId: string; event: EventDetails },
 ): Promise<{ eventId: string }> => {
   const accessToken = await accessTokenForInbox(env, organizationId, database, await activeAutomationInbox(database));
-  const event = await googleFetch<CalendarEvent>(accessToken, 'https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+  const message = await mailboxMessage(accessToken, input.messageId);
+  const attachments = sourceAttachments(message.payload);
+  const intake = validateAttachmentIntake(attachments.map((attachment) => attachment.size));
+  if (!intake.accepted) throw new Error('Source Message attachments exceed the configured intake limit.');
+  const attachmentContents = await readGmailAttachments({ accessToken, gmailMessageId: input.messageId, attachments });
+  const publications = await Promise.all(attachmentContents.map(async (attachment) => ({
+    attachment,
+    publication: await publishDriveAttachment({
+      accessToken,
+      attachment,
+    }),
+  })));
+  if (publications.some(({ publication }) => publication.outcome === 'failed')) {
+    throw new Error('添付ファイルを公開できなかったため、テスト予定を作成しませんでした。');
+  }
+  const calendarUrl = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
+  if (publications.length) calendarUrl.searchParams.set('supportsAttachments', 'true');
+  const event = await googleFetch<CalendarEvent>(accessToken, calendarUrl.toString(), {
     method: 'POST',
     body: JSON.stringify({
       summary: input.event.title,
@@ -303,6 +333,11 @@ export const createMailboxTestCalendarEvent = async (
       location: input.event.location,
       start: { dateTime: input.event.startsAt, timeZone: input.event.timeZone },
       end: { dateTime: input.event.endsAt, timeZone: input.event.timeZone },
+      attachments: publications.map(({ attachment, publication }) => ({
+        fileUrl: publication.publicUrl,
+        title: attachment.filename,
+        mimeType: attachment.mimeType,
+      })),
     }),
   });
   if (!event.id) throw new Error('Google Calendar が予定 ID を返しませんでした。');
@@ -364,7 +399,28 @@ const processOrganizationMessage = async (
       .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
   }
-  const aiCandidate = await geminiCandidate(env, organizationId, database, `${subject}\n${body}`);
+  const attachments = sourceAttachments(message.payload);
+  let attachmentContents: SourceAttachmentContent[];
+  try {
+    attachmentContents = await readGmailAttachments({
+      accessToken,
+      gmailMessageId,
+      attachments,
+    });
+  } catch (error) {
+    await db.insert(automationExceptions).values({
+      id: crypto.randomUUID(),
+      sourceMessageId,
+      code: 'gmail_attachment_download_failed',
+      message: error instanceof Error ? error.message : 'Gmail attachment download failed.',
+      state: 'open',
+      createdAt: now(),
+    }).run();
+    await db.update(sourceMessages).set({ state: 'exception', processedAt: now() })
+      .where(eq(sourceMessages.id, sourceMessageId)).run();
+    return;
+  }
+  const aiCandidate = await geminiCandidate(env, organizationId, database, `${subject}\n${body}`, attachmentContents);
   if (aiCandidate === null) {
     await db.insert(automationExceptions).values({
       id: crypto.randomUUID(),
@@ -384,13 +440,27 @@ const processOrganizationMessage = async (
       .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
   }
-  const event = await googleFetch<CalendarEvent>(accessToken, 'https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+  const publications = await Promise.all(attachmentContents.map(async (attachment) => ({
+    attachment,
+    publication: await publishDriveAttachment({ accessToken, attachment }),
+  })));
+  const publicationFailed = publications.some(({ publication }) => publication.outcome === 'failed');
+  const publicUrls = publications.flatMap(({ publication }) => publication.publicUrl ? [publication.publicUrl] : []);
+  const calendarAttachments = publications.flatMap(({ attachment, publication }) => publication.publicUrl ? [{
+    fileUrl: publication.publicUrl,
+    title: attachment.filename,
+    mimeType: attachment.mimeType,
+  }] : []);
+  const calendarUrl = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
+  if (calendarAttachments.length) calendarUrl.searchParams.set('supportsAttachments', 'true');
+  const event = await googleFetch<CalendarEvent>(accessToken, calendarUrl.toString(), {
     method: 'POST',
     body: JSON.stringify({
       summary: candidate.title,
-      description: `Mail Automation が Gmail メッセージ ${gmailMessageId} から作成しました。`,
+      description: `Mail Automation が Gmail メッセージ ${gmailMessageId} から作成しました。${publicUrls.length ? `\n\n添付ファイル:\n${publicUrls.join('\n')}` : ''}`,
       start: { dateTime: candidate.startsAt, timeZone: 'Asia/Tokyo' },
       end: { dateTime: candidate.endsAt, timeZone: 'Asia/Tokyo' },
+      attachments: calendarAttachments,
     }),
   });
   if (!event.id) throw new Error('Google Calendar did not return an event ID.');
@@ -405,15 +475,10 @@ const processOrganizationMessage = async (
     title: candidate.title,
     startsAt: candidate.startsAt,
     endsAt: candidate.endsAt,
-    status: 'scheduled',
+    status: publicationFailed ? 'draft' : 'scheduled',
     createdAt: eventCreatedAt,
     updatedAt: eventCreatedAt,
   }).run();
-  const attachments = sourceAttachments(message.payload);
-  const publications = await Promise.all(attachments.map(async (attachment) => ({
-    attachment,
-    publication: await publishDriveAttachment({ accessToken, gmailMessageId, attachment }),
-  })));
   for (const { attachment, publication } of publications) {
     await db.insert(eventAttachments).values({
       id: crypto.randomUUID(),
@@ -437,14 +502,7 @@ const processOrganizationMessage = async (
       createdAt: now(),
     }).run();
   }
-  const publicUrls = publications.flatMap(({ publication }) => publication.publicUrl ? [publication.publicUrl] : []);
-  if (publicUrls.length) {
-    await googleFetch(accessToken, `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(event.id)}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ description: `Mail Automation が Gmail メッセージ ${gmailMessageId} から作成しました。\n\n添付ファイル:\n${publicUrls.join('\n')}` }),
-    });
-  }
-  if (publications.some(({ publication }) => publication.outcome === 'failed')) {
+  if (publicationFailed) {
     await db.insert(automationExceptions).values({
       id: crypto.randomUUID(),
       sourceMessageId,
@@ -455,7 +513,7 @@ const processOrganizationMessage = async (
     }).run();
   }
   await db.update(sourceMessages).set({
-    state: publications.some(({ publication }) => publication.outcome === 'failed') ? 'exception' : 'processed',
+    state: publicationFailed ? 'exception' : 'processed',
     processedAt: now(),
   }).where(eq(sourceMessages.id, sourceMessageId)).run();
 };

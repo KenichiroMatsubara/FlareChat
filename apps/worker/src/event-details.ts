@@ -10,6 +10,14 @@ export interface EventDetails {
 export const GEMINI_EXTRACTION_MAX_SOURCE_CHARS = 20_000;
 export const GEMINI_EXTRACTION_TIMEOUT_MS = 15_000;
 
+export interface GeminiAttachment {
+  attachmentId: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  data: string;
+}
+
 /** Accepts only complete Gemini JSON that is safe to turn into a Scheduled Event. */
 export const validatedEventDetails = (text: string): EventDetails | null => {
   try {
@@ -36,6 +44,7 @@ export const extractGeminiEventDetails = async (input: {
   apiKey: string;
   model: string;
   source: string;
+  attachments?: GeminiAttachment[];
   fetch?: typeof fetch;
 }): Promise<EventDetails | null> => {
   try {
@@ -47,7 +56,16 @@ export const extractGeminiEventDetails = async (input: {
         method: 'POST',
         headers: { 'x-goog-api-key': input.apiKey, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: `Extract exactly one event as JSON with title, startsAt, endsAt, timeZone, location, and description. Do not infer missing dates or times.\n\n${source}` }] }],
+          contents: [{
+            role: 'user',
+            parts: [
+              { text: `Extract exactly one event as JSON with title, startsAt, endsAt, timeZone, location, and description. Do not infer missing dates or times.\n\n${source}` },
+              ...(input.attachments?.flatMap((attachment) => [
+                { text: `Attachment filename: ${attachment.filename}` },
+                { inlineData: { mimeType: attachment.mimeType, data: attachment.data } },
+              ]) ?? []),
+            ],
+          }],
           generationConfig: { responseMimeType: 'application/json' },
         }),
       },

@@ -33,4 +33,77 @@ describe('Gemini Event Details validation', () => {
     const body = JSON.parse(fetchMock.mock.calls[0]?.[1].body as string) as { contents: Array<{ parts: Array<{ text: string }> }> };
     expect(body.contents[0]?.parts[0]?.text.length).toBeLessThanOrEqual(GEMINI_EXTRACTION_MAX_SOURCE_CHARS + 1_000);
   });
+
+  it('passes one PDF attachment body to Gemini with its filename and MIME type', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({
+        title: '30周年記念式典',
+        startsAt: '2026-09-12T14:00:00+09:00',
+        endsAt: '2026-09-12T16:00:00+09:00',
+        timeZone: 'Asia/Tokyo',
+        location: '名古屋',
+        description: '添付PDFから抽出',
+      }) }] } }],
+    }), { status: 200 }));
+
+    await extractGeminiEventDetails({
+      apiKey: 'api-key',
+      model: 'gemini-3.5-flash-lite',
+      source: '名古屋名城RAC30周年記念式典のご案内',
+      attachments: [{
+        attachmentId: 'attachment-pdf',
+        filename: '式典案内.pdf',
+        mimeType: 'application/pdf',
+        size: 9,
+        data: 'cGRmLWJ5dGVz',
+      }],
+      fetch: fetchMock,
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0]?.[1].body as string) as {
+      contents: Array<{ parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> }>;
+    };
+    expect(body.contents[0]?.parts).toEqual([
+      expect.objectContaining({ text: expect.stringContaining('名古屋名城RAC30周年記念式典のご案内') }),
+      { text: 'Attachment filename: 式典案内.pdf' },
+      { inlineData: { mimeType: 'application/pdf', data: 'cGRmLWJ5dGVz' } },
+    ]);
+  });
+
+  it('uses the same Gemini attachment path for an XLSX workbook', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({
+        title: '年間行事',
+        startsAt: '2026-10-03T10:00:00+09:00',
+        endsAt: '2026-10-03T12:00:00+09:00',
+        timeZone: 'Asia/Tokyo',
+        location: '',
+        description: '添付XLSXから抽出',
+      }) }] } }],
+    }), { status: 200 }));
+
+    await extractGeminiEventDetails({
+      apiKey: 'api-key',
+      model: 'gemini-3.5-flash-lite',
+      source: '年間行事',
+      attachments: [{
+        attachmentId: 'attachment-xlsx',
+        filename: '年間行事.xlsx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        size: 10,
+        data: 'eGxzeC1ieXRlcw==',
+      }],
+      fetch: fetchMock,
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0]?.[1].body as string) as {
+      contents: Array<{ parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> }>;
+    };
+    expect(body.contents[0]?.parts).toContainEqual({
+      inlineData: {
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        data: 'eGxzeC1ieXRlcw==',
+      },
+    });
+  });
 });
