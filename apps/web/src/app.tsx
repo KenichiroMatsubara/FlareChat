@@ -31,6 +31,23 @@ export const setupPhaseLabel = (phase: ProvisioningPhase | null): string => {
   }[phase];
 };
 
+export const SignedOutEntry = ({
+  busy,
+  error,
+  onSelect,
+}: {
+  busy: boolean;
+  error: string;
+  onSelect: (intent: 'login' | 'organization_setup') => void;
+}) => <main className="setup-shell"><section className="setup-card login-card">
+  <div className="setup-brand"><span><Mail size={22} /></span><div><strong>Mail Automation</strong><small>GMAIL TO CALENDAR</small></div></div>
+  <p className="eyebrow">GOOGLE IDENTITY</p><h1>Mail Automationを開く</h1>
+  <p className="setup-copy">どちらか一方を選んでください。この選択自体はGoogle認証ではなく、選んだ導線でだけOAuthを1回行います。</p>
+  {error && <p className="setup-error">{error}</p>}
+  <button className="primary" onClick={() => onSelect('organization_setup')} disabled={busy}>{busy ? 'Googleへ接続中…' : '新しいOrganizationを作る'}</button>
+  <button className="secondary google-login entry-login" onClick={() => onSelect('login')} disabled={busy}><ShieldCheck size={18} />既存Organizationへログイン</button>
+</section></main>;
+
 export const App = () => {
   const [appState, setAppState] = useState<AppState | null>(null);
   const [automation, setAutomation] = useState<AutomationStatus | null>(null);
@@ -225,14 +242,11 @@ export const App = () => {
     finally { setBusy(false); }
   };
   if (!appState) return <main className="setup-shell"><section className="setup-card login-card"><div className="loading"><RefreshCw className="spin" size={18} />読み込み中…</div></section></main>;
-  if (appState.kind === 'signed_out') return <main className="setup-shell"><section className="setup-card login-card">
-    <div className="setup-brand"><span><Mail size={22} /></span><div><strong>Mail Automation</strong><small>GMAIL TO CALENDAR</small></div></div>
-    <p className="eyebrow">GOOGLE IDENTITY</p><h1>Mail Automationを開く</h1>
-    <p className="setup-copy">既存メンバーは本人確認だけでログインできます。初めて利用する場合は、Automation Inboxの完全な権限を認可してOrganizationを作成します。</p>
-    {error && <p className="setup-error">{error}</p>}
-    <button className="primary google-login" onClick={() => void beginGoogleEntry('login')} disabled={busy}><ShieldCheck size={18} />{busy ? 'Googleへ接続中…' : 'Googleでログイン'}</button>
-    <button className="quiet-button" onClick={() => void beginGoogleEntry('organization_setup')} disabled={busy}>新しいOrganizationをセットアップ</button>
-  </section></main>;
+  if (appState.kind === 'signed_out') return <SignedOutEntry
+    busy={busy}
+    error={error}
+    onSelect={(intent) => void beginGoogleEntry(intent)}
+  />;
   if (appState.kind === 'unassigned') return <main className="setup-shell"><section className="setup-card login-card">
     <div className="setup-brand"><span><Mail size={22} /></span><div><strong>Mail Automation</strong><small>CREATE ORGANIZATION</small></div></div>
     <p className="eyebrow">NO ORGANIZATION</p><h1>Organizationをセットアップ</h1>

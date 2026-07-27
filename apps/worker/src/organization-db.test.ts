@@ -91,4 +91,52 @@ describe('Organization database resolver', () => {
       expect.objectContaining({ idempotencyKey: 'organization-1-job' }),
     ]);
   });
+
+  it('initializes a partially applied production database through one batch seam', async () => {
+    const control = createMigratedTestD1('control');
+    openDatabases.push(control);
+    const requests: Array<{ batch?: Array<{ sql: string; params: unknown[] }>; sql?: string }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {
+        batch?: Array<{ sql: string; params: unknown[] }>;
+        sql?: string;
+      };
+      requests.push(body);
+      if (body.batch) {
+        return new Response(JSON.stringify({
+          success: true,
+          result: body.batch.map(() => ({ success: true, results: [], meta: {} })),
+        }));
+      }
+      return new Response(JSON.stringify({
+        success: true,
+        result: [{
+          success: true,
+          results: [{ name: 'recipient_profiles' }, { name: 'event_recipients' }],
+          meta: {},
+        }],
+      }));
+    }));
+    const environment = {
+      CONTROL_DB: control.binding,
+      CLOUDFLARE_ACCOUNT_ID: 'account-1',
+      CLOUDFLARE_API_TOKEN: 'token-1',
+    } as unknown as Bindings;
+
+    const provisioned = await provisionOrganizationDatabase(environment, {
+      organizationId: 'organization-1',
+      bindingName: 'ORG_ORGANIZATION1',
+      databaseId: 'database-1',
+    });
+    await provisioned.initialize();
+
+    expect(requests).toHaveLength(2);
+    expect(requests[1]?.batch?.map(({ sql }) => sql)).toEqual(expect.arrayContaining([
+      'PRAGMA defer_foreign_keys = on',
+      'DROP TABLE IF EXISTS "recipient_profiles"',
+      'DROP TABLE IF EXISTS "event_recipients"',
+      expect.stringContaining('CREATE TABLE `recipient_profiles`'),
+      'PRAGMA defer_foreign_keys = off',
+    ]));
+  });
 });

@@ -16,6 +16,11 @@ export interface D1QueryResult<T> {
   meta?: Record<string, number | boolean | string | null>;
 }
 
+interface D1Query {
+  sql: string;
+  params: unknown[];
+}
+
 interface WorkerSettings {
   bindings?: Array<Record<string, unknown>>;
 }
@@ -63,6 +68,19 @@ export const queryD1 = async <T>(env: Bindings, databaseId: string, sql: string,
   const query = result[0];
   if (!query?.success) throw new Error('Organization D1 query failed.');
   return query;
+};
+
+export const queryD1Batch = async <T>(
+  env: Bindings,
+  databaseId: string,
+  queries: D1Query[],
+): Promise<D1QueryResult<T>[]> => {
+  const results = await api<D1QueryResult<T>[]>(env, `/d1/database/${databaseId}/query`, {
+    method: 'POST',
+    body: JSON.stringify({ batch: queries }),
+  });
+  if (results.some((result) => !result.success)) throw new Error('Organization D1 batch failed.');
+  return results;
 };
 
 export const attachD1Binding = async (

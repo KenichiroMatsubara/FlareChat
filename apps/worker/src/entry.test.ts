@@ -19,8 +19,10 @@ afterEach(() => {
 });
 
 describe('application entry', () => {
-  it('returns an existing Owner to their Organization after identity-only Google login', async () => {
-    fixture = createTestApp();
+  it.each(['owner', 'admin', 'operator', 'viewer'] as const)(
+    'returns an existing %s to their Organization after identity-only Google login',
+    async (role) => {
+    fixture = createTestApp(role);
     fixture.environment.CREDENTIAL_MASTER_KEY = randomToken(32);
     fixture.environment.CREDENTIAL_MASTER_KEY_VERSION = 'test-v1';
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
@@ -68,10 +70,33 @@ describe('application entry', () => {
         identity: { email: 'owner@example.com', displayName: 'Owner' },
         organizations: [{
           organizationId: 'organization-1',
-          role: 'owner',
+          role,
           name: 'Organization One',
           status: 'active',
         }],
+      },
+    });
+  });
+
+  it('keeps the Owner session and Membership when the Automation Inbox is disconnected', async () => {
+    fixture = createTestApp();
+    fixture.organization.execute(
+      "UPDATE google_connections SET status = 'disconnected', enabled = 0 WHERE kind = 'automation_inbox'",
+    );
+
+    const bootstrap = await app.fetch(fixture.request('/api/bootstrap'), fixture.environment);
+    const identity = await app.fetch(fixture.request('/api/auth/me'), fixture.environment);
+
+    await expect(bootstrap.json()).resolves.toMatchObject({
+      data: {
+        kind: 'ready',
+        organizations: [{ organizationId: 'organization-1', role: 'owner' }],
+      },
+    });
+    await expect(identity.json()).resolves.toMatchObject({
+      data: {
+        email: 'owner@example.com',
+        organizations: [{ organizationId: 'organization-1', role: 'owner' }],
       },
     });
   });
