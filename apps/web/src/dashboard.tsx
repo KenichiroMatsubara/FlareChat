@@ -1,7 +1,7 @@
 import { CircleAlert, LogOut, Mail, Play, Settings, SlidersHorizontal } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 
-import type { AutomationStatus, AutomationSummary, MailboxTestMatch, MailboxTestPreview, OrganizationConnections, OrganizationMembership, OrganizationRule, OrganizationRuleInput } from './api';
+import type { AutomationStatus, AutomationSummary, MailboxTestGeminiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationConnections, OrganizationMembership, OrganizationRule, OrganizationRuleInput } from './api';
 import { AutomationPage, ConnectionsPage, MailboxTestPage, RulesPage } from './dashboard-pages';
 
 export type Page = 'automation' | 'connections' | 'rules' | 'mail-test';
@@ -37,11 +37,13 @@ export interface DashboardProps {
   onTestGemini: () => void;
   mailTestSubject: string;
   mailTestMatches: MailboxTestMatch[];
+  mailTestGeminiRequest: MailboxTestGeminiRequest | null;
   mailTestPreview: MailboxTestPreview | null;
   mailTestBusy: boolean;
   mailTestCreatedEventId: string;
   onMailTestSubjectChange: (value: string) => void;
   onSearchMailbox: () => void;
+  onPrepareMailbox: (messageId: string) => void;
   onPreviewMailbox: (messageId: string) => void;
   onCreateCalendarEvent: () => void;
   organizationRules: OrganizationRule[];

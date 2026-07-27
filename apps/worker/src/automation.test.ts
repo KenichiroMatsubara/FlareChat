@@ -522,6 +522,23 @@ describe('Manual mailbox test', () => {
       return new Response(JSON.stringify({ error: { message: `unexpected request: ${url}` } }), { status: 500 });
     }));
 
+    const requestResponse = await app.fetch(fixture.request(
+      '/api/organizations/organization-1/mail-tests/gmail-message-attachment/gemini-request',
+      { method: 'POST' },
+    ), fixture.environment);
+    const geminiRequestPreview = await requestResponse.json() as {
+      data: { request: { contents?: Array<{ parts?: Array<{ text?: string; inlineData?: unknown }> }> } };
+    };
+
+    expect(requestResponse.status).toBe(200);
+    expect(geminiRequestPreview.data.request.contents?.[0]?.parts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ text: expect.stringContaining('GEMINI-FILE-PROBE-001') }),
+    ]));
+    expect(geminiRequestPreview.data.request.contents?.[0]?.parts).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ inlineData: expect.anything() }),
+    ]));
+    expect(geminiRequest.contents).toBeUndefined();
+
     const previewResponse = await app.fetch(fixture.request(
       '/api/organizations/organization-1/mail-tests/gmail-message-attachment/preview',
       { method: 'POST' },

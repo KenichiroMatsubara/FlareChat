@@ -268,6 +268,24 @@ app.post('/api/organizations/:organizationId/mail-tests/search', async (context)
   }
 });
 
+/** Returns the exact, redacted Gemini payload for review without calling Gemini. */
+app.post('/api/organizations/:organizationId/mail-tests/:messageId/gemini-request', async (context) => {
+  try {
+    const organizationId = context.req.param('organizationId');
+    const access = await organizationForRequest(context.req.raw, context.env, organizationId);
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'メールの手動テストを実行できる権限がありません。', 403);
+    if (!access.database) return failure(context, '組織DBに接続できません。接続設定は保存されていません。', 503);
+    const messageId = context.req.param('messageId');
+    if (!/^[A-Za-z0-9_-]{1,200}$/u.test(messageId)) return failure(context, 'Gmail メッセージ ID が不正です。');
+    const source = await createAutomation(context.env).mailboxTest.readSource({ organizationId, database: access.database, messageId });
+    const request = await createAutomation(context.env).mailboxTest.previewGeminiRequest({ source: source.source, attachments: source.attachments });
+    return json(context, { id: source.id, subject: source.subject, sender: source.sender, request });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Gemini 送信内容の準備に失敗しました。';
+    return failure(context, message, message === 'Authentication is required.' ? 401 : 500);
+  }
+});
+
 app.post('/api/organizations/:organizationId/mail-tests/:messageId/preview', async (context) => {
   try {
     const organizationId = context.req.param('organizationId');

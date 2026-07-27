@@ -25,6 +25,18 @@ interface GeminiPart {
   inlineData?: { mimeType: string; data: string };
 }
 
+export interface GeminiEventDetailsRequest {
+  contents: Array<{ role: 'user'; parts: GeminiPart[] }>;
+  generationConfig: {
+    responseMimeType: 'application/json';
+    responseSchema: {
+      type: 'OBJECT';
+      properties: Record<string, { type: 'STRING'; format?: 'date-time' }>;
+      required: string[];
+    };
+  };
+}
+
 const geminiAttachmentParts = async (
   attachments: GeminiAttachment[],
   markdown?: MarkdownConverter,
@@ -55,6 +67,40 @@ export const validatedEventDetails = (text: string): EventDetails | null => {
   }
 };
 
+/** Builds the bounded Gemini request without sending it, for review or execution. */
+export const buildGeminiEventDetailsRequest = async (input: {
+  source: string;
+  attachments?: GeminiAttachment[];
+  markdown?: MarkdownConverter;
+}): Promise<GeminiEventDetailsRequest> => {
+  const source = input.source.slice(0, GEMINI_EXTRACTION_MAX_SOURCE_CHARS);
+  const attachments = await geminiAttachmentParts(input.attachments ?? [], input.markdown);
+  return {
+    contents: [{
+      role: 'user',
+      parts: [
+        { text: `Extract exactly one event as JSON with title, startsAt, endsAt, timeZone, location, and description. Do not infer missing dates or times.\n\n${source}` },
+        ...attachments,
+      ],
+    }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'OBJECT',
+        properties: {
+          title: { type: 'STRING' },
+          startsAt: { type: 'STRING', format: 'date-time' },
+          endsAt: { type: 'STRING', format: 'date-time' },
+          timeZone: { type: 'STRING' },
+          location: { type: 'STRING' },
+          description: { type: 'STRING' },
+        },
+        required: ['title', 'startsAt', 'endsAt', 'timeZone', 'location', 'description'],
+      },
+    },
+  };
+};
+
 /** Calls Gemini with bounded untrusted source text and accepts only validated Event Details JSON. */
 export const extractGeminiEventDetails = async (input: {
   apiKey: string;
@@ -65,8 +111,7 @@ export const extractGeminiEventDetails = async (input: {
   fetch?: typeof fetch;
 }): Promise<EventDetails | null> => {
   const request = input.fetch ?? fetch;
-  const source = input.source.slice(0, GEMINI_EXTRACTION_MAX_SOURCE_CHARS);
-  const attachments = await geminiAttachmentParts(input.attachments ?? [], input.markdown);
+  const requestBody = await buildGeminiEventDetailsRequest(input);
   let response: Response;
   try {
     response = await request(
@@ -74,30 +119,7 @@ export const extractGeminiEventDetails = async (input: {
       {
         method: 'POST',
         headers: { 'x-goog-api-key': input.apiKey, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            role: 'user',
-            parts: [
-              { text: `Extract exactly one event as JSON with title, startsAt, endsAt, timeZone, location, and description. Do not infer missing dates or times.\n\n${source}` },
-              ...attachments,
-            ],
-          }],
-          generationConfig: {
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: 'OBJECT',
-              properties: {
-                title: { type: 'STRING' },
-                startsAt: { type: 'STRING', format: 'date-time' },
-                endsAt: { type: 'STRING', format: 'date-time' },
-                timeZone: { type: 'STRING' },
-                location: { type: 'STRING' },
-                description: { type: 'STRING' },
-              },
-              required: ['title', 'startsAt', 'endsAt', 'timeZone', 'location', 'description'],
-            },
-          },
-        }),
+        body: JSON.stringify(requestBody),
       },
     );
   } catch {

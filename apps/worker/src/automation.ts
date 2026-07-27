@@ -2,7 +2,7 @@ import { and, count, eq, isNotNull } from 'drizzle-orm';
 
 import { decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
 import { fromBase64Url } from './encoding';
-import type { EventDetails } from './event-details';
+import { buildGeminiEventDetailsRequest, type EventDetails, type GeminiEventDetailsRequest } from './event-details';
 import type { SourceAttachmentContent } from './drive-attachments';
 import type { GoogleTokenSet } from './google';
 import { productionAutomationDependencies } from './automation/providers';
@@ -277,6 +277,16 @@ const extractMailboxTestEvent = async (
     markdown: env.AI,
   });
 };
+
+/** Produces the exact bounded Gemini payload for an Owner/Admin to inspect before sending. */
+const previewMailboxTestGeminiRequest = async (
+  env: Bindings,
+  input: { source: string; attachments: SourceAttachmentContent[] },
+): Promise<GeminiEventDetailsRequest> => buildGeminiEventDetailsRequest({
+  source: input.source,
+  attachments: input.attachments,
+  markdown: env.AI,
+});
 
 const mailboxMessage = async (google: GoogleAutomationPort, accessToken: string, messageId: string): Promise<GmailMessage> =>
   google.request<GmailMessage>(accessToken, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}?format=full`);
@@ -704,6 +714,8 @@ export const createAutomation = (
         createMailboxTestCalendarEventWithGoogle(env, input.organizationId, input.database, { messageId: input.messageId, event: input.event }, dependencies),
       extractEvent: (input: { organizationId: string; database: D1Database; source: string; attachments: SourceAttachmentContent[] }): Promise<EventDetails | null> =>
         extractMailboxTestEvent(env, input.organizationId, input.database, input.source, input.attachments, dependencies),
+      previewGeminiRequest: (input: { source: string; attachments: SourceAttachmentContent[] }): Promise<GeminiEventDetailsRequest> =>
+        previewMailboxTestGeminiRequest(env, input),
     },
   };
 };
