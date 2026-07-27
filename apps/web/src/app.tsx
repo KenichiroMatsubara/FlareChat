@@ -45,7 +45,7 @@ export const SignedOutEntry = ({
   <p className="setup-copy">どちらか一方を選んでください。この選択自体はGoogle認証ではなく、選んだ導線でだけOAuthを1回行います。</p>
   {error && <p className="setup-error">{error}</p>}
   <button className="primary" onClick={() => onSelect('organization_setup')} disabled={busy}>{busy ? 'Googleへ接続中…' : '新しいOrganizationを作る'}</button>
-  <button className="quiet-button google-login" onClick={() => onSelect('login')} disabled={busy}><ShieldCheck size={18} />既存Organizationへログイン</button>
+  <button className="secondary google-login entry-login" onClick={() => onSelect('login')} disabled={busy}><ShieldCheck size={18} />既存Organizationへログイン</button>
 </section></main>;
 
 export const App = () => {

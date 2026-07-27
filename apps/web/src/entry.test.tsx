@@ -11,5 +11,6 @@ describe('signed-out application entry', () => {
 
     expect(markup).toContain('新しいOrganizationを作る');
     expect(markup).toContain('既存Organizationへログイン');
+    expect(markup).toMatch(/class="[^"]*secondary[^"]*entry-login[^"]*"/u);
   });
 });
