@@ -1,37 +1,25 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { and, asc, count, desc, eq, gt, gte, inArray, isNotNull, isNull, max, ne } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, gte, inArray, isNull, max, ne } from 'drizzle-orm';
 
 import { canUpdateAttendance, discoveredLineDestinations, displayRecipientIdentifier, verifyLineWebhookSignature } from '@mail/domain';
 
-import { createMailboxTestCalendarEvent, readMailboxTestSource, runOrganizationAutomation, searchMailboxForTest } from './automation';
-import { decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
+import { createAutomation } from './automation';
+import { decrypt, encrypt } from './cryptography';
 import { randomToken } from './encoding';
-import { beginGoogleEntry, completeGoogleEntry, entryConfigurationError } from './entry';
-import {
-  applicationState,
-  cancelOrganizationOnboarding,
-  confirmOrganization,
-  retryOrganizationProvisioning,
-} from './onboarding';
-import { organizationDatabase } from './organization-db';
 import { readRecoveryReceipt, restoreDeliveryRecordFromReceipt } from './recovery-receipts';
 import { exportRecipientCsv, previewRecipientCsv } from './recipients';
 import { failure, json } from './response';
-import type { Bindings, ConnectionRow, OrganizationRow, SessionRow } from './types';
+import { entryRoutes, oauthRoutes } from './routes/entry';
+import { automationRoutes } from './routes/automation';
+import { createRequestContext } from './routes/request-context';
+import { typedListRoutes } from './routes/typed-lists';
+import type { Bindings, ConnectionRow, SessionRow } from './types';
 import type { CipherEnvelope } from './cryptography';
-import { extractGeminiEventDetails } from './event-details';
-import type { EventDetails, GeminiAttachment } from './event-details';
+import type { EventDetails } from './event-details';
 import { controlDatabase as drizzleControlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
 import { createOrganizationStore } from './storage/organization-store';
-import {
-  identities,
-  members,
-  organizationKeys,
-  organizations,
-  recoveryRequests,
-  sessions,
-} from './storage/control-schema';
+import { members, organizations, recoveryRequests } from './storage/control-schema';
 import {
   attendance,
   connections as organizationConnections,
@@ -52,8 +40,6 @@ import {
   rules as organizationRules,
 } from './storage/organization-schema';
 
-const SESSION_COOKIE = 'mail_session';
-const SESSION_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
 const RECIPIENT_LINK_WINDOW_MS = 15 * 60 * 1_000;
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
 export const GEMINI_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.6-flash'] as const;
@@ -84,72 +70,21 @@ interface GeminiGenerateContentResponse {
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.use('/api/*', cors({ origin: (origin) => origin || 'http://localhost:5173', credentials: true }));
+app.route('/api', entryRoutes);
+app.route('/api', automationRoutes);
+app.route('/api', typedListRoutes);
+app.route('/', oauthRoutes);
 
 const now = (): string => new Date().toISOString();
 const expiresIn = (milliseconds: number): string => new Date(Date.now() + milliseconds).toISOString();
-const cookie = (name: string, value: string, secure: boolean, maxAge?: number): string => {
-  const secureAttribute = secure ? '; Secure' : '';
-  const lifetime = maxAge === undefined ? '' : `; Max-Age=${maxAge}`;
-  return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax${secureAttribute}${lifetime}`;
-};
+const organizationForRequest = (request: Request, env: Bindings, organizationId: string) =>
+  createRequestContext(request, env).organization(organizationId);
 
-const requestIsSecure = (request: Request): boolean => new URL(request.url).protocol === 'https:';
+const organizationKeyForRequest = (env: Bindings, organizationId: string) =>
+  createRequestContext(new Request('https://request-context.invalid'), env).organizationKey(organizationId);
 
-const requestCookie = (header: string | undefined, name: string): string | null => {
-  if (!header) return null;
-  for (const part of header.split(';')) {
-    const [key, value] = part.trim().split('=', 2);
-    if (key === name && value) return decodeURIComponent(value);
-  }
-  return null;
-};
-
-const organizationForRequest = async (
-  request: Request,
-  env: Bindings,
-  organizationId: string,
-): Promise<{ session: SessionRow; organization: OrganizationRow; role: string; database: D1Database | null }> => {
-  const session = await sessionFromRequest(request, env);
-  if (!session) throw new Error('Authentication is required.');
-  const membership = await drizzleControlDatabase(env.CONTROL_DB).select({
-    role: members.role,
-    id: organizations.id,
-    name: organizations.name,
-    status: organizations.status,
-    database_id: organizations.databaseId,
-    binding_name: organizations.bindingName,
-  }).from(members).innerJoin(organizations, eq(organizations.id, members.organizationId))
-    .where(and(eq(members.identityId, session.identity_id), eq(members.organizationId, organizationId), eq(members.state, 'active')))
-    .get();
-  if (!membership) throw new Error('この組織へのアクセス権がありません。');
-  if (membership.status !== 'active') throw new Error('この組織は現在利用できません。');
-  const database = organizationDatabase(env, membership.binding_name, membership.database_id);
-  return { session, organization: membership, role: membership.role, database };
-};
-
-const organizationKeyForRequest = async (env: Bindings, organizationId: string): Promise<CryptoKey> => {
-  const keyRecord = await drizzleControlDatabase(env.CONTROL_DB).select({
-    masterKeyVersion: organizationKeys.masterKeyVersion,
-    wrappedKeyEnvelope: organizationKeys.wrappedKeyEnvelope,
-  }).from(organizationKeys).where(eq(organizationKeys.organizationId, organizationId)).get();
-  if (!keyRecord) throw new Error('組織暗号鍵が見つかりません。');
-  return unwrapOrganizationKey(
-    { masterKeyVersion: keyRecord.masterKeyVersion, envelope: JSON.parse(keyRecord.wrappedKeyEnvelope) },
-    await masterKey(env.CREDENTIAL_MASTER_KEY),
-    organizationId,
-  );
-};
-
-const activeOrganizationDatabase = async (env: Bindings, organizationId: string): Promise<D1Database | null> => {
-  const organization = await drizzleControlDatabase(env.CONTROL_DB).select({
-    databaseId: organizations.databaseId,
-    bindingName: organizations.bindingName,
-  }).from(organizations).where(and(
-    eq(organizations.id, organizationId),
-    eq(organizations.status, 'active'),
-  )).get();
-  return organization ? organizationDatabase(env, organization.bindingName, organization.databaseId) : null;
-};
+const activeOrganizationDatabase = (env: Bindings, organizationId: string) =>
+  createRequestContext(new Request('https://request-context.invalid'), env).activeOrganizationDatabase(organizationId);
 
 const mailTestContext = (organizationId: string): string => `mail-test-preview:${organizationId}`;
 const MAIL_TEST_WINDOW_MS = 15 * 60 * 1_000;
@@ -172,23 +107,6 @@ const isEventDetails = (value: unknown): value is EventDetails => {
     && Number.isFinite(Date.parse(event.startsAt))
     && Number.isFinite(Date.parse(event.endsAt))
     && Date.parse(event.startsAt) < Date.parse(event.endsAt);
-};
-
-const extractMailTestEvent = async (
-  env: Bindings,
-  organizationId: string,
-  database: D1Database,
-  source: string,
-  attachments: GeminiAttachment[],
-): Promise<EventDetails | null> => {
-  const connection = await drizzleOrganizationDatabase(database).select().from(organizationConnections)
-    .where(and(eq(organizationConnections.kind, 'ai'), eq(organizationConnections.status, 'active'))).limit(1).get();
-  if (!connection) throw new Error('先に Gemini API キーを保存してください。');
-  const credential = await connectionCredential(connection, await organizationKeyForRequest(env, organizationId), organizationId, 'ai');
-  if (credential.provider !== 'Google Gemini API' || !credential.apiKey) throw new Error('先に Gemini API キーを保存してください。');
-  const model = credential.model || DEFAULT_GEMINI_MODEL;
-  if (!isGeminiModel(model)) throw new Error('Gemini モデルは gemini-3.5-flash-lite または gemini-3.6-flash を選択してください。');
-  return extractGeminiEventDetails({ apiKey: credential.apiKey, model, source, attachments });
 };
 
 const connectionContext = (organizationId: string, kind: 'line' | 'ai'): string => `organization-connection:${organizationId}:${kind}`;
@@ -222,128 +140,6 @@ const connectionView = (line: OrganizationCredential, ai: OrganizationCredential
 
 export const generatedText = (response: GeminiGenerateContentResponse): string =>
   response.candidates?.flatMap((candidate) => candidate.content?.parts ?? []).map((part) => part.text ?? '').join('').trim() ?? '';
-
-app.get('/api/health', (context) => json(context, { status: 'ok', service: 'mail-automation', time: now() }));
-
-app.post('/api/entry/google', async (context) => {
-  const input = await context.req.json<{ intent?: 'login' | 'organization_setup' }>();
-  if (input.intent !== 'login' && input.intent !== 'organization_setup') return failure(context, 'Unknown Google entry intent.');
-  const invalid = entryConfigurationError(context.env);
-  if (invalid) return failure(context, invalid, 503);
-  return json(context, {
-    authorizationUrl: await beginGoogleEntry(context.env, context.req.raw, input.intent),
-  }, 201);
-});
-
-app.get('/api/organizations/:organizationId/automation', async (context) => {
-  try {
-    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!access.database) throw new Error('Organization database is not available.');
-    const automation = await createOrganizationStore(drizzleOrganizationDatabase(access.database)).currentAutomation();
-    return json(context, automation ? { ...automation, displayName: access.session.display_name } : null);
-  } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Automation Inbox could not be loaded.', 403);
-  }
-});
-
-app.post('/api/organizations/:organizationId/automation/run', async (context) => {
-  try {
-    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!access.database) throw new Error('Organization database is not available.');
-    return json(context, await runOrganizationAutomation(context.env, access.organization.id, access.database));
-  } catch (error) {
-    return failure(context, error instanceof Error ? error.message : '自動化を実行できませんでした。', 409);
-  }
-});
-
-app.post('/api/organizations/:organizationId/automation/enabled', async (context) => {
-  try {
-    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!access.database) throw new Error('Organization database is not available.');
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Automation can only be changed by an Owner, Admin, or Operator.', 403);
-    const input = await context.req.json<{ enabled?: boolean }>();
-    if (typeof input.enabled !== 'boolean') return failure(context, 'enabled must be a boolean.');
-    const updated = await createOrganizationStore(drizzleOrganizationDatabase(access.database)).setAutomationEnabled(input.enabled, now());
-    if (!updated) return failure(context, 'Automation Inbox が見つかりません。', 404);
-    return json(context, { enabled: input.enabled });
-  } catch (error) {
-    return failure(context, error instanceof Error ? error.message : '自動化を更新できませんでした。', 409);
-  }
-});
-
-app.get('/oauth/google/callback', async (context) => {
-  const completed = await completeGoogleEntry(
-    context.env,
-    context.req.query('code'),
-    context.req.query('state'),
-  );
-  if (completed.sessionId) {
-    context.header('Set-Cookie', cookie(
-      SESSION_COOKIE,
-      completed.sessionId,
-      requestIsSecure(context.req.raw),
-      Math.floor(SESSION_WINDOW_MS / 1_000),
-    ));
-  }
-  return context.redirect(completed.location);
-});
-
-app.post('/api/onboarding/confirm', async (context) => {
-  const session = await sessionFromRequest(context.req.raw, context.env);
-  if (!session) return failure(context, 'Authentication is required.', 401);
-  try {
-    const input = await context.req.json<{ name?: string }>();
-    await confirmOrganization(context.env, session.identity_id, input.name ?? '');
-    return json(context, { accepted: true });
-  } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Organization setup could not be confirmed.', 409);
-  }
-});
-
-app.post('/api/onboarding/retry', async (context) => {
-  const session = await sessionFromRequest(context.req.raw, context.env);
-  if (!session) return failure(context, 'Authentication is required.', 401);
-  try {
-    await retryOrganizationProvisioning(context.env, session.identity_id);
-    return json(context, { accepted: true });
-  } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Organization provisioning could not be retried.', 409);
-  }
-});
-
-app.delete('/api/onboarding', async (context) => {
-  const session = await sessionFromRequest(context.req.raw, context.env);
-  if (!session) return failure(context, 'Authentication is required.', 401);
-  return json(context, {
-    cancelled: await cancelOrganizationOnboarding(context.env, session.identity_id),
-  });
-});
-
-app.get('/api/auth/me', async (context) => {
-  const session = await sessionFromRequest(context.req.raw, context.env);
-  if (!session) return failure(context, 'Authentication is required.', 401);
-  const memberships = await drizzleControlDatabase(context.env.CONTROL_DB).select({
-    organizationId: members.organizationId,
-    role: members.role,
-    name: organizations.name,
-    status: organizations.status,
-  }).from(members).innerJoin(organizations, eq(organizations.id, members.organizationId))
-    .where(and(eq(members.identityId, session.identity_id), eq(members.state, 'active'), isNotNull(organizations.databaseId))).all();
-  return json(context, { email: session.email, displayName: session.display_name, organizations: memberships });
-});
-
-app.get('/api/bootstrap', async (context) => {
-  const session = await sessionFromRequest(context.req.raw, context.env);
-  if (!session) return json(context, { kind: 'signed_out' });
-  return json(context, await applicationState(context.env, session));
-});
-
-app.post('/api/auth/logout', async (context) => {
-  const sessionId = requestCookie(context.req.header('Cookie'), SESSION_COOKIE);
-  if (sessionId) await drizzleControlDatabase(context.env.CONTROL_DB).update(sessions).set({ revokedAt: now() }).where(eq(sessions.id, sessionId)).run();
-  context.header('Set-Cookie', cookie(SESSION_COOKIE, '', requestIsSecure(context.req.raw), 0));
-  return json(context, { loggedOut: true });
-});
 
 app.get('/api/organizations/:organizationId/connections', async (context) => {
   try {
@@ -465,7 +261,7 @@ app.post('/api/organizations/:organizationId/mail-tests/search', async (context)
     if (!subject || subject.length > 300) return failure(context, '件名は 1〜300 文字で入力してください。');
     const automation = await createOrganizationStore(drizzleOrganizationDatabase(access.database)).currentAutomation();
     if (!automation) return failure(context, 'Automation Inbox が見つかりません。', 404);
-    return json(context, { accountEmail: automation.email, messages: await searchMailboxForTest(context.env, organizationId, access.database, subject) });
+    return json(context, { accountEmail: automation.email, messages: await createAutomation(context.env).mailboxTest.search({ organizationId, database: access.database, subject }) });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Gmail の検索に失敗しました。';
     return failure(context, message, message === 'Authentication is required.' ? 401 : 500);
@@ -480,8 +276,13 @@ app.post('/api/organizations/:organizationId/mail-tests/:messageId/preview', asy
     if (!access.database) return failure(context, '組織DBに接続できません。接続設定は保存されていません。', 503);
     const messageId = context.req.param('messageId');
     if (!/^[A-Za-z0-9_-]{1,200}$/u.test(messageId)) return failure(context, 'Gmail メッセージ ID が不正です。');
-    const source = await readMailboxTestSource(context.env, organizationId, access.database, messageId);
-    const event = await extractMailTestEvent(context.env, organizationId, access.database, source.source, source.attachments);
+    const source = await createAutomation(context.env).mailboxTest.readSource({ organizationId, database: access.database, messageId });
+    const event = await createAutomation(context.env).mailboxTest.extractEvent({
+      organizationId,
+      database: access.database,
+      source: source.source,
+      attachments: source.attachments,
+    });
     if (!event) return failure(context, 'メールから安全な予定を抽出できませんでした。日付・開始時刻・終了時刻を確認してください。');
     const confirmation: MailTestConfirmation = { messageId, event, expiresAt: expiresIn(MAIL_TEST_WINDOW_MS) };
     const token = JSON.stringify(await encrypt(JSON.stringify(confirmation), await organizationKeyForRequest(context.env, organizationId), mailTestContext(organizationId)));
@@ -504,7 +305,12 @@ app.post('/api/organizations/:organizationId/mail-tests/calendar', async (contex
     if (typeof confirmation.messageId !== 'string' || !isEventDetails(confirmation.event) || typeof confirmation.expiresAt !== 'string' || Date.parse(confirmation.expiresAt) <= Date.now()) {
       return failure(context, 'プレビューの有効期限が切れました。もう一度 AI 抽出を実行してください。', 409);
     }
-    return json(context, await createMailboxTestCalendarEvent(context.env, organizationId, access.database, { messageId: confirmation.messageId, event: confirmation.event }), 201);
+    return json(context, await createAutomation(context.env).mailboxTest.createCalendarEvent({
+      organizationId,
+      database: access.database,
+      messageId: confirmation.messageId,
+      event: confirmation.event,
+    }), 201);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Google Calendar へのテスト予定作成に失敗しました。';
     return failure(context, message, message === 'Authentication is required.' ? 401 : 500);
@@ -959,15 +765,7 @@ app.post('/api/organizations/:organizationId/recovery-requests/:requestId/execut
       .returning({ id: recoveryRequests.id }).get();
     if (!claimed) return failure(context, 'Recovery request is already being executed.', 409);
     try {
-      const keyRecord = await control.select({
-        masterKeyVersion: organizationKeys.masterKeyVersion,
-        wrappedKeyEnvelope: organizationKeys.wrappedKeyEnvelope,
-      }).from(organizationKeys).where(eq(organizationKeys.organizationId, access.organization.id)).get();
-      if (!keyRecord) throw new Error('Organization encryption key is missing.');
-      const organizationKey = await unwrapOrganizationKey(
-        { masterKeyVersion: keyRecord.masterKeyVersion, envelope: JSON.parse(keyRecord.wrappedKeyEnvelope) },
-        await masterKey(context.env.CREDENTIAL_MASTER_KEY), access.organization.id,
-      );
+      const organizationKey = await organizationKeyForRequest(context.env, access.organization.id);
       const receipt = await readRecoveryReceipt({ bucket: context.env.RECOVERY_RECEIPTS, organizationKey, organizationId: access.organization.id, idempotencyKey: request.idempotencyKey });
       if (!receipt) throw new Error('The requested recovery receipt no longer exists.');
       await restoreDeliveryRecordFromReceipt(access.database, receipt);
@@ -1216,16 +1014,7 @@ app.post('/api/public/organizations/:organizationId/line/webhook', async (contex
       eq(organizationConnections.status, 'active'),
     )).limit(1).get();
     if (!connection) return failure(context, 'LINE webhook was not found.', 404);
-    const keyRecord = await drizzleControlDatabase(context.env.CONTROL_DB).select({
-      masterKeyVersion: organizationKeys.masterKeyVersion,
-      wrappedKeyEnvelope: organizationKeys.wrappedKeyEnvelope,
-    }).from(organizationKeys).where(eq(organizationKeys.organizationId, organizationId)).get();
-    if (!keyRecord) throw new Error('Organization encryption key is missing.');
-    const organizationKey = await unwrapOrganizationKey(
-      { masterKeyVersion: keyRecord.masterKeyVersion, envelope: JSON.parse(keyRecord.wrappedKeyEnvelope) },
-      await masterKey(context.env.CREDENTIAL_MASTER_KEY),
-      organizationId,
-    );
+    const organizationKey = await organizationKeyForRequest(context.env, organizationId);
     const credential = await connectionCredential(connection, organizationKey, organizationId, 'line');
     const rawBody = await context.req.text();
     const signature = context.req.header('x-line-signature') ?? '';
@@ -1319,18 +1108,7 @@ app.all('/api/*', async (context) => {
 });
 
 const sessionFromRequest = async (request: Request, env: Bindings): Promise<SessionRow | null> => {
-  const id = requestCookie(request.headers.get('Cookie') ?? undefined, SESSION_COOKIE);
-  if (!id) return null;
-  return await drizzleControlDatabase(env.CONTROL_DB).select({
-    id: sessions.id,
-    identity_id: sessions.identityId,
-    email: identities.email,
-    display_name: identities.displayName,
-  }).from(sessions).innerJoin(identities, eq(identities.id, sessions.identityId)).where(and(
-    eq(sessions.id, id),
-    gt(sessions.expiresAt, now()),
-    isNull(sessions.revokedAt),
-  )).get() ?? null;
+  return createRequestContext(request, env).session();
 };
 
 export { app };
