@@ -30,6 +30,33 @@ describe('attachment conversion for Event Details', () => {
     expect(converted).toMatchObject({ converter: 'workers_ai', text: '# Workbook summary\n\nRows: 16' });
   });
 
+  it('compacts Workers AI XLSX tables to TSV before the mail flow uses them', async () => {
+    const source = [
+      '# GEMINI-FILE-PROBE-001',
+      '',
+      '| __EMPTY_1 | Event date  | Time        | Venue                    | __EMPTY_2 |',
+      '| ----------- | ----------- | ----------- | ------------------------ | --------- |',
+      '|             | 2026-08-18  | 14:30-16:00 | 名古屋\\|イノベーションセンター |           |',
+      '|             |             |             |                          |           |',
+    ].join('\n');
+    const [converted] = await convertAttachmentsForEventExtraction([{
+      attachmentId: 'attachment-xlsx',
+      filename: 'event-invitation.xlsx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      size: 3,
+      data: 'eGxzeA==',
+    }], { toMarkdown: vi.fn().mockResolvedValue({
+      format: 'markdown', name: 'event-invitation.xlsx', mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', tokens: 200, data: source,
+    }) });
+
+    expect(converted).toMatchObject({
+      converter: 'workers_ai',
+      tokens: 200,
+      text: '# GEMINI-FILE-PROBE-001\n\nEvent date\tTime\tVenue\n2026-08-18\t14:30-16:00\t名古屋\\|イノベーションセンター',
+    });
+    expect(converted?.selectedTokens).toBeLessThan(200);
+  });
+
   it('passes all Workers AI Markdown without a shared token budget or truncation', async () => {
     const markdown = {
       toMarkdown: vi.fn(async (document: { name: string }) => ({

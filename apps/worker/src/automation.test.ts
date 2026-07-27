@@ -454,7 +454,14 @@ describe('Manual mailbox test', () => {
       name: '式典案内.xlsx',
       mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       tokens: 32,
-      data: '# GEMINI-FILE-PROBE-001\n日時: 2026-08-18 14:30-16:00\n会場: 名古屋イノベーションセンター 3階 会議室A',
+      data: [
+        '# GEMINI-FILE-PROBE-001',
+        '',
+        '| __EMPTY_1 | 日時         | 時間         | 会場                                      | __EMPTY_2 |',
+        '| ----------- | ------------ | ------------ | ----------------------------------------- | --------- |',
+        '|             | 2026-08-18   | 14:30-16:00  | 名古屋イノベーションセンター 3階 会議室A |           |',
+        '|             |              |              |                                           |           |',
+      ].join('\n'),
     }) };
     (fixture.environment as unknown as { AI: typeof markdown }).AI = markdown;
     const xlsx = await readFile(new URL('../../../fixtures/gemini-file-probe/event-invitation.xlsx', import.meta.url));
@@ -535,6 +542,11 @@ describe('Manual mailbox test', () => {
     expect(requestResponse.status).toBe(200);
     expect(geminiRequestPreview.data.request.contents?.[0]?.parts).toEqual(expect.arrayContaining([
       expect.objectContaining({ text: expect.stringContaining('GEMINI-FILE-PROBE-001') }),
+      expect.objectContaining({ text: expect.stringContaining('日時\t時間\t会場') }),
+    ]));
+    expect(geminiRequestPreview.data.request.contents?.[0]?.parts).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ text: expect.stringContaining('__EMPTY_1') }),
+      expect.objectContaining({ text: expect.stringContaining('| ----------- |') }),
     ]));
     expect(geminiRequestPreview.data.request.contents?.[0]?.parts).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ inlineData: expect.anything() }),

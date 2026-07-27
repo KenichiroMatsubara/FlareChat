@@ -1,4 +1,5 @@
 import { normalizeAttachments, type AttachmentContent } from './normalization';
+import { compactXlsxMarkdown } from './xlsx-markdown';
 
 export interface MarkdownConversionResult {
   format: 'markdown' | 'text' | 'error';
@@ -21,7 +22,7 @@ export interface ConvertedAttachment {
   /** Workers AI's conversion estimate (or the local fallback estimate). */
   text: string;
   tokens: number;
-  /** The complete conversion is admitted to the Gemini extraction request. */
+  /** Estimated tokens of the conversion text admitted to the Gemini extraction request. */
   selectedTokens: number;
   converter: 'workers_ai' | 'local_office';
 }
@@ -32,6 +33,11 @@ const localOfficeMimeTypes = new Set([
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ]);
+
+const xlsxMimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+const isXlsx = (attachment: AttachmentContent): boolean =>
+  attachment.mimeType.toLowerCase() === xlsxMimeType || attachment.filename.toLowerCase().endsWith('.xlsx');
 
 const decodedBase64 = (value: string): Uint8Array => {
   if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(value)) throw new Error('Attachment data is not valid base64.');
@@ -72,21 +78,26 @@ const convertedAttachment = async (
   if (!result.tokens || result.tokens < 1 || !result.data?.trim()) {
     throw new Error(`${attachment.filename} の変換結果が空です。`);
   }
-  const text = result.data.trim();
+  const sourceText = result.data.trim();
+  const compactedXlsx = result.format === 'markdown' && isXlsx(attachment);
+  const text = compactedXlsx ? compactXlsxMarkdown(sourceText).trim() : sourceText;
+  if (!text) throw new Error(`${attachment.filename} の圧縮後の変換結果が空です。`);
+  const selectedTokens = compactedXlsx ? Math.ceil(text.length / 4) : result.tokens;
   return {
     attachmentId: attachment.attachmentId,
     filename: attachment.filename,
     originalMimeType: attachment.mimeType,
     text,
     tokens: result.tokens,
-    selectedTokens: result.tokens,
+    selectedTokens,
     converter: 'workers_ai',
   };
 };
 
 /**
  * Converts Source Message attachments to text for event extraction without
- * selecting, truncating, or otherwise changing the Markdown conversion.
+ * selecting or truncating it. XLSX Markdown is compacted mechanically to TSV
+ * before admission; other formats retain their Workers AI conversion verbatim.
  * Office normalization is retained only when Workers AI conversion is unavailable
  * or unusable; unconvertible files are errors, never silently omitted.
  */
