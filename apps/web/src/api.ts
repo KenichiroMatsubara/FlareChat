@@ -12,6 +12,7 @@ export interface AutomationStatus {
   email: string;
   displayName: string;
   enabled: boolean;
+  status: 'active' | 'reauthentication_required' | 'disconnected';
   lastSyncedAt: string | null;
   lastError: string | null;
   created: number;
@@ -121,6 +122,13 @@ export interface MailboxTestPreview extends MailboxTestMatch {
   expiresAt: string;
 }
 
+export interface OrganizationTask {
+  id: string; title: string; deadline: string; assigneeRole: 'organizer' | 'treasurer'; assigneeIdentityId: string | null; assigneeName: string; sourceMessageSubject: string; description: string; remarks: string; completed: boolean; completedAt: string | null;
+}
+
+export interface TaskRoleAssignment { role: 'organizer' | 'treasurer'; identityId: string; displayName: string; }
+export interface TaskRoleConfiguration { members: Array<{ identityId: string; displayName: string }>; assignments: TaskRoleAssignment[]; }
+
 /** The Gemini JSON body prepared for review; credentials are never included. */
 export interface MailboxTestGeminiRequest extends MailboxTestMatch {
   request: Record<string, unknown>;
@@ -154,6 +162,8 @@ export const api = {
   bootstrap: (): Promise<AppState> => request('/api/bootstrap'),
   beginGoogleEntry: (intent: 'login' | 'organization_setup'): Promise<{ authorizationUrl: string }> =>
     request('/api/entry/google', { method: 'POST', body: JSON.stringify({ intent }) }),
+  reauthorizeAutomationInbox: (organizationId: string): Promise<{ authorizationUrl: string }> =>
+    request(`/api/organizations/${encodeURIComponent(organizationId)}/automation/reauthorize`, { method: 'POST' }),
   confirmOnboarding: (name: string): Promise<{ accepted: boolean }> =>
     request('/api/onboarding/confirm', { method: 'POST', body: JSON.stringify({ name }) }),
   retryOnboarding: (): Promise<{ accepted: boolean }> => request('/api/onboarding/retry', { method: 'POST' }),
@@ -162,6 +172,10 @@ export const api = {
   organizationDashboard: (organizationId: string): Promise<OrganizationDashboard> => request(`/api/organizations/${encodeURIComponent(organizationId)}/dashboard`),
   organizationRules: (organizationId: string): Promise<OrganizationRule[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules`),
   organizationDeliveryAudit: (organizationId: string): Promise<DeliveryAuditRecord[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/audit/deliveries`),
+  organizationTasks: (organizationId: string): Promise<OrganizationTask[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/tasks`),
+  organizationTaskRoles: (organizationId: string): Promise<TaskRoleConfiguration> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles`),
+  assignOrganizationTaskRole: (organizationId: string, role: 'organizer' | 'treasurer', identityId: string): Promise<TaskRoleAssignment> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles/${role}`, { method: 'PUT', body: JSON.stringify({ identityId }) }),
+  updateOrganizationTask: (organizationId: string, taskId: string, input: { completed?: boolean; remarks?: string }): Promise<OrganizationTask> => request(`/api/organizations/${encodeURIComponent(organizationId)}/tasks/${encodeURIComponent(taskId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   createOrganizationRule: (organizationId: string, input: OrganizationRuleInput): Promise<OrganizationRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules`, {
     method: 'POST',
     body: JSON.stringify(input),

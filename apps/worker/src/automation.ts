@@ -3,6 +3,7 @@ import { and, count, eq, isNotNull } from 'drizzle-orm';
 import { decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
 import { fromBase64Url } from './encoding';
 import { buildGeminiEventDetailsRequest, type EventDetails, type GeminiEventDetailsRequest, type MailExtraction } from './event-details';
+import { createTaskWorkflow } from './tasks';
 import type { SourceAttachmentContent } from './drive-attachments';
 import type { GoogleTokenSet } from './google';
 import { productionAutomationDependencies } from './automation/providers';
@@ -208,6 +209,29 @@ const accessTokenForInbox = async (
   return refreshed.accessToken;
 };
 
+const verifyOrganizationInboxCredentialWithDependencies = async (
+  env: Bindings,
+  organizationId: string,
+  database: D1Database,
+  dependencies: AutomationDependencies,
+): Promise<void> => {
+  const db = drizzleOrganizationDatabase(database);
+  const inbox = await db.select().from(googleConnections).where(and(
+    eq(googleConnections.kind, 'automation_inbox'),
+    eq(googleConnections.status, 'active'),
+  )).limit(1).get();
+  if (!inbox) return;
+  try {
+    await accessTokenForInbox(env, organizationId, database, inbox, dependencies);
+  } catch (error) {
+    await db.update(googleConnections).set({
+      status: 'reauthentication_required',
+      lastError: error instanceof Error ? error.message : 'Automation Inbox token refresh failed.',
+      updatedAt: now(),
+    }).where(eq(googleConnections.id, inbox.id)).run();
+  }
+};
+
 /** Uses the Organization-scoped Gemini connection when it is configured. */
 const geminiExtraction = async (
   env: Bindings,
@@ -234,18 +258,6 @@ const geminiExtraction = async (
   } catch {
     return null;
   }
-};
-
-const geminiCandidates = async (
-  env: Bindings,
-  organizationId: string,
-  database: D1Database,
-  source: string,
-  attachments: SourceAttachmentContent[],
-  dependencies: AutomationDependencies,
-): Promise<EventCandidate[] | null | undefined> => {
-  const extraction = await geminiExtraction(env, organizationId, database, source, attachments, dependencies);
-  return extraction && extraction.events.map((event) => ({ title: event.title, startsAt: event.startsAt, endsAt: event.endsAt }));
 };
 
 /** Reuses the production AI provider for a confirmed, manual Mailbox Test preview. */
@@ -494,8 +506,8 @@ const processOrganizationMessage = async (
       .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
   }
-  const aiCandidates = await geminiCandidates(env, organizationId, database, `${subject}\n${body}`, attachmentContents, dependencies);
-  if (aiCandidates === null) {
+  const extraction = await geminiExtraction(env, organizationId, database, `${subject}\n${body}`, attachmentContents, dependencies);
+  if (extraction === null) {
     await db.insert(automationExceptions).values({
       id: crypto.randomUUID(),
       sourceMessageId,
@@ -509,11 +521,19 @@ const processOrganizationMessage = async (
     return;
   }
   const fallbackCandidate = extractEventCandidate(subject, body);
-  const candidates = aiCandidates ?? (fallbackCandidate ? [fallbackCandidate] : []);
+  const candidates = extraction?.events.map((event) => ({ title: event.title, startsAt: event.startsAt, endsAt: event.endsAt })) ?? (fallbackCandidate ? [fallbackCandidate] : []);
   if (!candidates.length) {
     await db.update(sourceMessages).set({ state: 'skipped', processedAt: now() })
       .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
+  }
+  if (extraction?.tasks.length) {
+    await createTaskWorkflow(db).createFromSourceMessage({
+      organizationId,
+      sourceMessageId,
+      sourceMessageSubject: subject,
+      extractedTasks: extraction.tasks,
+    });
   }
   const publications = await Promise.all(attachmentContents.map(async (attachment) => ({
     attachment,
@@ -710,6 +730,8 @@ export const createAutomation = (
   return {
     runOrganization: (input: { organizationId: string; database: D1Database }): Promise<AutomationSummary> =>
       runOrganizationAutomationWithGoogle(env, input.organizationId, input.database, dependencies),
+    verifyOrganizationInboxCredential: (input: { organizationId: string; database: D1Database }): Promise<void> =>
+      verifyOrganizationInboxCredentialWithDependencies(env, input.organizationId, input.database, dependencies),
     runEnabledOrganizations: (): Promise<void> => runEnabledAutomationsWithDependencies(env, dependencies),
     mailboxTest: {
       search: (input: { organizationId: string; database: D1Database; subject: string }): Promise<MailboxTestMatch[]> =>

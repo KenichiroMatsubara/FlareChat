@@ -287,3 +287,15 @@ _Avoid_: private comment, admin memo
 **Recipient**:
 A Recipient Profile selected by an Automation Rule to receive a Scheduled Event invitation or LINE notification.
 _Avoid_: user, attendee
+
+**Task**:
+An Organization-owned, deadline-bearing work item extracted once from a Source Message and tracked until completed.
+_Avoid_: reminder, to-do
+
+**Operational Task Role**:
+The responsibility used to route a Task—currently Organizer or Treasurer—distinct from an Organization member's application authorization role.
+_Avoid_: member role, permission
+
+**Task Assignment**:
+The current named Organization member who holds an Operational Task Role; each Task retains the assignee identity and name captured when it was created.
+_Avoid_: recipient assignment, authorization

@@ -20,6 +20,7 @@ describe('application routes', () => {
       connections: 'connections',
       rules: 'rules',
       mailboxTest: 'mailbox-test',
+      tasks: 'tasks',
     });
   });
 
@@ -57,5 +58,16 @@ describe('application routes', () => {
     const unknown = createMemoryRouter(createAppRoutes({ bootstrap: async () => ready }), { initialEntries: ['/unknown'] });
     await unknown.initialize();
     expect(unknown.state.matches.at(-1)?.route.path).toBe('*');
+  });
+
+  it('opens the Organization Task table as a durable deep link', async () => {
+    const ready = {
+      kind: 'ready',
+      identity: { email: 'owner@example.com', displayName: 'Owner' },
+      organizations: [{ organizationId: 'org-1', name: 'Example', role: 'owner', status: 'active' }],
+    } as AppState;
+    const router = createMemoryRouter(createAppRoutes({ bootstrap: async () => ready }), { initialEntries: ['/organizations/org-1/tasks'] });
+    await router.initialize();
+    expect(router.state.matches.at(-1)?.route.path).toBe('tasks');
   });
 });

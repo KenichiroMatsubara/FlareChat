@@ -1,10 +1,16 @@
-import { CircleAlert, LogOut, Mail, Play, Settings, SlidersHorizontal } from 'lucide-react';
+import { CheckSquare, CircleAlert, LogOut, Mail, Play, Settings, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 
-import type { AutomationStatus, AutomationSummary, MailboxTestGeminiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationConnections, OrganizationMembership, OrganizationRule, OrganizationRuleInput } from './api';
-import { AutomationPage, ConnectionsPage, MailboxTestPage, RulesPage } from './dashboard-pages';
+import type { AutomationStatus, AutomationSummary, MailboxTestGeminiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationConnections, OrganizationMembership, OrganizationRule, OrganizationRuleInput, OrganizationTask, TaskRoleAssignment } from './api';
+import { AutomationPage, ConnectionsPage, MailboxTestPage, RulesPage, TasksPage } from './dashboard-pages';
 
-export type Page = 'automation' | 'connections' | 'rules' | 'mail-test';
+export type Page = 'automation' | 'connections' | 'rules' | 'mail-test' | 'tasks';
+
+export const needsGoogleReauthentication = (error: string): boolean =>
+  /token has been expired or revoked/iu.test(error);
+
+export const GoogleReauthenticationAction = ({ onClick }: { onClick: () => void }) =>
+  <button className="secondary credential-recovery" onClick={onClick}><ShieldCheck size={16} />Automation Inbox を再接続する</button>;
 
 export interface DashboardProps {
   page?: Page;
@@ -15,6 +21,7 @@ export interface DashboardProps {
   onRun: () => void;
   onSetEnabled: (enabled: boolean) => void;
   onLogout: () => void;
+  onReauthenticate: () => void;
   organization: { name: string; role: string } | null;
   organizationId?: string;
   organizations?: OrganizationMembership[];
@@ -49,6 +56,11 @@ export interface DashboardProps {
   organizationRules: OrganizationRule[];
   ruleBusy: boolean;
   onCreateRule: (input: OrganizationRuleInput) => Promise<void>;
+  organizationTasks: OrganizationTask[];
+  onUpdateTask: (taskId: string, input: { completed?: boolean; remarks?: string }) => void;
+  taskRoleAssignments: TaskRoleAssignment[];
+  taskMembers: Array<{ identityId: string; displayName: string }>;
+  onAssignTaskRole: (role: 'organizer' | 'treasurer', identityId: string) => void;
 }
 
 export const Dashboard = (props: DashboardProps) => {
@@ -60,7 +72,10 @@ export const Dashboard = (props: DashboardProps) => {
       ? <ConnectionsPage {...props} />
       : page === 'rules'
         ? <RulesPage {...props} />
-        : <MailboxTestPage {...props} />;
+      : page === 'tasks' ? <TasksPage {...props} /> : <MailboxTestPage {...props} />;
+  const requiresGoogleReauthentication = needsGoogleReauthentication(props.error)
+    || props.automation?.status === 'reauthentication_required';
+  const recoveryMessage = props.error || 'Automation Inbox の認証が失効しています。Google に再接続してください。';
   return <div className="app-shell">
     <header className="app-topbar">
       <div className="app-brand"><span><Mail size={20} /></span><strong>Mail Automation</strong></div>
@@ -69,12 +84,13 @@ export const Dashboard = (props: DashboardProps) => {
         <NavLink to="../automation" className={({ isActive }) => isActive ? 'active' : ''}><Play size={16} />自動化</NavLink>
         <NavLink to="../connections" className={({ isActive }) => isActive ? 'active' : ''}><Settings size={16} />接続設定</NavLink>
         <NavLink to="../rules" className={({ isActive }) => isActive ? 'active' : ''}><SlidersHorizontal size={16} />ルール</NavLink>
+        <NavLink to="../tasks" className={({ isActive }) => isActive ? 'active' : ''}><CheckSquare size={16} />タスク</NavLink>
         <NavLink to="../mailbox-test" className={({ isActive }) => isActive ? 'active' : ''}><SlidersHorizontal size={16} />メールテスト</NavLink>
       </nav>
       <button className="topbar-logout" onClick={props.onLogout} disabled={props.busy}><LogOut size={16} />ログアウト</button>
     </header>
     <main className="app-content">
-      {props.error && <p className="dashboard-error"><CircleAlert size={17} />{props.error}</p>}
+      {(props.error || requiresGoogleReauthentication) && <div className="dashboard-error"><p><CircleAlert size={17} />{recoveryMessage}</p>{requiresGoogleReauthentication && <GoogleReauthenticationAction onClick={props.onReauthenticate} />}</div>}
       {content}
     </main>
   </div>;

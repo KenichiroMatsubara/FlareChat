@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { app } from './api';
+import { encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
 import { randomToken } from './encoding';
 import { GOOGLE_IDENTITY_SCOPES, GOOGLE_SCOPES } from './google';
 import { createTestApp, type TestApp } from '../test/app';
+import { createAutomationTestApp } from '../test/automation';
 import { createTestD1Database, type TestD1Database } from '../test/d1';
 
 let fixture: TestApp | undefined;
@@ -99,6 +101,96 @@ describe('application entry', () => {
         organizations: [{ organizationId: 'organization-1', role: 'owner' }],
       },
     });
+  });
+
+  it('checks an expired Automation Inbox token at login and records a required reauthentication', async () => {
+    fixture = await createAutomationTestApp();
+    const keyRecord = fixture.control.row<{ master_key_version: string; wrapped_key_envelope: string }>(
+      "SELECT master_key_version, wrapped_key_envelope FROM organization_keys WHERE organization_id = 'organization-1'",
+    );
+    const organizationKey = await unwrapOrganizationKey({
+      masterKeyVersion: keyRecord?.master_key_version ?? '',
+      envelope: JSON.parse(keyRecord?.wrapped_key_envelope ?? '{}'),
+    }, await masterKey(fixture.environment.CREDENTIAL_MASTER_KEY), 'organization-1');
+    const expiredToken = await encrypt(JSON.stringify({
+      accessToken: 'expired-access',
+      refreshToken: 'expired-refresh',
+      expiresAt: '2000-01-01T00:00:00.000Z',
+      scopes: GOOGLE_SCOPES,
+      tokenType: 'Bearer',
+    }), organizationKey, 'google-connection:organization-1:automation-inbox');
+    fixture.organization.execute(
+      "UPDATE google_connections SET token_envelope = ? WHERE id = 'inbox-1'",
+      JSON.stringify(expiredToken),
+    );
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === 'https://oauth2.googleapis.com/token') {
+        return new Response(JSON.stringify({ error: 'invalid_grant', error_description: 'Token has been expired or revoked.' }), { status: 400 });
+      }
+      throw new Error(`Unexpected Google request: ${url}`);
+    }));
+
+    const bootstrap = await app.fetch(fixture.request('/api/bootstrap'), fixture.environment);
+
+    expect(bootstrap.status).toBe(200);
+    expect(fixture.organization.row<{ status: string; last_error: string | null }>(
+      "SELECT status, last_error FROM google_connections WHERE id = 'inbox-1'",
+    )).toEqual({ status: 'reauthentication_required', last_error: 'Token has been expired or revoked.' });
+  });
+
+  it('reconnects a reauthentication-required Automation Inbox with its complete Google grant', async () => {
+    fixture = await createAutomationTestApp();
+    fixture.organization.execute(
+      "UPDATE google_connections SET google_subject = 'google-subject-1', status = 'reauthentication_required', last_error = 'Token has been expired or revoked.' WHERE id = 'inbox-1'",
+    );
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === 'https://oauth2.googleapis.com/token') {
+        return new Response(JSON.stringify({
+          access_token: 'reconnected-access',
+          refresh_token: 'reconnected-refresh',
+          expires_in: 3_600,
+          scope: GOOGLE_SCOPES.join(' '),
+          token_type: 'Bearer',
+        }));
+      }
+      if (url === 'https://openidconnect.googleapis.com/v1/userinfo') {
+        return new Response(JSON.stringify({
+          sub: 'google-subject-1',
+          email: 'owner@example.com',
+          name: 'Owner',
+        }));
+      }
+      if (url === 'https://gmail.googleapis.com/gmail/v1/users/me/profile') {
+        return new Response(JSON.stringify({ historyId: 'history-after-reconnect' }));
+      }
+      throw new Error(`Unexpected Google request: ${url}`);
+    }));
+
+    const started = await app.fetch(fixture.request('/api/organizations/organization-1/automation/reauthorize', {
+      method: 'POST',
+    }), fixture.environment);
+
+    expect(started.status).toBe(201);
+    const startedBody = await started.json() as { data: { authorizationUrl: string } };
+    const authorization = new URL(startedBody.data.authorizationUrl);
+    expect(authorization.searchParams.get('scope')).toBe(GOOGLE_SCOPES.join(' '));
+
+    const callback = await app.fetch(new Request(
+      `https://app.example.com/oauth/google/callback?code=fixture-code&state=${encodeURIComponent(authorization.searchParams.get('state') ?? '')}`,
+    ), fixture.environment);
+    const redirect = new URL(callback.headers.get('location') ?? 'https://app.example.com');
+
+    expect(redirect.pathname).toBe('/organizations/organization-1/automation');
+    expect(callback.headers.get('set-cookie')).toContain('mail_session=');
+    expect(fixture.organization.rows<{ status: string; last_error: string | null; gmail_history_id: string }>(
+      "SELECT status, last_error, gmail_history_id FROM google_connections WHERE id = 'inbox-1'",
+    )).toEqual([{
+      status: 'active',
+      last_error: null,
+      gmail_history_id: 'history-after-reconnect',
+    }]);
   });
 
   it('opens Organization setup from one complete Google grant without a setup cookie', async () => {

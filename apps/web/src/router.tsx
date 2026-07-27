@@ -18,6 +18,7 @@ export const organizationRoutePaths = {
   connections: 'connections',
   rules: 'rules',
   mailboxTest: 'mailbox-test',
+  tasks: 'tasks',
 } as const;
 
 export const organizationUrl = (
@@ -87,6 +88,7 @@ const rootRoute = (client: RouterClient) => ({
         { path: 'connections', element: <OrganizationPage page="connections" /> },
         { path: 'rules', element: <OrganizationPage page="rules" /> },
         { path: 'mailbox-test', element: <OrganizationPage page="mail-test" /> },
+        { path: 'tasks', element: <OrganizationPage page="tasks" /> },
       ],
     },
     { path: '*', element: <NotFoundRoute /> },

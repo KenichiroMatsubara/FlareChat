@@ -21,7 +21,13 @@ export const createProvisioningTestApp = async (): Promise<ProvisioningTestApp> 
   const deploymentKey = await masterKey(TEST_MASTER_KEY);
   const wrapped = await createOrganizationKey(deploymentKey, 'v1', 'organization-1');
   const provisioningCredential = await encrypt(
-    JSON.stringify({ accessToken: 'access-1', refreshToken: 'refresh-1', scopes: ['scope-1'] }),
+    JSON.stringify({
+      accessToken: 'access-1',
+      refreshToken: 'refresh-1',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      scopes: ['scope-1'],
+      tokenType: 'Bearer',
+    }),
     deploymentKey,
     'automation-inbox-token:google-subject-1',
   );

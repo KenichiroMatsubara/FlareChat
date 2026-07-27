@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 
+import { beginGoogleEntry, entryConfigurationError } from '../entry';
 import { createAutomation } from '../automation';
 import { failure, json } from '../response';
 import { createRequestContext } from './request-context';
@@ -32,6 +33,22 @@ automationRoutes.post('/organizations/:organizationId/automation/run', async (co
     }));
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : '自動化を実行できませんでした。', 409);
+  }
+});
+
+automationRoutes.post('/organizations/:organizationId/automation/reauthorize', async (context) => {
+  try {
+    const access = await createRequestContext(context.req.raw, context.env).organization(context.req.param('organizationId'));
+    if (!['owner', 'admin'].includes(access.role)) return failure(context, 'Automation Inbox can only be reconnected by an Owner or Admin.', 403);
+    const invalid = entryConfigurationError(context.env);
+    if (invalid) return failure(context, invalid, 503);
+    return json(context, {
+      authorizationUrl: await beginGoogleEntry(context.env, context.req.raw, 'organization_setup', {
+        recoveryOrganizationId: access.organization.id,
+      }),
+    }, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Automation Inbox could not be reconnected.', 403);
   }
 });
 

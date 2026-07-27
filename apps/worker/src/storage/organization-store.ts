@@ -6,6 +6,7 @@ import { events, googleConnections, sourceMessages } from './organization-schema
 export interface AutomationStatus {
   email: string;
   enabled: boolean;
+  status: 'active' | 'reauthentication_required' | 'disconnected';
   lastSyncedAt: string | null;
   lastError: string | null;
   created: number;
@@ -27,12 +28,12 @@ export const createOrganizationStore = (database: OrganizationDatabase): Organiz
     const inbox = await database.select({
       email: googleConnections.inboxAddress,
       enabled: googleConnections.enabled,
+      status: googleConnections.status,
       lastSyncedAt: googleConnections.lastSyncedAt,
       lastError: googleConnections.lastError,
     }).from(googleConnections)
       .where(and(
         eq(googleConnections.kind, 'automation_inbox'),
-        eq(googleConnections.status, 'active'),
       ))
       .limit(1)
       .get();

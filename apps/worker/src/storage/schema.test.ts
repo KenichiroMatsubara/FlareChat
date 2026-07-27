@@ -40,7 +40,7 @@ const tableNames = (kind: 'control' | 'organization'): string[] => {
 describe('canonical D1 schemas', () => {
   it('has one Drizzle-generated initial migration per database kind', () => {
     expect(migrations('control')).toEqual(['0000_initial.sql']);
-    expect(migrations('organization')).toEqual(['0000_initial.sql']);
+    expect(migrations('organization')).toEqual(['0000_initial.sql', '0001_tasks.sql']);
   });
 
   it('creates only Control-plane tables in Control D1', () => {

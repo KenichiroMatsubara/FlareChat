@@ -2,8 +2,10 @@ import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm';
 
 import type { AppState } from '@mail/domain';
 
+import { createAutomation } from './automation';
 import { decrypt, masterKey } from './cryptography';
 import { revokeGoogleToken } from './google';
+import { organizationDatabase } from './organization-db';
 import { createProvisioningOrganizationKey, provisionOrganization } from './provisioning';
 import { controlDatabase } from './storage/database';
 import {
@@ -194,13 +196,28 @@ export const applicationState = async (env: Bindings, session: SessionRow): Prom
     role: members.role,
     name: organizations.name,
     status: organizations.status,
+    databaseId: organizations.databaseId,
+    bindingName: organizations.bindingName,
   }).from(members).innerJoin(organizations, eq(organizations.id, members.organizationId))
     .where(and(
       eq(members.identityId, session.identity_id),
       eq(members.state, 'active'),
       isNotNull(organizations.databaseId),
     )).all();
-  if (memberships.length > 0) return { kind: 'ready', identity, organizations: memberships };
+  if (memberships.length > 0) {
+    await Promise.all(memberships.map(async (membership) => {
+      const database = organizationDatabase(env, membership.bindingName, membership.databaseId);
+      if (database) await createAutomation(env).verifyOrganizationInboxCredential({
+        organizationId: membership.organizationId,
+        database,
+      });
+    }));
+    return {
+      kind: 'ready',
+      identity,
+      organizations: memberships.map(({ organizationId, role, name, status }) => ({ organizationId, role, name, status })),
+    };
+  }
   const setup = await control.select().from(organizationSetups)
     .where(eq(organizationSetups.ownerIdentityId, session.identity_id)).get();
   if (setup) {

@@ -5,10 +5,12 @@ import { organizationProvisionings, organizations } from './storage/control-sche
 import { googleConnections } from './storage/organization-schema';
 
 import organizationSchemaMigration from '../migrations/organization/0000_initial.sql';
+import organizationTasksMigration from '../migrations/organization/0001_tasks.sql';
 import type { Bindings } from './types';
 
 const LOCAL_BINDING = /^LOCAL_ORGANIZATION_DB_\d+$/u;
 const REMOTE_QUERY = Symbol('remote-query');
+const ORGANIZATION_MIGRATIONS = ['0000_initial.sql', '0001_tasks.sql'] as const;
 
 interface RemoteQuery {
   sql: string;
@@ -69,7 +71,8 @@ const localBindings = (env: Bindings): string[] =>
     .sort((left, right) => left.localeCompare(right, 'en', { numeric: true }));
 
 const migrationStatements = (): string[] =>
-  organizationSchemaMigration
+  [organizationSchemaMigration, organizationTasksMigration]
+    .join('\n--> statement-breakpoint\n')
     .split('--> statement-breakpoint')
     .map((statement) => statement.trim())
     .filter(Boolean);
@@ -83,6 +86,8 @@ const initializeDatabase = async (database: D1Database): Promise<void> => {
     'PRAGMA defer_foreign_keys = on',
     ...drops,
     ...migrationStatements(),
+    'CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)',
+    ...ORGANIZATION_MIGRATIONS.map((name) => `INSERT OR IGNORE INTO d1_migrations (name) VALUES ('${name}')`),
     'PRAGMA defer_foreign_keys = off',
   ];
   await database.batch(statements.map((statement) => database.prepare(statement)));

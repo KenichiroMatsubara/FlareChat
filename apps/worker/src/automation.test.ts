@@ -88,6 +88,58 @@ describe('Source Message event extraction', () => {
 });
 
 describe('Organization Automation Inbox scheduling', () => {
+  it('creates one named Task from a Source Message and does not duplicate it when the inbox run is retried', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    const assignment = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/task-roles/organizer',
+      { identityId: 'identity-1' },
+      'PUT',
+    ), fixture.environment);
+    expect(assignment.status).toBe(200);
+
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/history')) return new Response(JSON.stringify({
+        historyId: 'history-after-connection',
+        history: [{ messagesAdded: [{ message: { id: 'gmail-message-task-1' } }] }],
+      }), { status: 200 });
+      if (url.includes('/messages/gmail-message-task-1')) return sourceMessageResponse();
+      if (url.includes('generativelanguage.googleapis.com')) return new Response(JSON.stringify({
+        candidates: [{ content: { parts: [{ text: JSON.stringify({
+          events: [{
+            title: '例会',
+            startsAt: '2026-08-03T19:00:00+09:00',
+            endsAt: '2026-08-03T21:30:00+09:00',
+            timeZone: 'Asia/Tokyo',
+            location: '',
+            description: '例会です',
+          }],
+          tasks: [{
+            title: '出席を取りまとめる',
+            deadline: '2026-07-31',
+            assigneeRole: 'organizer',
+            description: '出席登録を確認する',
+          }],
+        }) }] } }],
+      }), { status: 200 });
+      return new Response(JSON.stringify({ id: 'calendar-event-task-1' }), { status: 200 });
+    }));
+
+    await runEnabledAutomations(fixture.environment);
+    await runEnabledAutomations(fixture.environment);
+    const response = await app.fetch(fixture.request('/api/organizations/organization-1/tasks'), fixture.environment);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      data: [{
+        title: '出席を取りまとめる',
+        deadline: '2026-07-31',
+        assigneeName: 'Owner',
+        completed: false,
+        sourceMessageSubject: '例会のお知らせ',
+      }],
+    });
+  });
+
   it('creates a Scheduled Event through the Automation interface with an injected Google adapter', async () => {
     fixture = await createAutomationTestApp();
     const automation = createAutomation(fixture.environment, {

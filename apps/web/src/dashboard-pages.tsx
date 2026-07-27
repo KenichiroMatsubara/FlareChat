@@ -23,6 +23,22 @@ export const AutomationPage = (props: DashboardProps) => <section className="pag
   </> : <section className="empty-page"><Mail size={30} /><h2>Googleアカウントを接続してください</h2><p>接続後、このページから自動化を操作できます。</p></section>}
 </section>;
 
+export const TasksPage = (props: DashboardProps) => {
+  const [assignee, setAssignee] = useState('');
+  const [event, setEvent] = useState('');
+  const assignees = [...new Map(props.organizationTasks.map((task) => [task.assigneeIdentityId ?? task.assigneeName, task.assigneeName])).entries()];
+  const events = [...new Set(props.organizationTasks.map((task) => task.sourceMessageSubject))];
+  const visible = props.organizationTasks.filter((task) => (!assignee || (task.assigneeIdentityId ?? task.assigneeName) === assignee) && (!event || task.sourceMessageSubject === event));
+  const today = new Date().toISOString().slice(0, 10);
+  const near = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
+  return <section className="page-layout tasks-page">
+    <div className="page-title"><p>ORGANIZATION TASKS</p><h1>タスク</h1><span>Source Message から抽出された期限タスクを、担当者ごとに管理します。</span></div>
+    {props.canManage && <section className="task-role-assignments"><strong>タスク担当の割り当て</strong>{(['organizer', 'treasurer'] as const).map((role) => <label key={role}>{role === 'organizer' ? '幹事' : '会計'}<select value={props.taskRoleAssignments.find((assignment) => assignment.role === role)?.identityId ?? ''} onChange={(event) => { if (event.target.value) props.onAssignTaskRole(role, event.target.value); }}><option value="">未割り当て</option>{props.taskMembers.map((member) => <option key={member.identityId} value={member.identityId}>{member.displayName}</option>)}</select></label>)}</section>}
+    <section className="task-filters"><label>担当者<select value={assignee} onChange={(event) => setAssignee(event.target.value)}><option value="">すべて</option>{assignees.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label><label>イベント<select value={event} onChange={(event) => setEvent(event.target.value)}><option value="">すべて</option>{events.map((name) => <option key={name} value={name}>{name}</option>)}</select></label><button className="secondary" onClick={() => { setAssignee(''); setEvent(''); }}>フィルターをリセット</button></section>
+    <section className="tasks-table-wrap"><table className="tasks-table"><thead><tr><th>完了</th><th>期限</th><th>担当者</th><th>イベント名</th><th>内容</th><th>備考</th></tr></thead><tbody>{visible.map((task) => <tr key={task.id} className={task.completed ? 'completed' : task.deadline < today ? 'overdue' : task.deadline <= near ? 'near-deadline' : ''}><td><input aria-label={`${task.title}を完了`} type="checkbox" checked={task.completed} disabled={props.busy} onChange={(event) => props.onUpdateTask(task.id, { completed: event.target.checked })} /></td><td>{task.deadline}</td><td>{task.assigneeName}</td><td>{task.sourceMessageSubject}</td><td><strong>{task.title}</strong><small>{task.description}</small></td><td><textarea aria-label={`${task.title}の備考`} defaultValue={task.remarks} onBlur={(event) => props.onUpdateTask(task.id, { remarks: event.target.value })} maxLength={10_000} /></td></tr>)}</tbody></table>{visible.length === 0 && <p className="rules-empty">表示するタスクはありません。</p>}</section>
+  </section>;
+};
+
 export const ConnectionsPage = (props: DashboardProps) => {
   const settingsReady = Boolean(props.organization && props.canManage);
   const hasGemini = Boolean(props.connections?.ai.apiKeyConfigured);

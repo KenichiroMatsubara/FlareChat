@@ -193,6 +193,41 @@ export const deliveries = sqliteTable('deliveries', {
   createdAt: text('created_at').notNull(),
 });
 
+/** An Organization-local projection of the active member assigned an operational Task role. */
+export const taskRoleAssignments = sqliteTable('task_role_assignments', {
+  role: text('role', { enum: ['organizer', 'treasurer'] }).primaryKey(),
+  identityId: text('identity_id').notNull(),
+  displayName: text('display_name').notNull(),
+  assignedAt: text('assigned_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  check('task_role_assignments_role_check', sql`${table.role} in ('organizer', 'treasurer')`),
+]);
+
+export const tasks = sqliteTable('tasks', {
+  id: text('id').primaryKey(),
+  organizationId: text('organization_id').notNull(),
+  sourceMessageId: text('source_message_id').notNull().references(() => sourceMessages.id),
+  sourceMessageSubject: text('source_message_subject').notNull(),
+  title: text('title').notNull(),
+  deadline: text('deadline').notNull(),
+  assigneeRole: text('assignee_role', { enum: ['organizer', 'treasurer'] }).notNull(),
+  assigneeIdentityId: text('assignee_identity_id'),
+  assigneeName: text('assignee_name').notNull().default('未割り当て'),
+  description: text('description').notNull(),
+  remarks: text('remarks').notNull().default(''),
+  completed: integer('completed', { mode: 'boolean' }).notNull().default(false),
+  completedAt: text('completed_at'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  check('tasks_assignee_role_check', sql`${table.assigneeRole} in ('organizer', 'treasurer')`),
+  check('tasks_completed_check', sql`${table.completed} in (0, 1)`),
+  uniqueIndex('tasks_source_role_deadline_title_idx').on(table.sourceMessageId, table.assigneeRole, table.deadline, table.title),
+  index('tasks_order_idx').on(table.completed, table.deadline),
+  index('tasks_assignee_idx').on(table.assigneeIdentityId),
+]);
+
 export const deliveryArchives = sqliteTable('delivery_archives', {
   id: text('id').primaryKey(),
   objectKey: text('object_key').notNull(),

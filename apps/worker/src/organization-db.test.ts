@@ -92,6 +92,22 @@ describe('Organization database resolver', () => {
     ]);
   });
 
+  it('records the schema versions it installs for a new local Organization database', async () => {
+    const { environment, first } = localEnvironment();
+    const provisioned = await provisionOrganizationDatabase(environment, {
+      organizationId: 'organization-1',
+      bindingName: 'ORG_ORGANIZATION1',
+      databaseId: null,
+    });
+
+    await provisioned.initialize();
+
+    expect(first.rows<{ name: string }>('SELECT name FROM d1_migrations ORDER BY name')).toEqual([
+      { name: '0000_initial.sql' },
+      { name: '0001_tasks.sql' },
+    ]);
+  });
+
   it('initializes a partially applied production database through one batch seam', async () => {
     const control = createMigratedTestD1('control');
     openDatabases.push(control);

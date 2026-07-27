@@ -17,9 +17,10 @@ import { typedListRoutes } from './routes/typed-lists';
 import type { Bindings, ConnectionRow, SessionRow } from './types';
 import type { CipherEnvelope } from './cryptography';
 import type { EventDetails, MailExtraction, TaskDetails } from './event-details';
+import { createTaskWorkflow, type OperationalTaskRole } from './tasks';
 import { controlDatabase as drizzleControlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
 import { createOrganizationStore } from './storage/organization-store';
-import { members, organizations, recoveryRequests } from './storage/control-schema';
+import { identities, members, organizations, recoveryRequests } from './storage/control-schema';
 import {
   attendance,
   connections as organizationConnections,
@@ -38,6 +39,7 @@ import {
   recipientProfiles,
   ruleRevisions,
   rules as organizationRules,
+  taskRoleAssignments,
 } from './storage/organization-schema';
 
 const RECIPIENT_LINK_WINDOW_MS = 15 * 60 * 1_000;
@@ -751,6 +753,89 @@ app.patch('/api/organizations/:organizationId/members/:identityId', async (conte
     return json(context, { identityId: context.req.param('identityId'), ...(input.role === undefined ? {} : { role: input.role }), ...(input.state === undefined ? {} : { state: input.state }) });
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Member could not be updated.', 409);
+  }
+});
+
+app.put('/api/organizations/:organizationId/task-roles/:role', async (context) => {
+  try {
+    const organizationId = context.req.param('organizationId');
+    const access = await organizationForRequest(context.req.raw, context.env, organizationId);
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Operational task roles can only be changed by an Owner or Admin.', 403);
+    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
+    const role = context.req.param('role');
+    if (role !== 'organizer' && role !== 'treasurer') return failure(context, 'Unsupported operational task role.');
+    const input = await context.req.json<{ identityId?: string }>();
+    if (!input.identityId) return failure(context, 'An active Organization member is required.');
+    const member = await drizzleControlDatabase(context.env.CONTROL_DB).select({
+      identityId: members.identityId,
+      displayName: identities.displayName,
+    }).from(members).innerJoin(identities, eq(identities.id, members.identityId)).where(and(
+      eq(members.organizationId, organizationId),
+      eq(members.identityId, input.identityId),
+      eq(members.state, 'active'),
+    )).get();
+    if (!member) return failure(context, 'Task roles can only be assigned to an active Organization member.', 409);
+    await createTaskWorkflow(drizzleOrganizationDatabase(access.database)).assignRole({
+      role: role as OperationalTaskRole,
+      identityId: member.identityId,
+      displayName: member.displayName,
+    });
+    return json(context, { role, ...member });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Operational task role could not be saved.', 409);
+  }
+});
+
+app.get('/api/organizations/:organizationId/task-roles', async (context) => {
+  try {
+    const organizationId = context.req.param('organizationId');
+    const access = await organizationForRequest(context.req.raw, context.env, organizationId);
+    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
+    const membersForTasks = await drizzleControlDatabase(context.env.CONTROL_DB).select({
+      identityId: members.identityId,
+      displayName: identities.displayName,
+    }).from(members).innerJoin(identities, eq(identities.id, members.identityId)).where(and(
+      eq(members.organizationId, organizationId),
+      eq(members.state, 'active'),
+    )).all();
+    const assignments = await drizzleOrganizationDatabase(access.database).select().from(taskRoleAssignments).all();
+    return json(context, { members: membersForTasks, assignments });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Operational task roles could not be loaded.', 403);
+  }
+});
+
+app.get('/api/organizations/:organizationId/tasks', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
+    const assigneeIdentityId = context.req.query('assignee')?.trim();
+    const event = context.req.query('event')?.trim();
+    return json(context, await createTaskWorkflow(drizzleOrganizationDatabase(access.database)).list({
+      ...(assigneeIdentityId ? { assigneeIdentityId } : {}),
+      ...(event ? { event } : {}),
+    }));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Tasks could not be loaded.', 403);
+  }
+});
+
+app.patch('/api/organizations/:organizationId/tasks/:taskId', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role === 'viewer') return failure(context, 'Viewers cannot update Tasks.', 403);
+    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
+    const input = await context.req.json<{ completed?: unknown; remarks?: unknown }>();
+    if (input.completed !== undefined && typeof input.completed !== 'boolean') return failure(context, 'Completed must be a boolean.');
+    if (input.remarks !== undefined && (typeof input.remarks !== 'string' || input.remarks.length > 10_000)) return failure(context, 'Remarks must be at most 10,000 characters.');
+    const task = await createTaskWorkflow(drizzleOrganizationDatabase(access.database)).update(context.req.param('taskId'), {
+      ...(typeof input.completed === 'boolean' ? { completed: input.completed } : {}),
+      ...(typeof input.remarks === 'string' ? { remarks: input.remarks } : {}),
+    });
+    if (!task) return failure(context, 'Task was not found or no change was supplied.', 404);
+    return json(context, task);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Task could not be updated.', 409);
   }
 });
 
