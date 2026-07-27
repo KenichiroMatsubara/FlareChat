@@ -30,6 +30,9 @@
       "bucket_name": "mail-automation-recovery-receipts"
     }
   ],
+  "ai": {
+    "binding": "AI"
+  },
   "triggers": {
     "crons": ["* * * * *"]
   },
@@ -42,6 +45,9 @@
   },
   "env": {
     "local": {
+      "ai": {
+        "binding": "AI"
+      },
       "d1_databases": [
         {
           "binding": "CONTROL_DB",

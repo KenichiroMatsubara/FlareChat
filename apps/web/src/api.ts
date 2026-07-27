@@ -115,6 +115,11 @@ export interface MailboxTestPreview extends MailboxTestMatch {
   expiresAt: string;
 }
 
+/** The Gemini JSON body prepared for review; credentials are never included. */
+export interface MailboxTestGeminiRequest extends MailboxTestMatch {
+  request: Record<string, unknown>;
+}
+
 const responseBody = async <T>(response: Response): Promise<(ApiResult<T> & ApiFailure) | null> => {
   const text = await response.text();
   if (!text) return null;
@@ -178,6 +183,9 @@ export const api = {
   searchMailboxForTest: (organizationId: string, subject: string): Promise<{ messages: MailboxTestMatch[] }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/search`, {
     method: 'POST',
     body: JSON.stringify({ subject }),
+  }),
+  prepareMailboxTestGeminiRequest: (organizationId: string, messageId: string): Promise<MailboxTestGeminiRequest> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/${encodeURIComponent(messageId)}/gemini-request`, {
+    method: 'POST',
   }),
   previewMailboxTestEvent: (organizationId: string, messageId: string): Promise<MailboxTestPreview> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/${encodeURIComponent(messageId)}/preview`, {
     method: 'POST',
