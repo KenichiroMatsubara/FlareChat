@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { api } from './api';
-import { defaultOrganizationName, setupPhaseLabel, shouldShowOrganizationLoading } from './app';
+import { defaultOrganizationName, setupPhaseLabel, shouldShowOrganizationLoading } from './entry';
 
 describe('Organization setup client', () => {
   it('loads one discriminated application state from the bootstrap interface', async () => {
