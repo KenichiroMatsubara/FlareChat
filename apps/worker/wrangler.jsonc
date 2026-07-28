@@ -1,6 +1,6 @@
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
-  "name": "mail-automation",
+  "name": "flarechat",
   "main": "src/index.ts",
   "compatibility_date": "2026-07-24",
   "rules": [
@@ -19,15 +19,12 @@
   "d1_databases": [
     {
       "binding": "CONTROL_DB",
-      "database_name": "mail-automation-control",
-      "database_id": "00000000-0000-0000-0000-000000000001",
       "migrations_dir": "migrations/control"
-    },
+    }
   ],
   "r2_buckets": [
     {
-      "binding": "RECOVERY_RECEIPTS",
-      "bucket_name": "mail-automation-recovery-receipts"
+      "binding": "RECOVERY_RECEIPTS"
     }
   ],
   "ai": {

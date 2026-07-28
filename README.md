@@ -58,3 +58,27 @@ Google Cloud Console の **API とサービス → 認証情報 → このアプ
 ```bash
 npm run test:d1
 ```
+
+## Cloudflare Workers Builds による自動デプロイ
+
+Cloudflare Dashboard の **Workers & Pages → Create → Git repository** でこの
+GitHub リポジトリを接続します。初回のデプロイ時に、`wrangler.jsonc` に定義された
+`CONTROL_DB` (D1) と `RECOVERY_RECEIPTS` (R2) は Cloudflare が自動作成します。
+リソース ID やバケット名をリポジトリへ書き戻す必要はありません。
+
+Dashboard の設定値は次のとおりです。
+
+- Build command: `npm run build`
+- Deploy command: `npm run deploy:cloudflare`
+- Production branch: `main`
+
+`deploy:cloudflare` は Worker と GUI をデプロイしてから Control D1 migration を適用します。
+初回のデプロイが成功したら、Worker の **Settings → Variables and Secrets** で次を設定します。
+
+- Variables: `APP_URL`, `WEB_ORIGIN`, `RP_ID`, `GOOGLE_CLIENT_ID`, `ACTIVE_ORGANIZATION_LIMIT`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_WORKER_NAME`
+- Secrets: `GOOGLE_CLIENT_SECRET`, `CREDENTIAL_MASTER_KEY`, `CREDENTIAL_MASTER_KEY_VERSION`, `CLOUDFLARE_API_TOKEN`
+
+`CLOUDFLARE_API_TOKEN` は、アプリが Organization ごとの D1 を作成・Worker へ binding
+するために使います。デプロイ用トークンとは分け、対象アカウントと必要な Workers/D1 権限だけに
+制限してください。Google Cloud Console には本番 URL の
+`https://<domain>/oauth/google/callback` も OAuth redirect URI として登録します。
