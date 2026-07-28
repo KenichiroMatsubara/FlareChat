@@ -3,6 +3,7 @@
   "name": "flarechat",
   "main": "src/index.ts",
   "compatibility_date": "2026-07-24",
+  "keep_vars": true,
   "rules": [
     {
       "type": "Text",
@@ -32,13 +33,6 @@
   },
   "triggers": {
     "crons": ["* * * * *"]
-  },
-  "vars": {
-    "APP_URL": "http://localhost:8787",
-    "WEB_ORIGIN": "http://localhost:5173",
-    "RP_ID": "localhost",
-    "GOOGLE_CLIENT_ID": "",
-    "ACTIVE_ORGANIZATION_LIMIT": "10"
   },
   "env": {
     "local": {

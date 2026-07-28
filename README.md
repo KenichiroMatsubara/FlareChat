@@ -74,9 +74,14 @@ Dashboard の設定値は次のとおりです。
 
 `deploy:cloudflare` は Worker と GUI をデプロイしてから Control D1 migration を適用します。
 初回のデプロイが成功したら、Worker の **Settings → Variables and Secrets** で次を設定します。
+本番の変数は Dashboard を source of truth とし、`wrangler.jsonc` の `keep_vars` によって
+以後の自動デプロイでも保持します。localhost 用の値は `env.local` にだけ定義されています。
 
 - Variables: `APP_URL`, `WEB_ORIGIN`, `RP_ID`, `GOOGLE_CLIENT_ID`, `ACTIVE_ORGANIZATION_LIMIT`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_WORKER_NAME`
 - Secrets: `GOOGLE_CLIENT_SECRET`, `CREDENTIAL_MASTER_KEY`, `CREDENTIAL_MASTER_KEY_VERSION`, `CLOUDFLARE_API_TOKEN`
+
+`APP_URL` と `WEB_ORIGIN` には `https://<domain>`、`RP_ID` には scheme を除いた
+`<domain>`、`CLOUDFLARE_WORKER_NAME` には `flarechat` を設定します。
 
 `CLOUDFLARE_API_TOKEN` は、アプリが Organization ごとの D1 を作成・Worker へ binding
 するために使います。デプロイ用トークンとは分け、対象アカウントと必要な Workers/D1 権限だけに
