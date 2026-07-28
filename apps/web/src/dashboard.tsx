@@ -1,5 +1,6 @@
-import { CheckSquare, CircleAlert, LogOut, Mail, Play, Settings, ShieldCheck, SlidersHorizontal } from 'lucide-react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { CheckSquare, CircleAlert, LogOut, Mail, Menu, Play, Settings, ShieldCheck, SlidersHorizontal, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
 import type { AutomationStatus, AutomationSummary, MailboxTestGeminiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationConnections, OrganizationMembership, OrganizationRule, OrganizationRuleInput, OrganizationTask, TaskRoleAssignment } from './api';
 import { AutomationPage, ConnectionsPage, MailboxTestPage, RulesPage, TasksPage } from './dashboard-pages';
@@ -11,6 +12,25 @@ export const needsGoogleReauthentication = (error: string): boolean =>
 
 export const GoogleReauthenticationAction = ({ onClick }: { onClick: () => void }) =>
   <button className="secondary credential-recovery" onClick={onClick}><ShieldCheck size={16} />Automation Inbox を再接続する</button>;
+
+/** Width at which the collapsed navigation panel becomes the inline top bar. */
+export const DESKTOP_NAVIGATION_QUERY = '(min-width: 861px)';
+
+export const NAVIGATION_PANEL_ID = 'app-navigation';
+
+interface NavigationItem {
+  readonly to: string;
+  readonly label: string;
+  readonly icon: React.ReactNode;
+}
+
+const navigationItems: readonly NavigationItem[] = [
+  { to: '../automation', label: '自動化', icon: <Play size={16} /> },
+  { to: '../connections', label: '接続設定', icon: <Settings size={16} /> },
+  { to: '../rules', label: 'ルール', icon: <SlidersHorizontal size={16} /> },
+  { to: '../tasks', label: 'タスク', icon: <CheckSquare size={16} /> },
+  { to: '../mailbox-test', label: 'メールテスト', icon: <SlidersHorizontal size={16} /> },
+];
 
 export interface DashboardProps {
   page?: Page;
@@ -65,6 +85,8 @@ export interface DashboardProps {
 
 export const Dashboard = (props: DashboardProps) => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const [menuOpen, setMenuOpen] = useState(false);
   const page = props.page ?? 'automation';
   const content = page === 'automation'
     ? <AutomationPage {...props} />
@@ -72,23 +94,42 @@ export const Dashboard = (props: DashboardProps) => {
       ? <ConnectionsPage {...props} />
       : page === 'rules'
         ? <RulesPage {...props} />
-      : page === 'tasks' ? <TasksPage {...props} /> : <MailboxTestPage {...props} />;
+        : page === 'tasks' ? <TasksPage {...props} /> : <MailboxTestPage {...props} />;
   const requiresGoogleReauthentication = needsGoogleReauthentication(props.error)
     || props.automation?.status === 'reauthentication_required';
   const recoveryMessage = props.error || 'Automation Inbox の認証が失効しています。Google に再接続してください。';
+
+  useEffect(() => setMenuOpen(false), [location.pathname]);
+
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const desktop = window.matchMedia(DESKTOP_NAVIGATION_QUERY);
+    const closeOnEscape = (event: KeyboardEvent): void => { if (event.key === 'Escape') setMenuOpen(false); };
+    const closeOnDesktop = (): void => { if (desktop.matches) setMenuOpen(false); };
+    const scrollLock = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', closeOnEscape);
+    desktop.addEventListener('change', closeOnDesktop);
+    return () => {
+      document.body.style.overflow = scrollLock;
+      window.removeEventListener('keydown', closeOnEscape);
+      desktop.removeEventListener('change', closeOnDesktop);
+    };
+  }, [menuOpen]);
+
   return <div className="app-shell">
     <header className="app-topbar">
       <div className="app-brand"><span><Mail size={20} /></span><strong>Mail Automation</strong></div>
-      {props.organizations && props.organizationId && <label className="organization-picker"><span className="sr-only">Organization</span><select aria-label="Organization" value={props.organizationId} onChange={(event) => navigate(`/organizations/${encodeURIComponent(event.target.value)}/automation`)}>{props.organizations.map((organization) => <option key={organization.organizationId} value={organization.organizationId}>{organization.name}</option>)}</select></label>}
-      <nav aria-label="メインナビゲーション">
-        <NavLink to="../automation" className={({ isActive }) => isActive ? 'active' : ''}><Play size={16} />自動化</NavLink>
-        <NavLink to="../connections" className={({ isActive }) => isActive ? 'active' : ''}><Settings size={16} />接続設定</NavLink>
-        <NavLink to="../rules" className={({ isActive }) => isActive ? 'active' : ''}><SlidersHorizontal size={16} />ルール</NavLink>
-        <NavLink to="../tasks" className={({ isActive }) => isActive ? 'active' : ''}><CheckSquare size={16} />タスク</NavLink>
-        <NavLink to="../mailbox-test" className={({ isActive }) => isActive ? 'active' : ''}><SlidersHorizontal size={16} />メールテスト</NavLink>
-      </nav>
-      <button className="topbar-logout" onClick={props.onLogout} disabled={props.busy}><LogOut size={16} />ログアウト</button>
+      <button type="button" className="topbar-toggle" aria-controls={NAVIGATION_PANEL_ID} aria-expanded={menuOpen} aria-label={menuOpen ? 'メニューを閉じる' : 'メニューを開く'} onClick={() => setMenuOpen((open) => !open)}>{menuOpen ? <X size={20} /> : <Menu size={20} />}</button>
+      <div id={NAVIGATION_PANEL_ID} className={menuOpen ? 'topbar-panel open' : 'topbar-panel'}>
+        {props.organizations && props.organizationId && <label className="organization-picker"><span className="sr-only">Organization</span><select aria-label="Organization" value={props.organizationId} onChange={(event) => navigate(`/organizations/${encodeURIComponent(event.target.value)}/automation`)}>{props.organizations.map((organization) => <option key={organization.organizationId} value={organization.organizationId}>{organization.name}</option>)}</select></label>}
+        <nav aria-label="メインナビゲーション">
+          {navigationItems.map((item) => <NavLink key={item.to} to={item.to} className={({ isActive }) => isActive ? 'active' : ''} onClick={() => setMenuOpen(false)}>{item.icon}{item.label}</NavLink>)}
+        </nav>
+        <button className="topbar-logout" onClick={props.onLogout} disabled={props.busy}><LogOut size={16} />ログアウト</button>
+      </div>
     </header>
+    {menuOpen && <button type="button" className="topbar-scrim" tabIndex={-1} aria-hidden="true" onClick={() => setMenuOpen(false)} />}
     <main className="app-content">
       {(props.error || requiresGoogleReauthentication) && <div className="dashboard-error"><p><CircleAlert size={17} />{recoveryMessage}</p>{requiresGoogleReauthentication && <GoogleReauthenticationAction onClick={props.onReauthenticate} />}</div>}
       {content}
