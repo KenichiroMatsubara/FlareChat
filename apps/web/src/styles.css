@@ -217,6 +217,8 @@ svg { flex: none; }
 }
 
 @media (max-width: 560px) {
+  .gemini-request-heading { flex-direction: column; }
+  .gemini-request-heading .secondary { width: 100%; }
   .action-panel .primary, .settings-actions, .settings-actions .primary, .rule-builder .primary, .test-card .primary, .test-card .secondary { width: 100%; justify-self: stretch; }
   .hero-status, .action-panel { align-items: flex-start; }
   .hero-status > div, .action-panel > div { flex-basis: 100%; }

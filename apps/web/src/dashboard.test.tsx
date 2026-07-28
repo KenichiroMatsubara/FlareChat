@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
@@ -48,5 +49,12 @@ describe('responsive dashboard shell', () => {
     const panel = /<div id="app-navigation" class="topbar-panel">(.*?)<\/header>/su.exec(markup())?.[1] ?? '';
     expect(panel).toContain('class="organization-picker"');
     for (const label of ['自動化', '接続設定', 'ルール', 'タスク', 'メールテスト', 'ログアウト']) expect(panel).toContain(label);
+  });
+
+  it('stacks the Gemini request heading and its copy action on narrow screens', async () => {
+    const stylesheet = await readFile(new URL('./styles.css', import.meta.url), 'utf8');
+
+    expect(stylesheet).toContain('@media (max-width: 560px) {\n  .gemini-request-heading { flex-direction: column; }');
+    expect(stylesheet).toContain('.gemini-request-heading .secondary { width: 100%; }');
   });
 });
