@@ -28,29 +28,24 @@ export const GEMINI_EXTRACTION_TIMEOUT_MS = 15_000;
 export type GeminiAttachment = AttachmentContent;
 
 interface GeminiResponse {
-  candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  choices?: Array<{ message?: { content?: string } }>;
   error?: { message?: string };
 }
 
-interface GeminiPart {
-  text?: string;
-  inlineData?: { mimeType: string; data: string };
-}
-
 export interface GeminiEventDetailsRequest {
-  contents: Array<{ role: 'user'; parts: GeminiPart[] }>;
-  generationConfig: {
-    responseMimeType: 'application/json';
-    responseSchema: {
-      type: 'OBJECT';
-      properties: Record<string, GeminiResponseSchema>;
-      required: string[];
+  messages: Array<{ role: 'system' | 'user'; content: string }>;
+  response_format: {
+    type: 'json_schema';
+    json_schema: {
+      name: 'mail_extraction';
+      strict: true;
+      schema: GeminiResponseSchema;
     };
   };
 }
 
 interface GeminiResponseSchema {
-  type: 'STRING' | 'OBJECT' | 'ARRAY';
+  type: 'string' | 'object' | 'array';
   format?: 'date-time' | 'date';
   properties?: Record<string, GeminiResponseSchema>;
   required?: string[];
@@ -60,10 +55,10 @@ interface GeminiResponseSchema {
 const geminiAttachmentParts = async (
   attachments: GeminiAttachment[],
   markdown?: MarkdownConverter,
-): Promise<GeminiPart[]> =>
+): Promise<string[]> =>
   (await convertAttachmentsForEventExtraction(attachments, markdown)).map((attachment) => {
     const filename = `Attachment filename: ${attachment.filename}`;
-    return { text: `${filename}\nOriginal MIME type: ${attachment.originalMimeType}\n${attachment.text}` };
+    return `${filename}\nOriginal MIME type: ${attachment.originalMimeType}\n${attachment.text}`;
   });
 
 /** Accepts only complete Gemini JSON that is safe to turn into a Scheduled Event. */
@@ -130,51 +125,51 @@ Create one item in events for each independently scheduled program. For example,
 Create tasks only for explicit administrative deadlines in the whole invitation, not once per event. A registration, attendance, reply, or application deadline is one task with assigneeRole "organizer". A payment, transfer, remittance, invoice, or fee deadline is one task with assigneeRole "treasurer". Use exactly one task for each unique kind and calendar date, even when multiple events share it. deadline must be the explicit date as YYYY-MM-DD; do not invent a year or date. Omit tasks whose deadline date is not explicit. Set tasks to [] when there are none.
 
 Use ISO 8601 date-times with the stated time zone for events. Keep titles and descriptions concise and factual.`;
-  const source = input.source;
   const attachments = await geminiAttachmentParts(input.attachments ?? [], input.markdown);
   return {
-    contents: [{
-      role: 'user',
-      parts: [
-        { text: `${instructions}\n\n${source}` },
-        ...attachments,
-      ],
-    }],
-    generationConfig: {
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: 'OBJECT',
-        properties: {
+    messages: [
+      { role: 'system', content: instructions },
+      { role: 'user', content: [input.source, ...attachments].join('\n\n') },
+    ],
+    response_format: {
+      type: 'json_schema',
+      json_schema: {
+        name: 'mail_extraction',
+        strict: true,
+        schema: {
+          type: 'object',
+          properties: {
           events: {
-            type: 'ARRAY',
+            type: 'array',
             items: {
-              type: 'OBJECT',
+              type: 'object',
               properties: {
-                title: { type: 'STRING' },
-                startsAt: { type: 'STRING', format: 'date-time' },
-                endsAt: { type: 'STRING', format: 'date-time' },
-                timeZone: { type: 'STRING' },
-                location: { type: 'STRING' },
-                description: { type: 'STRING' },
+                title: { type: 'string' },
+                startsAt: { type: 'string', format: 'date-time' },
+                endsAt: { type: 'string', format: 'date-time' },
+                timeZone: { type: 'string' },
+                location: { type: 'string' },
+                description: { type: 'string' },
               },
               required: ['title', 'startsAt', 'endsAt', 'timeZone', 'location', 'description'],
             },
           },
           tasks: {
-            type: 'ARRAY',
+            type: 'array',
             items: {
-              type: 'OBJECT',
+              type: 'object',
               properties: {
-                title: { type: 'STRING' },
-                deadline: { type: 'STRING', format: 'date' },
-                assigneeRole: { type: 'STRING' },
-                description: { type: 'STRING' },
+                title: { type: 'string' },
+                deadline: { type: 'string', format: 'date' },
+                assigneeRole: { type: 'string' },
+                description: { type: 'string' },
               },
               required: ['title', 'deadline', 'assigneeRole', 'description'],
             },
           },
+          },
+          required: ['events', 'tasks'],
         },
-        required: ['events', 'tasks'],
       },
     },
   };
@@ -194,11 +189,11 @@ export const extractGeminiEventDetails = async (input: {
   let response: Response;
   try {
     response = await request(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}:generateContent`,
+      'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
       {
         method: 'POST',
-        headers: { 'x-goog-api-key': input.apiKey, 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
+        headers: { Authorization: `Bearer ${input.apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: input.model, ...requestBody }),
       },
     );
   } catch {
@@ -212,6 +207,6 @@ export const extractGeminiEventDetails = async (input: {
     throw new Error('Gemini API から不正な応答が返されました。');
   }
   if (!response.ok) throw new Error(`Gemini API: ${body.error?.message?.trim() || `HTTP ${response.status}`}`);
-  const text = body.candidates?.flatMap((candidate) => candidate.content?.parts ?? []).map((part) => part.text ?? '').join('') ?? '';
+  const text = body.choices?.[0]?.message?.content ?? '';
   return validatedMailExtraction(text);
 };

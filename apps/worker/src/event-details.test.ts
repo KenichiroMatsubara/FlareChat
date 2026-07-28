@@ -26,26 +26,30 @@ describe('Gemini Event Details validation', () => {
   });
 
   it('uses a bounded Gemini request and accepts only a validated JSON candidate', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ title: '例会', startsAt: '2026-08-03T19:00:00+09:00', endsAt: '2026-08-03T21:00:00+09:00', timeZone: 'Asia/Tokyo', location: '', description: '月例会' }) }] } }] }), { status: 200 }));
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ title: '例会', startsAt: '2026-08-03T19:00:00+09:00', endsAt: '2026-08-03T21:00:00+09:00', timeZone: 'Asia/Tokyo', location: '', description: '月例会' }) } }] }), { status: 200 }));
 
     const source = 'A'.repeat(20_010);
     const result = await extractGeminiEventDetails({ apiKey: 'api-key', model: 'gemini-3.5-flash-lite', source, fetch: fetchMock });
 
     expect(result).toMatchObject({ events: [{ title: '例会' }], tasks: [] });
-    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('gemini-3.5-flash-lite:generateContent'), expect.objectContaining({ method: 'POST' }));
+    expect(fetchMock).toHaveBeenCalledWith('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ Authorization: 'Bearer api-key' }) }));
     const body = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string) as {
-      contents: Array<{ parts: Array<{ text: string }> }>;
-      generationConfig: {
-        responseSchema: {
-          required: string[];
-          properties: Record<string, { type: string }>;
+      model: string;
+      messages: Array<{ role: string; content: string }>;
+      response_format: {
+        json_schema: {
+          schema: {
+            required: string[];
+            properties: Record<string, { type: string }>;
+          };
         };
       };
     };
-    expect(body.contents[0]?.parts[0]?.text).toContain(source);
-    expect(body.generationConfig.responseSchema.required).toEqual(['events', 'tasks']);
-    expect(body.generationConfig.responseSchema.properties.events).toMatchObject({ type: 'ARRAY' });
-    expect(body.contents[0]?.parts[0]?.text).toContain('ceremony and its banquet');
+    expect(body.model).toBe('gemini-3.5-flash-lite');
+    expect(body.messages[1]?.content).toContain(source);
+    expect(body.response_format.json_schema.schema.required).toEqual(['events', 'tasks']);
+    expect(body.response_format.json_schema.schema.properties.events).toMatchObject({ type: 'array' });
+    expect(body.messages[0]?.content).toContain('ceremony and its banquet');
   });
 
   it('reports the upstream Gemini error instead of disguising it as an invalid event', async () => {
@@ -63,14 +67,14 @@ describe('Gemini Event Details validation', () => {
 
   it('passes converted PDF text, rather than its source bytes, to Gemini', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      candidates: [{ content: { parts: [{ text: JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({
         title: '30周年記念式典',
         startsAt: '2026-09-12T14:00:00+09:00',
         endsAt: '2026-09-12T16:00:00+09:00',
         timeZone: 'Asia/Tokyo',
         location: '名古屋',
         description: '添付PDFから抽出',
-      }) }] } }],
+      }) } }],
     }), { status: 200 }));
 
     const markdown = {
@@ -99,12 +103,10 @@ describe('Gemini Event Details validation', () => {
     } as Parameters<typeof extractGeminiEventDetails>[0]);
 
     const body = JSON.parse(fetchMock.mock.calls[0]?.[1].body as string) as {
-      contents: Array<{ parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> }>;
+      messages: Array<{ role: string; content: string }>;
     };
-    expect(body.contents[0]?.parts).toEqual([
-      expect.objectContaining({ text: expect.stringContaining('名古屋名城RAC30周年記念式典のご案内') }),
-      expect.objectContaining({ text: expect.stringContaining('30周年記念式典') }),
-    ]);
+    expect(body.messages[1]?.content).toContain('名古屋名城RAC30周年記念式典のご案内');
+    expect(body.messages[1]?.content).toContain('30周年記念式典');
     expect(JSON.stringify(body)).not.toContain('cGRmLWJ5dGVz');
     expect(markdown.toMarkdown).toHaveBeenCalledWith(expect.objectContaining({
       name: '式典案内.pdf',
@@ -145,22 +147,22 @@ describe('Gemini Event Details validation', () => {
     const workbook = await readFile(new URL('../../../fixtures/gemini-file-probe/event-invitation.xlsx', import.meta.url));
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const requestBody = JSON.parse(String(init?.body)) as {
-        contents: Array<{ parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> }>;
+        messages: Array<{ role: string; content: string }>;
       };
-      const normalizedText = requestBody.contents[0]?.parts.map((part) => part.text ?? '').join('\n') ?? '';
+      const normalizedText = requestBody.messages[1]?.content ?? '';
       return normalizedText.includes('GEMINI-FILE-PROBE-001')
         && normalizedText.includes('2026-08-18')
         && normalizedText.includes('14:30')
         && normalizedText.includes('16:00')
         ? new Response(JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify({
+          choices: [{ message: { content: JSON.stringify({
             title: 'Gemini ファイル解析テスト会議',
             startsAt: '2026-08-18T14:30:00+09:00',
             endsAt: '2026-08-18T16:00:00+09:00',
             timeZone: 'Asia/Tokyo',
             location: '名古屋イノベーションセンター 3階 会議室A',
             description: 'XLSXから抽出',
-          }) }] } }],
+          }) } }],
         }), { status: 200 })
         : new Response(JSON.stringify({ error: { message: 'Normalized XLSX content was not provided.' } }), { status: 400 });
     });

@@ -65,7 +65,7 @@ interface OrganizationConnectionInput {
 }
 
 interface GeminiGenerateContentResponse {
-  candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  choices?: Array<{ message?: { content?: string } }>;
   error?: { message?: string };
 }
 
@@ -157,7 +157,7 @@ const connectionView = (line: OrganizationCredential, ai: OrganizationCredential
 });
 
 export const generatedText = (response: GeminiGenerateContentResponse): string =>
-  response.candidates?.flatMap((candidate) => candidate.content?.parts ?? []).map((part) => part.text ?? '').join('').trim() ?? '';
+  response.choices?.[0]?.message?.content?.trim() ?? '';
 
 app.get('/api/organizations/:organizationId/connections', async (context) => {
   try {
@@ -252,10 +252,10 @@ app.post('/api/organizations/:organizationId/connections/gemini/test', async (co
     if (credential.provider !== 'Google Gemini API' || !credential.apiKey) return failure(context, 'Gemini API キーを設定してください。', 409);
     const model = input.model?.trim() || credential.model || DEFAULT_GEMINI_MODEL;
     if (!isGeminiModel(model)) return failure(context, 'Gemini モデルは gemini-3.5-flash-lite または gemini-3.6-flash を選択してください。');
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
       method: 'POST',
-      headers: { 'x-goog-api-key': credential.apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] }),
+      headers: { Authorization: `Bearer ${credential.apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }] }),
     });
     const body = await response.json() as GeminiGenerateContentResponse;
     if (!response.ok) throw new Error(body.error?.message ?? 'Gemini API が応答しませんでした。');
