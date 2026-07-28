@@ -1,10 +1,29 @@
-import { CircleAlert, LogOut, Mail, Play, Settings, SlidersHorizontal } from 'lucide-react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { CircleAlert, LogOut, Mail, Menu, Play, Settings, SlidersHorizontal, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
 import type { AutomationStatus, AutomationSummary, MailboxTestGeminiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationConnections, OrganizationMembership, OrganizationRule, OrganizationRuleInput } from './api';
 import { AutomationPage, ConnectionsPage, MailboxTestPage, RulesPage } from './dashboard-pages';
 
 export type Page = 'automation' | 'connections' | 'rules' | 'mail-test';
+
+/** Width at which the collapsed navigation panel becomes the inline top bar. */
+export const DESKTOP_NAVIGATION_QUERY = '(min-width: 861px)';
+
+export const NAVIGATION_PANEL_ID = 'app-navigation';
+
+interface NavigationItem {
+  readonly to: string;
+  readonly label: string;
+  readonly icon: React.ReactNode;
+}
+
+const navigationItems: readonly NavigationItem[] = [
+  { to: '../automation', label: '自動化', icon: <Play size={16} /> },
+  { to: '../connections', label: '接続設定', icon: <Settings size={16} /> },
+  { to: '../rules', label: 'ルール', icon: <SlidersHorizontal size={16} /> },
+  { to: '../mailbox-test', label: 'メールテスト', icon: <SlidersHorizontal size={16} /> },
+];
 
 export interface DashboardProps {
   page?: Page;
@@ -53,6 +72,8 @@ export interface DashboardProps {
 
 export const Dashboard = (props: DashboardProps) => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const [menuOpen, setMenuOpen] = useState(false);
   const page = props.page ?? 'automation';
   const content = page === 'automation'
     ? <AutomationPage {...props} />
@@ -61,18 +82,38 @@ export const Dashboard = (props: DashboardProps) => {
       : page === 'rules'
         ? <RulesPage {...props} />
         : <MailboxTestPage {...props} />;
+
+  useEffect(() => setMenuOpen(false), [location.pathname]);
+
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const desktop = window.matchMedia(DESKTOP_NAVIGATION_QUERY);
+    const closeOnEscape = (event: KeyboardEvent): void => { if (event.key === 'Escape') setMenuOpen(false); };
+    const closeOnDesktop = (): void => { if (desktop.matches) setMenuOpen(false); };
+    const scrollLock = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', closeOnEscape);
+    desktop.addEventListener('change', closeOnDesktop);
+    return () => {
+      document.body.style.overflow = scrollLock;
+      window.removeEventListener('keydown', closeOnEscape);
+      desktop.removeEventListener('change', closeOnDesktop);
+    };
+  }, [menuOpen]);
+
   return <div className="app-shell">
     <header className="app-topbar">
       <div className="app-brand"><span><Mail size={20} /></span><strong>Mail Automation</strong></div>
-      {props.organizations && props.organizationId && <label className="organization-picker"><span className="sr-only">Organization</span><select aria-label="Organization" value={props.organizationId} onChange={(event) => navigate(`/organizations/${encodeURIComponent(event.target.value)}/automation`)}>{props.organizations.map((organization) => <option key={organization.organizationId} value={organization.organizationId}>{organization.name}</option>)}</select></label>}
-      <nav aria-label="メインナビゲーション">
-        <NavLink to="../automation" className={({ isActive }) => isActive ? 'active' : ''}><Play size={16} />自動化</NavLink>
-        <NavLink to="../connections" className={({ isActive }) => isActive ? 'active' : ''}><Settings size={16} />接続設定</NavLink>
-        <NavLink to="../rules" className={({ isActive }) => isActive ? 'active' : ''}><SlidersHorizontal size={16} />ルール</NavLink>
-        <NavLink to="../mailbox-test" className={({ isActive }) => isActive ? 'active' : ''}><SlidersHorizontal size={16} />メールテスト</NavLink>
-      </nav>
-      <button className="topbar-logout" onClick={props.onLogout} disabled={props.busy}><LogOut size={16} />ログアウト</button>
+      <button type="button" className="topbar-toggle" aria-controls={NAVIGATION_PANEL_ID} aria-expanded={menuOpen} aria-label={menuOpen ? 'メニューを閉じる' : 'メニューを開く'} onClick={() => setMenuOpen((open) => !open)}>{menuOpen ? <X size={20} /> : <Menu size={20} />}</button>
+      <div id={NAVIGATION_PANEL_ID} className={menuOpen ? 'topbar-panel open' : 'topbar-panel'}>
+        {props.organizations && props.organizationId && <label className="organization-picker"><span className="sr-only">Organization</span><select aria-label="Organization" value={props.organizationId} onChange={(event) => navigate(`/organizations/${encodeURIComponent(event.target.value)}/automation`)}>{props.organizations.map((organization) => <option key={organization.organizationId} value={organization.organizationId}>{organization.name}</option>)}</select></label>}
+        <nav aria-label="メインナビゲーション">
+          {navigationItems.map((item) => <NavLink key={item.to} to={item.to} className={({ isActive }) => isActive ? 'active' : ''} onClick={() => setMenuOpen(false)}>{item.icon}{item.label}</NavLink>)}
+        </nav>
+        <button className="topbar-logout" onClick={props.onLogout} disabled={props.busy}><LogOut size={16} />ログアウト</button>
+      </div>
     </header>
+    {menuOpen && <button type="button" className="topbar-scrim" tabIndex={-1} aria-hidden="true" onClick={() => setMenuOpen(false)} />}
     <main className="app-content">
       {props.error && <p className="dashboard-error"><CircleAlert size={17} />{props.error}</p>}
       {content}
