@@ -77,7 +77,7 @@ Dashboard の設定値は次のとおりです。
 本番の変数は Dashboard を source of truth とし、`wrangler.jsonc` の `keep_vars` によって
 以後の自動デプロイでも保持します。localhost 用の値は `env.local` にだけ定義されています。
 
-- Variables: `APP_URL`, `WEB_ORIGIN`, `RP_ID`, `GOOGLE_CLIENT_ID`, `ACTIVE_ORGANIZATION_LIMIT`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_WORKER_NAME`
+- Variables: `APP_URL`, `WEB_ORIGIN`, `RP_ID`, `GOOGLE_CLIENT_ID`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_WORKER_NAME`
 - Secrets: `GOOGLE_CLIENT_SECRET`, `CREDENTIAL_MASTER_KEY`, `CREDENTIAL_MASTER_KEY_VERSION`, `CLOUDFLARE_API_TOKEN`
 
 `APP_URL` と `WEB_ORIGIN` には `https://<domain>`、`RP_ID` には scheme を除いた

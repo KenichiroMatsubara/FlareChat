@@ -15,7 +15,6 @@ export interface Bindings {
   CLOUDFLARE_ACCOUNT_ID: string;
   CLOUDFLARE_API_TOKEN: string;
   CLOUDFLARE_WORKER_NAME: string;
-  ACTIVE_ORGANIZATION_LIMIT: string;
 }
 
 export interface SessionRow {

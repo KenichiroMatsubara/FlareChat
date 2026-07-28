@@ -101,7 +101,6 @@ export const createTestApp = (
     CLOUDFLARE_ACCOUNT_ID: '',
     CLOUDFLARE_API_TOKEN: '',
     CLOUDFLARE_WORKER_NAME: '',
-    ACTIVE_ORGANIZATION_LIMIT: '10',
   } as unknown as Bindings;
   const request = (path: string, init: RequestInit = {}): Request => new Request(
     `https://app.example.com${path}`,

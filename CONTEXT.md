@@ -6,7 +6,7 @@ The deployment uses the Workers Paid plan and is designed to remain near its $5 
 
 The deployment uses one Control D1 database plus one Organization D1 database per Organization. Control D1 contains only identities, Organization routing, memberships, and deployment capacity state; each Organization D1 contains that Organization's rules, events, recipients, Jobs, credentials, and history. Application-owned Durable Objects are not used.
 
-Organization registration automatically provisions a new D1 database, applies the current schema, adds a uniquely named D1 binding to the Worker through the Cloudflare API, verifies access, and only then activates the Organization. The initial active-Organization value of ten is configurable operational policy and never determines database slots or provisioning capacity.
+Organization registration automatically provisions a new D1 database, applies the current schema, adds a uniquely named D1 binding to the Worker through the Cloudflare API, verifies access, and only then activates the Organization.
 
 Application entry has two explicit Google intents. Existing members use identity-only login with `openid`, `email`, and `profile`; it resolves the Identity by Google `sub`, creates only an application session, and never creates or resumes Organization setup. Organization creation uses one separate complete authorization. The authorized account becomes both the Automation Inbox and the initial Owner identity, and its display name is the editable Organization-name default. D1 provisioning starts only after Google returns the complete required grant: identity, `gmail.readonly`, `gmail.send`, `calendar.events.owned`, and `drive.file`. Partial consent creates no Organization or D1 database; no separate application login allowlist is required for the private pilot.
 
@@ -31,8 +31,6 @@ Estimated Workers, D1, Queues, R2, and other Cloudflare usage produces deploymen
 Estimated aggregate Cloudflare charges produce an additional deployment email warning at projected monthly totals of USD 6 and USD 10. Each threshold fires once per billing period, does not automatically stop processing, and resets for the next period.
 
 A durable Job row in the owning Organization D1 database is the source of truth for every asynchronous unit of work. A Queue message is only a replaceable wake-up hint containing an Organization and Job identifier; scheduled recovery scans rediscover due Jobs if a hint expires or is lost.
-
-A deployment initially permits at most ten Organizations to have automation active concurrently. Additional Organizations may be configured but cannot activate automation until capacity is available; this provisional limit is deployment configuration rather than a compiled constant, preallocated slot count, or database limit.
 
 The initial private deployment uses one Google OAuth application configured as `External / In production` without completed verification. It accepts Google's unverified-app warning and lifetime user cap to avoid Testing-mode refresh-token expiry. Organization creation requires the complete Automation Inbox grant before provisioning; broader public onboarding requires verification and any applicable security assessment.
 

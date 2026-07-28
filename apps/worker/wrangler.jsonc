@@ -75,8 +75,7 @@
         "APP_URL": "http://localhost:8787",
         "WEB_ORIGIN": "http://localhost:5173",
         "RP_ID": "localhost",
-        "GOOGLE_CLIENT_ID": "",
-        "ACTIVE_ORGANIZATION_LIMIT": "10"
+        "GOOGLE_CLIENT_ID": ""
       }
     }
   },

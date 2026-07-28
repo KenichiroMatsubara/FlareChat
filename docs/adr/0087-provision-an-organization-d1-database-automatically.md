@@ -14,4 +14,4 @@ Normal application queries use the Worker D1 binding API. The Cloudflare D1 REST
 
 The provisioning credential is a dedicated Worker Secret with only the Cloudflare account permissions required to edit D1 and the target Worker bindings. Provisioning states and idempotency keys live in Control D1, so retries reuse an existing database rather than creating duplicates. An Organization is never routed to an unverified or partially initialized database.
 
-The provisional active-Organization limit of ten in ADR 0074 does not allocate database slots and does not constrain this provisioning mechanism.
+Organization provisioning and activation do not apply a deployment-wide Organization-count limit, as decided in ADR 0099.
