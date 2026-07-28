@@ -251,8 +251,10 @@ describe('application entry', () => {
     });
   });
 
-  it('rejects an Automation Inbox already claimed by an Organization even when its address differs from the Owner', async () => {
-    fixture = createTestApp();
+  it.each(['owner', 'admin', 'operator', 'viewer'] as const)(
+    'treats Organization setup by an existing %s as ordinary login',
+    async (role) => {
+    fixture = createTestApp(role);
     fixture.environment.CREDENTIAL_MASTER_KEY = randomToken(32);
     fixture.environment.CREDENTIAL_MASTER_KEY_VERSION = 'test-v1';
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
@@ -269,8 +271,8 @@ describe('application entry', () => {
       if (url === 'https://openidconnect.googleapis.com/v1/userinfo') {
         return new Response(JSON.stringify({
           sub: 'google-subject-1',
-          email: 'inbox@example.com',
-          name: 'Existing Inbox',
+          email: 'owner@example.com',
+          name: 'Owner',
         }));
       }
       if (url === 'https://gmail.googleapis.com/gmail/v1/users/me/profile') {
@@ -291,9 +293,23 @@ describe('application entry', () => {
       `https://app.example.com/oauth/google/callback?code=fixture-code&state=${encodeURIComponent(authorization.searchParams.get('state') ?? '')}`,
     ), fixture.environment);
     const redirect = new URL(callback.headers.get('location') ?? 'https://app.example.com');
+    const sessionCookie = callback.headers.get('set-cookie')?.match(/mail_session=([^;]+)/u)?.[1];
+    const bootstrap = await app.fetch(new Request('https://app.example.com/api/bootstrap', {
+      headers: { Cookie: `mail_session=${sessionCookie}` },
+    }), fixture.environment);
 
-    expect(redirect.searchParams.get('error')).toBe('automation_inbox_already_claimed');
-    expect(callback.headers.get('set-cookie') ?? '').not.toContain('mail_session=');
+    expect(redirect.pathname).toBe('/');
+    expect(redirect.searchParams.get('error')).toBeNull();
+    expect(callback.headers.get('set-cookie')).toContain('mail_session=');
+    await expect(bootstrap.json()).resolves.toMatchObject({
+      data: {
+        kind: 'ready',
+        organizations: [{ organizationId: 'organization-1', role }],
+      },
+    });
+    expect(fixture.control.row<{ count: number }>('SELECT COUNT(*) AS count FROM organizations')?.count).toBe(1);
+    expect(fixture.control.row<{ count: number }>('SELECT COUNT(*) AS count FROM organization_setups')?.count).toBe(0);
+    expect(fixture.control.row<{ count: number }>('SELECT COUNT(*) AS count FROM organization_provisionings')?.count).toBe(0);
   });
 
   it('confirms the Organization name through the session and activates the provisioned Organization', async () => {

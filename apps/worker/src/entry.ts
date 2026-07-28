@@ -147,7 +147,7 @@ export const completeGoogleEntry = async (
       .where(eq(identities.googleSubject, identity.subject)).get();
     if (!owner) throw new Error('Google identity could not be stored.');
     const sessionId = randomToken();
-    if (flow.intent === 'login') {
+    const completeAsLogin = async (location: URL): Promise<GoogleEntryCompletion> => {
       await revokeGoogleToken(tokenSet.refreshToken);
       await control.batch([
         control.delete(oauthFlows).where(eq(oauthFlows.id, flow.id)),
@@ -159,7 +159,20 @@ export const completeGoogleEntry = async (
           lastSeenAt: timestamp,
         }),
       ]);
-      return { location: target.toString(), sessionId };
+      return { location: location.toString(), sessionId };
+    };
+    if (flow.intent === 'login') {
+      return await completeAsLogin(target);
+    }
+    if (!recoveryOrganizationId) {
+      const existingMembership = await control.select({ organizationId: members.organizationId }).from(members)
+        .where(and(
+          eq(members.identityId, owner.id),
+          eq(members.state, 'active'),
+        )).get();
+      if (existingMembership) {
+        return await completeAsLogin(new URL('/', flow.returnOrigin));
+      }
     }
     if (!hasCompleteGoogleGrant(tokenSet.scopes)) {
       await revokeGoogleToken(tokenSet.refreshToken);
