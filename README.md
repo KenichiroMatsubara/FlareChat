@@ -76,6 +76,8 @@ Dashboard の設定値は次のとおりです。
 初回のデプロイが成功したら、Worker の **Settings → Variables and Secrets** で次を設定します。
 本番の変数は Dashboard を source of truth とし、`wrangler.jsonc` の `keep_vars` によって
 以後の自動デプロイでも保持します。localhost 用の値は `env.local` にだけ定義されています。
+OrganizationごとのD1 bindingはセットアップ時にCloudflare APIで追加されるため、
+`wrangler.jsonc` の `unsafe.metadata.keep_bindings: ["d1"]` で通常デプロイ後も保持します。
 
 - Variables: `APP_URL`, `WEB_ORIGIN`, `RP_ID`, `GOOGLE_CLIENT_ID`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_WORKER_NAME`
 - Secrets: `GOOGLE_CLIENT_SECRET`, `CREDENTIAL_MASTER_KEY`, `CREDENTIAL_MASTER_KEY_VERSION`, `CLOUDFLARE_API_TOKEN`

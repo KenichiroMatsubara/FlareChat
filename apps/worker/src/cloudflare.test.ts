@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { cloudflareControlPlane, type CloudflareFetch } from './cloudflare';
@@ -15,6 +17,14 @@ const cloudflareResponse = (result: unknown): Response =>
   });
 
 describe('Cloudflare control plane', () => {
+  it('preserves dynamically provisioned Organization D1 bindings during deployment', async () => {
+    const config = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8')) as {
+      unsafe?: { metadata?: { keep_bindings?: string[] } };
+    };
+
+    expect(config.unsafe?.metadata?.keep_bindings).toContain('d1');
+  });
+
   it('encodes D1 operations as JSON behind its D1Database adapter', async () => {
     const requests: Array<{ url: string; init: RequestInit | undefined }> = [];
     const fetcher = vi.fn<CloudflareFetch>(async (input, init) => {
