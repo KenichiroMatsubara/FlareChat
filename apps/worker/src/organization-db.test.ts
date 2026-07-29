@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { provisionOrganizationDatabase } from './organization-db';
+import { organizationDatabaseIdentity, provisionOrganizationDatabase } from './organization-db';
 import { claimDueJobs, enqueueJob } from './jobs';
 import type { Bindings } from './types';
 import {
@@ -41,6 +41,17 @@ const localEnvironment = (): {
 };
 
 describe('Organization database resolver', () => {
+  it('derives a readable FlareChat database identity from the Automation Inbox', async () => {
+    const first = await organizationDatabaseIdentity(' Okazaki.RAC+Ops@Gmail.com ');
+    const second = await organizationDatabaseIdentity('okazaki.rac+ops@gmail.com');
+
+    expect(first).toEqual(second);
+    expect(first.databaseName).toMatch(
+      /^flarechat-organization-okazaki-rac-ops-at-gmail-com-[a-f0-9]{12}$/u,
+    );
+    expect(first.bindingName).toMatch(/^ORG_[A-F0-9]{24}$/u);
+  });
+
   it('allocates a local Organization database without contacting Cloudflare', async () => {
     const { environment, first } = localEnvironment();
     const cloudflare = vi.fn();
@@ -48,6 +59,7 @@ describe('Organization database resolver', () => {
 
     const location = await provisionOrganizationDatabase(environment, {
       organizationId: 'organization-1',
+      inboxAddress: 'first@example.com',
       bindingName: 'ORG_ORGANIZATION1',
       databaseId: null,
     });
@@ -64,6 +76,7 @@ describe('Organization database resolver', () => {
     const { control, environment } = localEnvironment();
     const first = await provisionOrganizationDatabase(environment, {
       organizationId: 'organization-1',
+      inboxAddress: 'first@example.com',
       bindingName: 'ORG_ORGANIZATION1',
       databaseId: null,
     });
@@ -75,6 +88,7 @@ describe('Organization database resolver', () => {
     });
     const second = await provisionOrganizationDatabase(environment, {
       organizationId: 'organization-2',
+      inboxAddress: 'second@example.com',
       bindingName: 'ORG_ORGANIZATION2',
       databaseId: null,
     });
@@ -96,6 +110,7 @@ describe('Organization database resolver', () => {
     const { environment, first } = localEnvironment();
     const provisioned = await provisionOrganizationDatabase(environment, {
       organizationId: 'organization-1',
+      inboxAddress: 'first@example.com',
       bindingName: 'ORG_ORGANIZATION1',
       databaseId: null,
     });
@@ -108,7 +123,7 @@ describe('Organization database resolver', () => {
     ]);
   });
 
-  it('initializes a partially applied production database through one batch seam', async () => {
+  it('applies only missing migrations without dropping a reused production database', async () => {
     const control = createMigratedTestD1('control');
     openDatabases.push(control);
     const requests: Array<{ batch?: Array<{ sql: string; params: unknown[] }>; sql?: string }> = [];
@@ -128,7 +143,9 @@ describe('Organization database resolver', () => {
         success: true,
         result: [{
           success: true,
-          results: [{ name: 'recipient_profiles' }, { name: 'event_recipients' }],
+          results: body.sql === 'SELECT name FROM d1_migrations'
+            ? [{ name: '0000_initial.sql' }]
+            : [],
           meta: {},
         }],
       }));
@@ -141,18 +158,18 @@ describe('Organization database resolver', () => {
 
     const provisioned = await provisionOrganizationDatabase(environment, {
       organizationId: 'organization-1',
+      inboxAddress: 'first@example.com',
       bindingName: 'ORG_ORGANIZATION1',
       databaseId: 'database-1',
     });
     await provisioned.initialize();
 
-    expect(requests).toHaveLength(2);
-    expect(requests[1]?.batch?.map(({ sql }) => sql)).toEqual(expect.arrayContaining([
-      'PRAGMA defer_foreign_keys = on',
-      'DROP TABLE IF EXISTS "recipient_profiles"',
-      'DROP TABLE IF EXISTS "event_recipients"',
-      expect.stringContaining('CREATE TABLE `recipient_profiles`'),
-      'PRAGMA defer_foreign_keys = off',
+    expect(requests).toHaveLength(3);
+    const statements = requests[2]?.batch?.map(({ sql }) => sql) ?? [];
+    expect(statements).toEqual(expect.arrayContaining([
+      expect.stringContaining('CREATE TABLE `tasks`'),
+      'INSERT INTO d1_migrations (name) VALUES (?)',
     ]));
+    expect(statements.some((statement) => statement.includes('DROP TABLE'))).toBe(false);
   });
 });

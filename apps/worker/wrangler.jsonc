@@ -53,19 +53,19 @@
         },
         {
           "binding": "LOCAL_ORGANIZATION_DB_1",
-          "database_name": "mail-organization-local-1",
+          "database_name": "flarechat-organization-local-1",
           "database_id": "00000000-0000-0000-0000-000000000101",
           "migrations_dir": "migrations/organization"
         },
         {
           "binding": "LOCAL_ORGANIZATION_DB_2",
-          "database_name": "mail-organization-local-2",
+          "database_name": "flarechat-organization-local-2",
           "database_id": "00000000-0000-0000-0000-000000000102",
           "migrations_dir": "migrations/organization"
         },
         {
           "binding": "LOCAL_ORGANIZATION_DB_3",
-          "database_name": "mail-organization-local-3",
+          "database_name": "flarechat-organization-local-3",
           "database_id": "00000000-0000-0000-0000-000000000103",
           "migrations_dir": "migrations/organization"
         }

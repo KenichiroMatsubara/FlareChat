@@ -5,7 +5,7 @@ import type { AppState } from '@mail/domain';
 import { createAutomation } from './automation';
 import { decrypt, masterKey } from './cryptography';
 import { revokeGoogleToken } from './google';
-import { organizationDatabase } from './organization-db';
+import { organizationDatabase, organizationDatabaseIdentity } from './organization-db';
 import { createProvisioningOrganizationKey, provisionOrganization } from './provisioning';
 import { controlDatabase } from './storage/database';
 import {
@@ -88,7 +88,7 @@ const beginProvisioning = async (
   name: string,
 ): Promise<void> => {
   const organizationId = crypto.randomUUID();
-  const bindingName = `ORG_${organizationId.replaceAll('-', '')}`;
+  const { bindingName } = await organizationDatabaseIdentity(setup.inboxAddress);
   const createdAt = now();
   const control = controlDatabase(env.CONTROL_DB);
   await control.batch([

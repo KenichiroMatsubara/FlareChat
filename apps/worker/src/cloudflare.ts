@@ -8,6 +8,7 @@ interface CloudflareResponse<T> {
 
 interface D1DatabaseResult {
   uuid?: string;
+  name?: string;
 }
 
 interface D1QueryResult<T> {
@@ -40,7 +41,7 @@ export type CloudflareFetch = (
 ) => Promise<Response>;
 
 export interface CloudflareControlPlane {
-  createDatabase(name: string): Promise<string>;
+  ensureDatabase(name: string): Promise<string>;
   openDatabase(databaseId: string): D1Database;
   attachDatabase(bindingName: string, databaseId: string): Promise<void>;
 }
@@ -170,6 +171,31 @@ export const cloudflareControlPlane = (
     return result.uuid;
   };
 
+  const findDatabase = async (name: string): Promise<string | null> => {
+    const databases = await request<D1DatabaseResult[]>(
+      `/d1/database?name=${encodeURIComponent(name)}&per_page=100`,
+    );
+    const matches = databases.filter((database) => database.name === name && database.uuid);
+    if (matches.length > 1) {
+      throw new Error(`Multiple Cloudflare D1 databases have the deterministic name ${name}.`);
+    }
+    return matches[0]?.uuid ?? null;
+  };
+
+  const ensureDatabase = async (name: string): Promise<string> => {
+    const existing = await findDatabase(name);
+    if (existing) return existing;
+    try {
+      return await createDatabase(name);
+    } catch (error) {
+      // A concurrent retry may have created the deterministic database after
+      // our lookup. Resolve it by name before surfacing the create failure.
+      const raced = await findDatabase(name);
+      if (raced) return raced;
+      throw error;
+    }
+  };
+
   const attachDatabase = async (bindingName: string, databaseId: string): Promise<void> => {
     if (!env.CLOUDFLARE_WORKER_NAME) throw new Error('Cloudflare Worker name is not configured.');
     const script = encodeURIComponent(env.CLOUDFLARE_WORKER_NAME);
@@ -192,7 +218,7 @@ export const cloudflareControlPlane = (
   };
 
   return {
-    createDatabase,
+    ensureDatabase,
     openDatabase,
     attachDatabase,
   };

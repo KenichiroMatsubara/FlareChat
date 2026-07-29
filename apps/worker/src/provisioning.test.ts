@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { app } from './api';
 import { provisionOrganization } from './provisioning';
+import { applyTestMigrations } from '../test/d1';
 import { createProvisioningTestApp, type ProvisioningTestApp } from '../test/provisioning';
 
 let fixture: ProvisioningTestApp | undefined;
@@ -49,5 +50,58 @@ describe('Organization provisioning', () => {
       data: { kind: 'ready' },
     });
     expect(cloudflare).not.toHaveBeenCalled();
+  });
+
+  it('refreshes the same Automation Inbox credential without erasing a rediscovered database', async () => {
+    fixture = await createProvisioningTestApp();
+    applyTestMigrations(fixture.organization, 'organization');
+    fixture.organization.execute(
+      'CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)',
+    );
+    fixture.organization.execute(
+      'INSERT INTO d1_migrations (name) VALUES (?), (?)',
+      '0000_initial.sql',
+      '0001_tasks.sql',
+    );
+    fixture.organization.execute(
+      `INSERT INTO google_connections
+        (id, kind, google_subject, inbox_address, granted_scopes, token_envelope,
+         gmail_history_id, enabled, status, created_at, updated_at)
+       VALUES (?, 'automation_inbox', ?, ?, ?, ?, ?, 1, 'reauthentication_required', ?, ?)`,
+      'connection-existing',
+      'google-subject-1',
+      'owner@example.com',
+      '[]',
+      '{"stale":true}',
+      'history-stale',
+      '2026-07-25T00:00:00.000Z',
+      '2026-07-25T00:00:00.000Z',
+    );
+    fixture.organization.execute(
+      'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)',
+      'preserved',
+      'yes',
+      '2026-07-25T00:00:00.000Z',
+    );
+
+    await provisionOrganization(fixture.environment, fixture.provisioning);
+
+    expect(fixture.organization.row<{
+      id: string;
+      gmail_history_id: string;
+      status: string;
+      token_envelope: string;
+    }>('SELECT id, gmail_history_id, status, token_envelope FROM google_connections')).toMatchObject({
+      id: 'connection-existing',
+      gmail_history_id: 'history-1',
+      status: 'active',
+    });
+    expect(fixture.organization.row<{ value: string }>(
+      'SELECT value FROM settings WHERE key = ?',
+      'preserved',
+    )).toEqual({ value: 'yes' });
+    expect(fixture.organization.row<{ token_envelope: string }>(
+      'SELECT token_envelope FROM google_connections',
+    )?.token_envelope).not.toBe('{"stale":true}');
   });
 });

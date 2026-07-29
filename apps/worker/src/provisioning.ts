@@ -25,6 +25,7 @@ export const provisionOrganization = async (
   await recordPhase(env, provisioning.organizationId, 'allocating_database');
   const provisioned = await provisionOrganizationDatabase(env, {
     organizationId: provisioning.organizationId,
+    inboxAddress: provisioning.inboxAddress,
     bindingName: provisioning.bindingName,
     databaseId: provisioning.databaseId,
   });
@@ -69,7 +70,19 @@ export const provisionOrganization = async (
     status: 'active',
     createdAt: timestamp,
     updatedAt: timestamp,
-  }).onConflictDoNothing().run();
+  }).onConflictDoUpdate({
+    target: googleConnections.googleSubject,
+    set: {
+      inboxAddress: provisioning.inboxAddress,
+      grantedScopes: provisioning.grantedScopes,
+      tokenEnvelope: JSON.stringify(tokenEnvelope),
+      gmailHistoryId: provisioning.historyId,
+      enabled: true,
+      status: 'active',
+      lastError: null,
+      updatedAt: timestamp,
+    },
+  }).run();
   await recordPhase(env, provisioning.organizationId, 'verifying_binding');
   await provisioned.finalize();
   await recordPhase(env, provisioning.organizationId, 'activating_organization');

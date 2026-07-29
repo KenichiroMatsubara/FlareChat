@@ -32,6 +32,7 @@ describe('Organization schema provisioning through Miniflare D1', () => {
       LOCAL_ORGANIZATION_DB_1: env.LOCAL_ORGANIZATION_DB_1,
     } as unknown as Parameters<typeof provisionOrganizationDatabase>[0], {
       organizationId: 'organization-1',
+      inboxAddress: 'first@example.com',
       bindingName: 'ORG_ORGANIZATION1',
       databaseId: null,
     });
@@ -47,12 +48,27 @@ describe('Organization schema provisioning through Miniflare D1', () => {
   it('returns a canonical schema when reusing a migrated local Organization database', async () => {
     await applyMigration(env.CONTROL_DB, controlSchemaMigration);
     await applyMigration(env.LOCAL_ORGANIZATION_DB_1, organizationSchemaMigration);
+    await env.LOCAL_ORGANIZATION_DB_1.batch([
+      env.LOCAL_ORGANIZATION_DB_1.prepare(
+        'CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)',
+      ),
+      env.LOCAL_ORGANIZATION_DB_1.prepare(
+        'INSERT INTO d1_migrations (name) VALUES (?)',
+      ).bind('0000_initial.sql'),
+      env.LOCAL_ORGANIZATION_DB_1.prepare(
+        'CREATE TABLE provisioning_regression_marker (value TEXT NOT NULL)',
+      ),
+      env.LOCAL_ORGANIZATION_DB_1.prepare(
+        'INSERT INTO provisioning_regression_marker (value) VALUES (?)',
+      ).bind('must survive retry'),
+    ]);
 
     const provisioned = await provisionOrganizationDatabase({
       CONTROL_DB: env.CONTROL_DB,
       LOCAL_ORGANIZATION_DB_1: env.LOCAL_ORGANIZATION_DB_1,
     } as unknown as Parameters<typeof provisionOrganizationDatabase>[0], {
       organizationId: 'organization-1',
+      inboxAddress: 'first@example.com',
       bindingName: 'ORG_ORGANIZATION1',
       databaseId: null,
     });
@@ -61,7 +77,12 @@ describe('Organization schema provisioning through Miniflare D1', () => {
     const tables = await provisioned.database
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
       .all<{ name: string }>();
+    const marker = await provisioned.database
+      .prepare('SELECT value FROM provisioning_regression_marker')
+      .first<{ value: string }>();
 
     expect(tables.results.map(({ name }) => name)).toContain('recipient_profiles');
+    expect(tables.results.map(({ name }) => name)).toContain('tasks');
+    expect(marker).toEqual({ value: 'must survive retry' });
   });
 });
