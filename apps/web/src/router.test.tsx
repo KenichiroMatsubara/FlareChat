@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import { createMemoryRouter } from 'react-router-dom';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it, vi } from 'vitest';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 
 import type { AppState } from '@mail/domain';
 
 import { createAppRoutes, organizationRoutePaths, resolveApplicationRedirect, routePaths } from './router';
+import { logoutFromRouteError } from './routes';
 
 describe('application routes', () => {
   it('exposes stable public and organization URLs', () => {
@@ -50,12 +52,18 @@ describe('application routes', () => {
       identity: { email: 'owner@example.com', displayName: 'Owner' },
       organizations: [{ organizationId: 'org-1', name: 'Example', role: 'owner', status: 'active' }],
     } as AppState;
-    const router = createMemoryRouter(createAppRoutes({ bootstrap: async () => ready }), { initialEntries: ['/organizations/org-1/rules'] });
+    const router = createMemoryRouter(createAppRoutes({
+      bootstrap: async () => ready,
+      logout: async () => ({ loggedOut: true }),
+    }), { initialEntries: ['/organizations/org-1/rules'] });
     await router.initialize();
     expect(router.state.location.pathname).toBe('/organizations/org-1/rules');
     expect(router.state.matches.at(-1)?.route.path).toBe('rules');
 
-    const unknown = createMemoryRouter(createAppRoutes({ bootstrap: async () => ready }), { initialEntries: ['/unknown'] });
+    const unknown = createMemoryRouter(createAppRoutes({
+      bootstrap: async () => ready,
+      logout: async () => ({ loggedOut: true }),
+    }), { initialEntries: ['/unknown'] });
     await unknown.initialize();
     expect(unknown.state.matches.at(-1)?.route.path).toBe('*');
   });
@@ -66,8 +74,40 @@ describe('application routes', () => {
       identity: { email: 'owner@example.com', displayName: 'Owner' },
       organizations: [{ organizationId: 'org-1', name: 'Example', role: 'owner', status: 'active' }],
     } as AppState;
-    const router = createMemoryRouter(createAppRoutes({ bootstrap: async () => ready }), { initialEntries: ['/organizations/org-1/tasks'] });
+    const router = createMemoryRouter(createAppRoutes({
+      bootstrap: async () => ready,
+      logout: async () => ({ loggedOut: true }),
+    }), { initialEntries: ['/organizations/org-1/tasks'] });
     await router.initialize();
     expect(router.state.matches.at(-1)?.route.path).toBe('tasks');
+  });
+
+  it('offers a real logout action when a route cannot be displayed', async () => {
+    const logout = vi.fn().mockResolvedValue({ loggedOut: true });
+    const router = createMemoryRouter(createAppRoutes({
+      bootstrap: async () => ({ kind: 'signed_out' }),
+      logout,
+    }), {
+      initialEntries: ['/organizations/org-1/automation'],
+      hydrationData: {
+        loaderData: {},
+        errors: { root: new Error('Organization database is unavailable.') },
+      },
+    });
+
+    const markup = renderToStaticMarkup(<RouterProvider router={router} />);
+
+    expect(markup).toContain('ログアウトして入口へ戻る');
+    expect(markup).toContain('<button');
+  });
+
+  it('revokes the session before replacing the broken route with the entry route', async () => {
+    const logout = vi.fn().mockResolvedValue({ loggedOut: true });
+    const navigate = vi.fn();
+
+    await logoutFromRouteError(logout, navigate);
+
+    expect(logout).toHaveBeenCalledOnce();
+    expect(navigate).toHaveBeenCalledWith('/', { replace: true });
   });
 });

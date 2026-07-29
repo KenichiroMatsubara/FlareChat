@@ -72,7 +72,8 @@ Dashboard の設定値は次のとおりです。
 - Deploy command: `npm run deploy:cloudflare`
 - Production branch: `main`
 
-`deploy:cloudflare` は Worker と GUI をデプロイしてから Control D1 migration を適用します。
+`deploy:cloudflare` は Worker と GUI、旧 `chat.pinara.workers.dev` から正規の
+`flarechat.pinara.workers.dev` へ転送する互換 Worker をデプロイしてから Control D1 migration を適用します。
 初回のデプロイが成功したら、Worker の **Settings → Variables and Secrets** で次を設定します。
 本番の変数は Dashboard を source of truth とし、`wrangler.jsonc` の `keep_vars` によって
 以後の自動デプロイでも保持します。localhost 用の値は `env.local` にだけ定義されています。

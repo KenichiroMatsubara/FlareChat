@@ -138,14 +138,14 @@ const responseBody = async <T>(response: Response): Promise<(ApiResult<T> & ApiF
   const text = await response.text();
   if (!text) return null;
   try { return JSON.parse(text) as ApiResult<T> & ApiFailure; }
-  catch { throw new Error('サービスから不正な応答が返されました。開発サーバーが起動しているか確認してください。'); }
+  catch { throw new Error('サービスから正しい応答を受け取れませんでした。URLを確認して画面を再読み込みしてください。'); }
 };
 
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(path, { credentials: 'include', ...init, headers: { 'Content-Type': 'application/json', ...init?.headers } });
   const body = await responseBody<T>(response);
-  if (!response.ok) throw new Error(body?.error?.message ?? 'サービスに接続できません。開発サーバーが起動しているか確認してください。');
-  if (!body) throw new Error('サービスから応答がありません。開発サーバーが起動しているか確認してください。');
+  if (!response.ok) throw new Error(body?.error?.message ?? 'サービスに接続できませんでした。時間をおいて画面を再読み込みしてください。');
+  if (!body) throw new Error('サービスから応答がありませんでした。画面を再読み込みしてください。');
   return body.data;
 };
 

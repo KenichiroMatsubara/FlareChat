@@ -318,10 +318,42 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
 
 export const NotFoundRoute = () => <SetupCard><p className="eyebrow">404</p><h1>ページが見つかりません</h1><p className="setup-copy">このURLには対応する画面がありません。</p><NavLink className="primary" to="/">入口へ戻る</NavLink></SetupCard>;
 
-export const RouteError = () => {
+type Logout = () => Promise<{ loggedOut: boolean }>;
+type EntryNavigation = (to: string, options: { replace: true }) => void;
+
+export const logoutFromRouteError = async (
+  logout: Logout,
+  navigate: EntryNavigation,
+): Promise<void> => {
+  await logout();
+  navigate('/', { replace: true });
+};
+
+export const RouteError = ({ logout = api.logout }: { logout?: Logout }) => {
   const error = useRouteError();
+  const navigate = useNavigate();
+  const [busy, setBusy] = useState(false);
+  const [logoutError, setLogoutError] = useState('');
   const message = isRouteErrorResponse(error) ? error.status === 404 ? 'Organizationまたはページが見つかりません。' : error.statusText : error instanceof Error ? error.message : '画面を表示できませんでした。';
-  return <SetupCard><p className="eyebrow">ROUTE ERROR</p><h1>画面を表示できません</h1><p className="setup-error">{message}</p><NavLink className="primary" to="/">入口へ戻る</NavLink></SetupCard>;
+  const leave = async () => {
+    setBusy(true);
+    setLogoutError('');
+    try {
+      await logoutFromRouteError(logout, navigate);
+    } catch (cause) {
+      setLogoutError(cause instanceof Error ? cause.message : 'ログアウトできませんでした。');
+      setBusy(false);
+    }
+  };
+  return <SetupCard>
+    <p className="eyebrow">ROUTE ERROR</p>
+    <h1>画面を表示できません</h1>
+    <p className="setup-error">{message}</p>
+    {logoutError && <p className="setup-error">{logoutError}</p>}
+    <button className="primary" type="button" onClick={() => void leave()} disabled={busy}>
+      {busy ? 'ログアウト中…' : 'ログアウトして入口へ戻る'}
+    </button>
+  </SetupCard>;
 };
 
 export const LoadingRoute = () => <SetupCard><div className="loading"><RefreshCw className="spin" size={18} />読み込み中…</div></SetupCard>;

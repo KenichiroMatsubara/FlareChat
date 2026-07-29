@@ -1,0 +1,16 @@
+{
+  "name": "@flarechat/legacy-chat-redirect",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && wrangler deploy --dry-run",
+    "typecheck": "tsc -p tsconfig.json",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260722.1",
+    "typescript": "^5.9.2",
+    "wrangler": "^4.26.0"
+  }
+}

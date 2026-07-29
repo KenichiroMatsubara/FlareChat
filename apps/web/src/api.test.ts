@@ -29,7 +29,20 @@ describe('Organization setup client', () => {
   it('reports an empty upstream response without exposing a JSON parser exception', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 502 })));
 
-    await expect(api.bootstrap()).rejects.toThrow('サービスに接続できません。開発サーバーが起動しているか確認してください。');
+    await expect(api.bootstrap()).rejects.toThrow('サービスに接続できませんでした。時間をおいて画面を再読み込みしてください。');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('explains that the URL may be stale when an API request receives an HTML response', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html>Not Found</html>', {
+      status: 404,
+      headers: { 'Content-Type': 'text/html' },
+    })));
+
+    await expect(api.bootstrap()).rejects.toThrow(
+      'サービスから正しい応答を受け取れませんでした。URLを確認して画面を再読み込みしてください。',
+    );
 
     vi.unstubAllGlobals();
   });

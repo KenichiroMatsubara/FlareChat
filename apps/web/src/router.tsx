@@ -56,7 +56,7 @@ export const resolveApplicationRedirect = (pathname: string, state: AppState): s
   return null;
 };
 
-export type RouterClient = Pick<typeof api, 'bootstrap'>;
+export type RouterClient = Pick<typeof api, 'bootstrap' | 'logout'>;
 
 const stateLoader = (client: RouterClient) => async ({ request }: LoaderFunctionArgs): Promise<AppState> => {
   const state = await client.bootstrap();
@@ -70,18 +70,18 @@ const rootRoute = (client: RouterClient) => ({
   path: '/',
   loader: stateLoader(client),
   element: <Outlet />,
-  errorElement: <RouteError />,
+  errorElement: <RouteError logout={client.logout} />,
   children: [
     { index: true, element: <OAuthError /> },
-    { path: 'setup', loader: stateLoader(client), element: <SetupRoute />, errorElement: <RouteError /> },
-    { path: 'setup/confirm', loader: stateLoader(client), element: <SetupConfirmRoute />, errorElement: <RouteError /> },
-    { path: 'setup/provisioning', loader: stateLoader(client), element: <SetupProgressRoute failed={false} />, errorElement: <RouteError /> },
-    { path: 'setup/failed', loader: stateLoader(client), element: <SetupProgressRoute failed />, errorElement: <RouteError /> },
+    { path: 'setup', loader: stateLoader(client), element: <SetupRoute />, errorElement: <RouteError logout={client.logout} /> },
+    { path: 'setup/confirm', loader: stateLoader(client), element: <SetupConfirmRoute />, errorElement: <RouteError logout={client.logout} /> },
+    { path: 'setup/provisioning', loader: stateLoader(client), element: <SetupProgressRoute failed={false} />, errorElement: <RouteError logout={client.logout} /> },
+    { path: 'setup/failed', loader: stateLoader(client), element: <SetupProgressRoute failed />, errorElement: <RouteError logout={client.logout} /> },
     {
       path: 'organizations/:organizationId',
       loader: ({ params }: LoaderFunctionArgs) => loadOrganization(params.organizationId ?? ''),
       element: <OrganizationLayout />,
-      errorElement: <RouteError />,
+      errorElement: <RouteError logout={client.logout} />,
       children: [
         { index: true, loader: () => redirect('automation'), element: <LoadingRoute /> },
         { path: 'automation', element: <OrganizationPage page="automation" /> },
