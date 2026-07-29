@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "dev": "concurrently -n worker,web -c cyan,magenta \"npm run dev -w @mail/worker\" \"npm run dev -w @mail/web\"",
-    "build": "npm run build -w @mail/domain && npm run build -w @mail/web && npm run build -w @mail/worker && npm run build -w @flarechat/legacy-chat-redirect",
+    "build": "npm run build -w @mail/domain && npm run build -w @mail/web && npm run build -w @mail/worker",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test:unit && npm run test:d1",
     "test:unit": "vitest run",
@@ -21,7 +21,7 @@
     "db:generate:control": "drizzle-kit generate --config=drizzle.control.config.ts",
     "db:generate:organization": "drizzle-kit generate --config=drizzle.organization.config.ts",
     "db:migrate:control:remote": "wrangler d1 migrations apply CONTROL_DB --remote --config apps/worker/wrangler.jsonc",
-    "deploy:cloudflare": "npm run deploy -w @mail/worker && npm run deploy -w @flarechat/legacy-chat-redirect && npm run db:migrate:control:remote",
+    "deploy:cloudflare": "npm run deploy -w @mail/worker && npm run db:migrate:control:remote",
     "deploy": "npm run build && npm run deploy:cloudflare"
   },
   "devDependencies": {

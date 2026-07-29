@@ -158,7 +158,7 @@ describe('Cloudflare control plane', () => {
     const requests: Array<{ url: string; init: RequestInit | undefined }> = [];
     const fetcher = vi.fn<CloudflareFetch>(async (input, init) => {
       requests.push({ url: String(input), init });
-      if (!init?.method) {
+      if (String(input).endsWith('/settings') && !init?.method) {
         return cloudflareResponse({
           bindings: [
             { name: 'AI', type: 'ai' },
@@ -167,13 +167,25 @@ describe('Cloudflare control plane', () => {
           ],
         });
       }
+      if (String(input).endsWith('/deployments')) {
+        return cloudflareResponse({
+          deployments: [{ versions: [{ version_id: 'version-new', percentage: 100 }] }],
+        });
+      }
+      if (String(input).endsWith('/versions/version-new')) {
+        return cloudflareResponse({
+          resources: {
+            bindings: [{ name: 'ORG_NEW', type: 'd1', database_id: 'database-new' }],
+          },
+        });
+      }
       return cloudflareResponse({ bindings: [] });
     });
     const controlPlane = cloudflareControlPlane(environment, fetcher);
 
     await controlPlane.attachDatabase('ORG_NEW', 'database-new');
 
-    expect(requests).toHaveLength(2);
+    expect(requests).toHaveLength(4);
     expect(requests[0]?.init?.body).toBeUndefined();
     expect(new Headers(requests[0]?.init?.headers).has('content-type')).toBe(false);
     expect(requests[1]?.init?.method).toBe('PATCH');
@@ -188,5 +200,45 @@ describe('Cloudflare control plane', () => {
         { name: 'ORG_NEW', type: 'd1', database_id: 'database-new' },
       ],
     });
+  });
+
+  it('waits until a newly attached D1 binding is present in the deployed Worker version', async () => {
+    let deploymentReads = 0;
+    const fetcher = vi.fn<CloudflareFetch>(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/settings') && !init?.method) {
+        return cloudflareResponse({ bindings: [{ name: 'AI', type: 'ai' }] });
+      }
+      if (url.endsWith('/settings') && init?.method === 'PATCH') {
+        return cloudflareResponse({ bindings: [] });
+      }
+      if (url.endsWith('/deployments')) {
+        deploymentReads += 1;
+        return cloudflareResponse({
+          deployments: [{
+            versions: [{
+              version_id: deploymentReads === 1 ? 'version-before-binding' : 'version-with-binding',
+              percentage: 100,
+            }],
+          }],
+        });
+      }
+      if (url.endsWith('/versions/version-before-binding')) {
+        return cloudflareResponse({
+          resources: { bindings: [{ name: 'CONTROL_DB', type: 'd1', database_id: 'control-db' }] },
+        });
+      }
+      if (url.endsWith('/versions/version-with-binding')) {
+        return cloudflareResponse({
+          resources: { bindings: [{ name: 'ORG_NEW', type: 'd1', database_id: 'database-new' }] },
+        });
+      }
+      throw new Error(`Unexpected Cloudflare request: ${url}`);
+    });
+    const controlPlane = cloudflareControlPlane(environment, fetcher);
+
+    await controlPlane.attachDatabase('ORG_NEW', 'database-new');
+
+    expect(deploymentReads).toBe(2);
   });
 });

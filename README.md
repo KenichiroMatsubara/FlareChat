@@ -72,8 +72,8 @@ Dashboard の設定値は次のとおりです。
 - Deploy command: `npm run deploy:cloudflare`
 - Production branch: `main`
 
-`deploy:cloudflare` は Worker と GUI、旧 `chat.pinara.workers.dev` から正規の
-`flarechat.pinara.workers.dev` へ転送する互換 Worker をデプロイしてから Control D1 migration を適用します。
+`deploy:cloudflare` は `flarechat.pinara.workers.dev` の Worker と GUI をデプロイしてから
+Control D1 migration を適用します。
 本番URLなどの非秘密変数は `apps/worker/wrangler.jsonc` を source of truth とします。
 初回デプロイ前に、Worker の **Settings → Variables and Secrets** または
 `wrangler secret bulk` で次のSecretsを設定します。`secrets.required` により、

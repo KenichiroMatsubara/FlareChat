@@ -26,6 +26,24 @@ interface WorkerSettings {
   bindings?: Array<{ name?: unknown }>;
 }
 
+interface WorkerDeployment {
+  versions?: Array<{ version_id?: string; percentage?: number }>;
+}
+
+interface WorkerDeployments {
+  deployments?: WorkerDeployment[];
+}
+
+interface WorkerVersion {
+  resources?: {
+    bindings?: Array<{
+      name?: unknown;
+      type?: unknown;
+      database_id?: unknown;
+    }>;
+  };
+}
+
 type WorkerBindingUpdate =
   | { name: string; type: 'inherit' }
   | { name: string; type: 'd1'; database_id: string };
@@ -47,6 +65,8 @@ export interface CloudflareControlPlane {
 }
 
 const REMOTE_QUERY = Symbol('remote-query');
+const BINDING_DEPLOYMENT_ATTEMPTS = 20;
+const BINDING_DEPLOYMENT_POLL_MS = 250;
 
 /**
  * Owns Cloudflare control-plane transport details. Callers use D1 operations
@@ -215,6 +235,29 @@ export const cloudflareControlPlane = (
       method: 'PATCH',
       body: form,
     });
+    for (let attempt = 0; attempt < BINDING_DEPLOYMENT_ATTEMPTS; attempt += 1) {
+      const result = await request<WorkerDeployments>(`/workers/scripts/${script}/deployments`);
+      const deployedVersions = (result.deployments?.[0]?.versions ?? [])
+        .filter(({ percentage }) => typeof percentage !== 'number' || percentage > 0)
+        .map(({ version_id: versionId }) => versionId)
+        .filter((versionId): versionId is string => typeof versionId === 'string');
+      const bindingIsDeployed = deployedVersions.length > 0 && (await Promise.all(
+        deployedVersions.map(async (versionId) => {
+          const version = await request<WorkerVersion>(
+            `/workers/scripts/${script}/versions/${encodeURIComponent(versionId)}`,
+          );
+          return (version.resources?.bindings ?? []).some((binding) =>
+            binding.name === bindingName
+            && binding.type === 'd1'
+            && binding.database_id === databaseId);
+        }),
+      )).every(Boolean);
+      if (bindingIsDeployed) return;
+      if (attempt + 1 < BINDING_DEPLOYMENT_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, BINDING_DEPLOYMENT_POLL_MS));
+      }
+    }
+    throw new Error(`Organization database binding ${bindingName} was not deployed.`);
   };
 
   return {
