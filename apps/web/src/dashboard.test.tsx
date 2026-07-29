@@ -58,3 +58,61 @@ describe('responsive dashboard shell', () => {
     expect(stylesheet).toContain('.gemini-request-heading .secondary { width: 100%; }');
   });
 });
+
+describe('mailbox test prerequisites', () => {
+  it('allows Gmail search before an AI connection is configured', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/mailbox-test']}>
+        <Dashboard
+          {...dashboardProps()}
+          page="mail-test"
+          automation={{
+            email: 'owner@example.com',
+            displayName: 'Owner',
+            enabled: true,
+            status: 'active',
+            lastSyncedAt: null,
+            lastError: null,
+            created: 0,
+            skipped: 0,
+            exceptions: 0,
+          }}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).not.toContain('メールテストには Gemini API キーが必要です');
+    expect(html).toMatch(/<button class="primary">Gmailを検索<\/button>/u);
+  });
+
+  it('describes the prepared payload as usable with any OpenAI-compatible API', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/mailbox-test']}>
+        <Dashboard
+          {...dashboardProps()}
+          page="mail-test"
+          automation={{
+            email: 'owner@example.com',
+            displayName: 'Owner',
+            enabled: true,
+            status: 'active',
+            lastSyncedAt: null,
+            lastError: null,
+            created: 0,
+            skipped: 0,
+            exceptions: 0,
+          }}
+          mailTestGeminiRequest={{
+            id: 'message-1',
+            subject: '例会のお知らせ',
+            sender: 'sender@example.com',
+            request: { messages: [{ role: 'user', content: 'source' }] },
+          }}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('任意の OpenAI 互換 API');
+    expect(html).toContain('この画面から Gemini に送信する場合だけ');
+  });
+});

@@ -461,6 +461,48 @@ describe('Organization Automation Inbox scheduling', () => {
 });
 
 describe('Manual mailbox test', () => {
+  it('searches Gmail and prepares an OpenAI-compatible request without an AI credential', async () => {
+    fixture = await createAutomationTestApp();
+    const upstreamUrls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      upstreamUrls.push(url);
+      if (url.includes('/messages?')) {
+        return new Response(JSON.stringify({ messages: [{ id: 'message-without-ai' }] }), { status: 200 });
+      }
+      if (url.includes('/messages/message-without-ai')) {
+        return new Response(JSON.stringify({
+          id: 'message-without-ai',
+          payload: {
+            headers: [
+              { name: 'Subject', value: '手動テスト' },
+              { name: 'From', value: 'member@example.com' },
+            ],
+            body: { data: gmailBody('日時: 2026年8月3日 19:00〜21:30') },
+          },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ error: { message: `unexpected request: ${url}` } }), { status: 500 });
+    }));
+
+    const searchResponse = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/mail-tests/search',
+      { subject: '手動テスト' },
+    ), fixture.environment);
+    const preparedResponse = await app.fetch(fixture.request(
+      '/api/organizations/organization-1/mail-tests/message-without-ai/gemini-request',
+      { method: 'POST' },
+    ), fixture.environment);
+    const prepared = await preparedResponse.json() as {
+      data: { request: { messages?: Array<{ role?: string; content?: string }> } };
+    };
+
+    expect(searchResponse.status).toBe(200);
+    expect(preparedResponse.status).toBe(200);
+    expect(prepared.data.request.messages?.[1]?.content).toContain('2026年8月3日 19:00〜21:30');
+    expect(upstreamUrls.some((url) => url.includes('generativelanguage.googleapis.com'))).toBe(false);
+  });
+
   it('returns exact-subject matches through the injected Google adapter', async () => {
     fixture = await createAutomationTestApp();
     const automation = createAutomation(fixture.environment, {
