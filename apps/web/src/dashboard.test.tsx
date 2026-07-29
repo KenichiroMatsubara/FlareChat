@@ -113,6 +113,56 @@ describe('mailbox test prerequisites', () => {
     );
 
     expect(html).toContain('任意の OpenAI 互換 API');
-    expect(html).toContain('この画面から Gemini に送信する場合だけ');
+    expect(html).toContain('OpenAI 互換 API が設定されていません');
+    expect(html).toContain('href="/organizations/org-1/connections"');
+    expect(html).toContain('APIを設定する');
+    expect(html).not.toContain('設定済みの Gemini で予定を抽出');
+  });
+
+  it('uses provider-neutral wording when an AI API is configured', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/mailbox-test']}>
+        <Dashboard
+          {...dashboardProps()}
+          page="mail-test"
+          automation={{
+            email: 'owner@example.com',
+            displayName: 'Owner',
+            enabled: true,
+            status: 'active',
+            lastSyncedAt: null,
+            lastError: null,
+            created: 0,
+            skipped: 0,
+            exceptions: 0,
+          }}
+          connections={{
+            organizationId: 'org-1',
+            organizationName: 'Example',
+            ai: {
+              apiKeyConfigured: true,
+              provider: 'Google Gemini API',
+              model: 'gemini-3.5-flash-lite',
+              baseUrl: '',
+              authMode: 'api_key',
+              gcpProjectId: '',
+              gcpLocation: '',
+              oauthConfigured: false,
+            },
+            line: { channelAccessTokenConfigured: false, channelSecretConfigured: false },
+          }}
+          mailTestGeminiRequest={{
+            id: 'message-1',
+            subject: '例会のお知らせ',
+            sender: 'sender@example.com',
+            request: { messages: [{ role: 'user', content: 'source' }] },
+          }}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('設定済みの API で予定を抽出');
+    expect(html).not.toContain('設定済みの Gemini で予定を抽出');
+    expect(html).not.toContain('APIを設定する');
   });
 });

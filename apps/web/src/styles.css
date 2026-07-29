@@ -193,6 +193,9 @@ svg { flex: none; }
 .task-role-assignments { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; padding: 16px; background: #f1f6f1; border: 1px solid #dce9de; border-radius: 10px; }.task-role-assignments strong { width: 100%; font-size: 12px; }.task-role-assignments label { display: grid; gap: 6px; color: #435247; font-size: 11px; font-weight: 600; }.task-role-assignments select { min-width: 180px; padding: 9px 10px; border: 1px solid #d7ded7; border-radius: 7px; }
 .mail-test-actions { display: flex; flex-wrap: wrap; gap: 9px; }
 .mail-test-actions .dashboard-warning { flex: 1 0 100%; }
+.api-configuration-prompt { align-items: flex-start; flex-direction: column; }
+.api-configuration-prompt a { color: #356c4b; font-weight: 700; text-underline-offset: 3px; }
+.api-configuration-prompt a:hover { color: #245b3a; }
 .gemini-request-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .gemini-request-heading p { margin: 0; color: #558166; font-size: 10px; font-weight: 700; letter-spacing: 1.5px; }
 .gemini-request-heading .secondary { flex: 0 0 auto; }
