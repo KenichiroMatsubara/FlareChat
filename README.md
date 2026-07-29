@@ -74,14 +74,15 @@ Dashboard の設定値は次のとおりです。
 
 `deploy:cloudflare` は Worker と GUI、旧 `chat.pinara.workers.dev` から正規の
 `flarechat.pinara.workers.dev` へ転送する互換 Worker をデプロイしてから Control D1 migration を適用します。
-初回のデプロイが成功したら、Worker の **Settings → Variables and Secrets** で次を設定します。
-本番の変数は Dashboard を source of truth とし、`wrangler.jsonc` の `keep_vars` によって
-以後の自動デプロイでも保持します。localhost 用の値は `env.local` にだけ定義されています。
+本番URLなどの非秘密変数は `apps/worker/wrangler.jsonc` を source of truth とします。
+初回デプロイ前に、Worker の **Settings → Variables and Secrets** または
+`wrangler secret bulk` で次のSecretsを設定します。`secrets.required` により、
+一つでも存在しない状態でのデプロイは失敗します。localhost 用の値は `env.local` にだけ定義されています。
 OrganizationごとのD1 bindingはセットアップ時にCloudflare APIで追加されるため、
-`wrangler.jsonc` の `unsafe.metadata.keep_bindings: ["d1"]` で通常デプロイ後も保持します。
+`wrangler.jsonc` の `unsafe.metadata.keep_bindings` でD1・変数・Secretsを通常デプロイ後も保持します。
 
-- Variables: `APP_URL`, `WEB_ORIGIN`, `RP_ID`, `GOOGLE_CLIENT_ID`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_WORKER_NAME`
-- Secrets: `GOOGLE_CLIENT_SECRET`, `CREDENTIAL_MASTER_KEY`, `CREDENTIAL_MASTER_KEY_VERSION`, `CLOUDFLARE_API_TOKEN`
+- Variables: `APP_URL`, `WEB_ORIGIN`, `RP_ID`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_WORKER_NAME`
+- Secrets: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `CREDENTIAL_MASTER_KEY`, `CREDENTIAL_MASTER_KEY_VERSION`, `CLOUDFLARE_API_TOKEN`
 
 `APP_URL` と `WEB_ORIGIN` には `https://<domain>`、`RP_ID` には scheme を除いた
 `<domain>`、`CLOUDFLARE_WORKER_NAME` には `flarechat` を設定します。

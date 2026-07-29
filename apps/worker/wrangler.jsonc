@@ -3,10 +3,32 @@
   "name": "flarechat",
   "main": "src/index.ts",
   "compatibility_date": "2026-07-24",
+  "vars": {
+    "APP_URL": "https://flarechat.pinara.workers.dev",
+    "WEB_ORIGIN": "https://flarechat.pinara.workers.dev",
+    "RP_ID": "flarechat.pinara.workers.dev",
+    "CLOUDFLARE_ACCOUNT_ID": "deef3884fc0cef219bec7204b097d699",
+    "CLOUDFLARE_WORKER_NAME": "flarechat"
+  },
   "keep_vars": true,
+  "secrets": {
+    "required": [
+      "CLOUDFLARE_API_TOKEN",
+      "CREDENTIAL_MASTER_KEY",
+      "CREDENTIAL_MASTER_KEY_VERSION",
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET"
+    ]
+  },
   "unsafe": {
     "metadata": {
-      "keep_bindings": ["d1"]
+      "keep_bindings": [
+        "d1",
+        "plain_text",
+        "json",
+        "secret_text",
+        "secret_key"
+      ]
     }
   },
   "rules": [

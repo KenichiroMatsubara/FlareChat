@@ -19,10 +19,33 @@ const cloudflareResponse = (result: unknown): Response =>
 describe('Cloudflare control plane', () => {
   it('preserves dynamically provisioned Organization D1 bindings during deployment', async () => {
     const config = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8')) as {
+      keep_vars?: boolean;
+      secrets?: { required?: string[] };
       unsafe?: { metadata?: { keep_bindings?: string[] } };
+      vars?: Record<string, string>;
     };
 
-    expect(config.unsafe?.metadata?.keep_bindings).toContain('d1');
+    expect(config.vars).toMatchObject({
+      APP_URL: 'https://flarechat.pinara.workers.dev',
+      WEB_ORIGIN: 'https://flarechat.pinara.workers.dev',
+      RP_ID: 'flarechat.pinara.workers.dev',
+      CLOUDFLARE_WORKER_NAME: 'flarechat',
+    });
+    expect(config.keep_vars).toBe(true);
+    expect(config.unsafe?.metadata?.keep_bindings).toEqual(expect.arrayContaining([
+      'd1',
+      'plain_text',
+      'json',
+      'secret_text',
+      'secret_key',
+    ]));
+    expect(config.secrets?.required).toEqual(expect.arrayContaining([
+      'CLOUDFLARE_API_TOKEN',
+      'CREDENTIAL_MASTER_KEY',
+      'CREDENTIAL_MASTER_KEY_VERSION',
+      'GOOGLE_CLIENT_ID',
+      'GOOGLE_CLIENT_SECRET',
+    ]));
   });
 
   it('encodes D1 operations as JSON behind its D1Database adapter', async () => {
