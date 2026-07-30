@@ -21,10 +21,10 @@ const dashboardProps = (): DashboardProps => ({
   onRun: vi.fn(), onSetEnabled: vi.fn(), onLogout: vi.fn(), onReauthenticate: vi.fn(),
   organization: { name: 'Example', role: 'owner' }, organizationId: 'org-1',
   organizations: [{ organizationId: 'org-1', name: 'Example', role: 'owner', status: 'active' }],
-  canManage: true, connections: null, lineChannelAccessToken: '', lineChannelSecret: '', geminiApiKey: '', aiModel: 'gemini-3.5-flash-lite',
-  onLineChannelAccessTokenChange: vi.fn(), onLineChannelSecretChange: vi.fn(), onGeminiApiKeyChange: vi.fn(), onAiModelChange: vi.fn(),
-  settingsBusy: false, onSaveConnections: vi.fn(), geminiTestPrompt: '', geminiTestResult: '', geminiTestBusy: false,
-  onGeminiTestPromptChange: vi.fn(), onTestGemini: vi.fn(), mailTestSubject: '', mailTestMatches: [], mailTestGeminiRequest: null,
+  canManage: true, connections: null, lineChannelAccessToken: '', lineChannelSecret: '', aiApiKey: '', aiModel: 'test-model', aiBaseUrl: 'https://ai.example.com/v1',
+  onLineChannelAccessTokenChange: vi.fn(), onLineChannelSecretChange: vi.fn(), onAiApiKeyChange: vi.fn(), onAiModelChange: vi.fn(), onAiBaseUrlChange: vi.fn(),
+  settingsBusy: false, onSaveConnections: vi.fn(), aiTestPrompt: '', aiTestResult: '', aiTestBusy: false,
+  onAiTestPromptChange: vi.fn(), onTestAi: vi.fn(), mailTestSubject: '', mailTestMatches: [], mailTestAiRequest: null,
   mailTestPreview: null, mailTestBusy: false, mailTestCreatedEventIds: [], onMailTestSubjectChange: vi.fn(), onSearchMailbox: vi.fn(),
   onPrepareMailbox: vi.fn(), onPreviewMailbox: vi.fn(), onCreateCalendarEvent: vi.fn(), organizationRules: [], ruleBusy: false,
   onCreateRule: vi.fn(), organizationTasks: [], onUpdateTask: vi.fn(), taskRoleAssignments: [], taskMembers: [], onAssignTaskRole: vi.fn(),
@@ -51,11 +51,11 @@ describe('responsive dashboard shell', () => {
     for (const label of ['自動化', '接続設定', 'ルール', 'タスク', 'メールテスト', 'ログアウト']) expect(panel).toContain(label);
   });
 
-  it('stacks the Gemini request heading and its copy action on narrow screens', async () => {
+  it('stacks the AI request heading and its copy action on narrow screens', async () => {
     const stylesheet = await readFile(new URL('./styles.css', import.meta.url), 'utf8');
 
-    expect(stylesheet).toContain('@media (max-width: 560px) {\n  .gemini-request-heading { flex-direction: column; }');
-    expect(stylesheet).toContain('.gemini-request-heading .secondary { width: 100%; }');
+    expect(stylesheet).toContain('@media (max-width: 560px) {\n  .ai-request-heading { flex-direction: column; }');
+    expect(stylesheet).toContain('.ai-request-heading .secondary { width: 100%; }');
   });
 });
 
@@ -81,7 +81,6 @@ describe('mailbox test prerequisites', () => {
       </MemoryRouter>,
     );
 
-    expect(html).not.toContain('メールテストには Gemini API キーが必要です');
     expect(html).toMatch(/<button class="primary">Gmailを検索<\/button>/u);
   });
 
@@ -102,7 +101,7 @@ describe('mailbox test prerequisites', () => {
             skipped: 0,
             exceptions: 0,
           }}
-          mailTestGeminiRequest={{
+          mailTestAiRequest={{
             id: 'message-1',
             subject: '例会のお知らせ',
             sender: 'sender@example.com',
@@ -116,7 +115,6 @@ describe('mailbox test prerequisites', () => {
     expect(html).toContain('OpenAI 互換 API が設定されていません');
     expect(html).toContain('href="/organizations/org-1/connections"');
     expect(html).toContain('APIを設定する');
-    expect(html).not.toContain('設定済みの Gemini で予定を抽出');
   });
 
   it('uses provider-neutral wording when an AI API is configured', () => {
@@ -141,17 +139,12 @@ describe('mailbox test prerequisites', () => {
             organizationName: 'Example',
             ai: {
               apiKeyConfigured: true,
-              provider: 'Google Gemini API',
-              model: 'gemini-3.5-flash-lite',
-              baseUrl: '',
-              authMode: 'api_key',
-              gcpProjectId: '',
-              gcpLocation: '',
-              oauthConfigured: false,
+              model: 'test-model',
+              baseUrl: 'https://ai.example.com/v1',
             },
             line: { channelAccessTokenConfigured: false, channelSecretConfigured: false },
           }}
-          mailTestGeminiRequest={{
+          mailTestAiRequest={{
             id: 'message-1',
             subject: '例会のお知らせ',
             sender: 'sender@example.com',
@@ -162,7 +155,19 @@ describe('mailbox test prerequisites', () => {
     );
 
     expect(html).toContain('設定済みの API で予定を抽出');
-    expect(html).not.toContain('設定済みの Gemini で予定を抽出');
     expect(html).not.toContain('APIを設定する');
+  });
+
+  it('configures an OpenAI-compatible endpoint without a fixed provider or model', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/connections']}>
+        <Dashboard {...dashboardProps()} page="connections" />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('OpenAI 互換 API');
+    expect(html).toContain('Base URL');
+    expect(html).toContain('placeholder="https://api.openai.com/v1"');
+    expect(html).toContain('placeholder="例: gpt-4.1-mini"');
   });
 });

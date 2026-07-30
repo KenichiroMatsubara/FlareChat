@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { app } from './api';
 import { enqueueJob } from './jobs';
@@ -16,6 +16,7 @@ import {
 let fixture: TestApp | undefined;
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   fixture?.close();
   fixture = undefined;
 });
@@ -90,6 +91,74 @@ describe('Organization access', () => {
     expect(dashboard.status).toBe(200);
     expect(listChange.status).toBe(403);
     expect(recipientChange.status).toBe(403);
+  });
+});
+
+describe('OpenAI-compatible connection', () => {
+  it('stores an arbitrary HTTPS Base URL and model and uses them for the connection test', async () => {
+    fixture = await createAutomationTestApp();
+    const saved = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/connections',
+      {
+        line: {},
+        ai: {
+          baseUrl: 'https://gateway.example.com/openai/v1/',
+          model: 'organization-model',
+          apiKey: 'organization-api-key',
+        },
+      },
+      'PUT',
+    ), fixture.environment);
+
+    expect(saved.status).toBe(200);
+    await expect(saved.json()).resolves.toMatchObject({
+      data: {
+        ai: {
+          apiKeyConfigured: true,
+          baseUrl: 'https://gateway.example.com/openai/v1',
+          model: 'organization-model',
+        },
+      },
+    });
+
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: '接続成功' } }],
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const tested = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/connections/ai/test',
+      { prompt: '接続を確認' },
+    ), fixture.environment);
+
+    expect(tested.status).toBe(200);
+    await expect(tested.json()).resolves.toMatchObject({
+      data: { text: '接続成功', model: 'organization-model' },
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://gateway.example.com/openai/v1/chat/completions',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer organization-api-key' }),
+        body: expect.stringContaining('"model":"organization-model"'),
+      }),
+    );
+  });
+
+  it('rejects an insecure Base URL before storing credentials', async () => {
+    fixture = await createAutomationTestApp();
+    const response = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/connections',
+      {
+        line: {},
+        ai: {
+          baseUrl: 'http://ai.example.com/v1',
+          model: 'organization-model',
+          apiKey: 'organization-api-key',
+        },
+      },
+      'PUT',
+    ), fixture.environment);
+
+    expect(response.status).toBe(400);
   });
 });
 

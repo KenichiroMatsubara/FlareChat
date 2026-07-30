@@ -103,7 +103,7 @@ describe('Organization Automation Inbox scheduling', () => {
         history: [{ messagesAdded: [{ message: { id: 'gmail-message-task-1' } }] }],
       }), { status: 200 });
       if (url.includes('/messages/gmail-message-task-1')) return sourceMessageResponse();
-      if (url.includes('generativelanguage.googleapis.com')) return new Response(JSON.stringify({
+      if (url.includes('ai.example.com')) return new Response(JSON.stringify({
         choices: [{ message: { content: JSON.stringify({
           events: [{
             title: '例会',
@@ -285,15 +285,15 @@ describe('Organization Automation Inbox scheduling', () => {
       name: '式典案内.docx',
       mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       tokens: 30,
-      data: '# GEMINI-FILE-PROBE-001\n日時: 2026-08-18 14:30-16:00\n会場: 名古屋',
+      data: '# FILE-PROBE-001\n日時: 2026-08-18 14:30-16:00\n会場: 名古屋',
     }) };
     (fixture.environment as unknown as { AI: typeof markdown }).AI = markdown;
-    const docx = await readFile(new URL('../../../fixtures/gemini-file-probe/event-invitation.docx', import.meta.url));
+    const docx = await readFile(new URL('../../../fixtures/ai-file-probe/event-invitation.docx', import.meta.url));
     const gmailDocx = docx.toString('base64')
       .replaceAll('+', '-')
       .replaceAll('/', '_')
       .replace(/=+$/u, '');
-    let geminiRequest: { messages?: Array<{ role?: string; content?: string }> } = {};
+    let aiRequest: { messages?: Array<{ role?: string; content?: string }> } = {};
     let calendarUrl = '';
     let calendarRequest: { attachments?: Array<{ fileUrl?: string; title?: string; mimeType?: string }> } = {};
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
@@ -323,10 +323,10 @@ describe('Organization Automation Inbox scheduling', () => {
           },
         }), { status: 200 });
       }
-      if (url.includes('generativelanguage.googleapis.com')) {
-        geminiRequest = JSON.parse(init?.body as string) as typeof geminiRequest;
-        const normalizedText = geminiRequest.messages?.[1]?.content ?? '';
-        if (!normalizedText.includes('GEMINI-FILE-PROBE-001')
+      if (url.includes('ai.example.com')) {
+        aiRequest = JSON.parse(init?.body as string) as typeof aiRequest;
+        const normalizedText = aiRequest.messages?.[1]?.content ?? '';
+        if (!normalizedText.includes('FILE-PROBE-001')
           || !normalizedText.includes('2026-08-18')
           || !normalizedText.includes('14:30')
           || !normalizedText.includes('16:00')) {
@@ -358,12 +358,12 @@ describe('Organization Automation Inbox scheduling', () => {
 
     await runEnabledAutomations(fixture.environment);
 
-    expect(geminiRequest.messages?.[1]?.content).toContain('GEMINI-FILE-PROBE-001');
+    expect(aiRequest.messages?.[1]?.content).toContain('FILE-PROBE-001');
     expect(markdown.toMarkdown).toHaveBeenCalledWith(expect.objectContaining({
       name: '式典案内.docx',
       blob: expect.any(Blob),
     }));
-    expect(geminiRequest.messages?.[1]?.content).not.toContain(gmailDocx);
+    expect(aiRequest.messages?.[1]?.content).not.toContain(gmailDocx);
     expect(calendarUrl).toContain('supportsAttachments=true');
     expect(calendarRequest.attachments).toEqual([{
       fileUrl: 'https://drive.example/docx',
@@ -490,7 +490,7 @@ describe('Manual mailbox test', () => {
       { subject: '手動テスト' },
     ), fixture.environment);
     const preparedResponse = await app.fetch(fixture.request(
-      '/api/organizations/organization-1/mail-tests/message-without-ai/gemini-request',
+      '/api/organizations/organization-1/mail-tests/message-without-ai/ai-request',
       { method: 'POST' },
     ), fixture.environment);
     const prepared = await preparedResponse.json() as {
@@ -500,7 +500,7 @@ describe('Manual mailbox test', () => {
     expect(searchResponse.status).toBe(200);
     expect(preparedResponse.status).toBe(200);
     expect(prepared.data.request.messages?.[1]?.content).toContain('2026年8月3日 19:00〜21:30');
-    expect(upstreamUrls.some((url) => url.includes('generativelanguage.googleapis.com'))).toBe(false);
+    expect(upstreamUrls.some((url) => url.includes('ai.example.com'))).toBe(false);
   });
 
   it('returns exact-subject matches through the injected Google adapter', async () => {
@@ -537,7 +537,7 @@ describe('Manual mailbox test', () => {
       mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       tokens: 32,
       data: [
-        '# GEMINI-FILE-PROBE-001',
+        '# FILE-PROBE-001',
         '',
         '| __EMPTY_1 | 日時         | 時間         | 会場                                      | __EMPTY_2 |',
         '| ----------- | ------------ | ------------ | ----------------------------------------- | --------- |',
@@ -546,12 +546,12 @@ describe('Manual mailbox test', () => {
       ].join('\n'),
     }) };
     (fixture.environment as unknown as { AI: typeof markdown }).AI = markdown;
-    const xlsx = await readFile(new URL('../../../fixtures/gemini-file-probe/event-invitation.xlsx', import.meta.url));
+    const xlsx = await readFile(new URL('../../../fixtures/ai-file-probe/event-invitation.xlsx', import.meta.url));
     const gmailXlsx = xlsx.toString('base64')
       .replaceAll('+', '-')
       .replaceAll('/', '_')
       .replace(/=+$/u, '');
-    let geminiRequest: { messages?: Array<{ role?: string; content?: string }> } = {};
+    let aiRequest: { messages?: Array<{ role?: string; content?: string }> } = {};
     let calendarUrl = '';
     const calendarRequests: Array<{ summary?: string; attachments?: Array<{ fileUrl?: string; title?: string; mimeType?: string }> }> = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
@@ -575,10 +575,10 @@ describe('Manual mailbox test', () => {
           },
         }), { status: 200 });
       }
-      if (url.includes('generativelanguage.googleapis.com')) {
-        geminiRequest = JSON.parse(init?.body as string) as typeof geminiRequest;
-        const normalizedText = geminiRequest.messages?.[1]?.content ?? '';
-        if (!normalizedText.includes('GEMINI-FILE-PROBE-001')
+      if (url.includes('ai.example.com')) {
+        aiRequest = JSON.parse(init?.body as string) as typeof aiRequest;
+        const normalizedText = aiRequest.messages?.[1]?.content ?? '';
+        if (!normalizedText.includes('FILE-PROBE-001')
           || !normalizedText.includes('2026-08-18')
           || !normalizedText.includes('14:30')
           || !normalizedText.includes('16:00')) {
@@ -589,7 +589,7 @@ describe('Manual mailbox test', () => {
         return new Response(JSON.stringify({
           choices: [{ message: { content: JSON.stringify({
             events: [
-              { title: 'Gemini ファイル解析テスト会議', startsAt: '2026-08-18T14:30:00+09:00', endsAt: '2026-08-18T16:00:00+09:00', timeZone: 'Asia/Tokyo', location: '名古屋イノベーションセンター 3階 会議室A', description: '添付XLSXから抽出' },
+              { title: 'AI ファイル解析テスト会議', startsAt: '2026-08-18T14:30:00+09:00', endsAt: '2026-08-18T16:00:00+09:00', timeZone: 'Asia/Tokyo', location: '名古屋イノベーションセンター 3階 会議室A', description: '添付XLSXから抽出' },
               { title: 'テスト懇親会', startsAt: '2026-08-18T17:00:00+09:00', endsAt: '2026-08-18T19:00:00+09:00', timeZone: 'Asia/Tokyo', location: '名古屋イノベーションセンター 1階', description: '式典後の懇親会' },
             ],
             tasks: [
@@ -612,19 +612,19 @@ describe('Manual mailbox test', () => {
     }));
 
     const requestResponse = await app.fetch(fixture.request(
-      '/api/organizations/organization-1/mail-tests/gmail-message-attachment/gemini-request',
+      '/api/organizations/organization-1/mail-tests/gmail-message-attachment/ai-request',
       { method: 'POST' },
     ), fixture.environment);
-    const geminiRequestPreview = await requestResponse.json() as {
+    const aiRequestPreview = await requestResponse.json() as {
       data: { request: { messages?: Array<{ role?: string; content?: string }> } };
     };
 
     expect(requestResponse.status).toBe(200);
-    expect(geminiRequestPreview.data.request.messages?.[1]?.content).toContain('GEMINI-FILE-PROBE-001');
-    expect(geminiRequestPreview.data.request.messages?.[1]?.content).toContain('日時\t時間\t会場');
-    expect(geminiRequestPreview.data.request.messages?.[1]?.content).not.toContain('__EMPTY_1');
-    expect(geminiRequestPreview.data.request.messages?.[1]?.content).not.toContain('| ----------- |');
-    expect(geminiRequest.messages).toBeUndefined();
+    expect(aiRequestPreview.data.request.messages?.[1]?.content).toContain('FILE-PROBE-001');
+    expect(aiRequestPreview.data.request.messages?.[1]?.content).toContain('日時\t時間\t会場');
+    expect(aiRequestPreview.data.request.messages?.[1]?.content).not.toContain('__EMPTY_1');
+    expect(aiRequestPreview.data.request.messages?.[1]?.content).not.toContain('| ----------- |');
+    expect(aiRequest.messages).toBeUndefined();
 
     const previewResponse = await app.fetch(fixture.request(
       '/api/organizations/organization-1/mail-tests/gmail-message-attachment/preview',
@@ -641,12 +641,12 @@ describe('Manual mailbox test', () => {
     expect(previewResponse.status).toBe(200);
     expect(preview).toMatchObject({
       data: {
-        events: [{ title: 'Gemini ファイル解析テスト会議', startsAt: '2026-08-18T14:30:00+09:00' }, { title: 'テスト懇親会' }],
+        events: [{ title: 'AI ファイル解析テスト会議', startsAt: '2026-08-18T14:30:00+09:00' }, { title: 'テスト懇親会' }],
         tasks: [{ assigneeRole: 'organizer' }, { assigneeRole: 'treasurer' }],
       },
     });
-    expect(geminiRequest.messages?.[1]?.content).toContain('GEMINI-FILE-PROBE-001');
-    expect(geminiRequest.messages?.[1]?.content).not.toContain(gmailXlsx);
+    expect(aiRequest.messages?.[1]?.content).toContain('FILE-PROBE-001');
+    expect(aiRequest.messages?.[1]?.content).not.toContain(gmailXlsx);
     expect(markdown.toMarkdown).toHaveBeenCalledWith(expect.objectContaining({
       name: '式典案内.xlsx',
       blob: expect.any(Blob),
@@ -654,7 +654,7 @@ describe('Manual mailbox test', () => {
     expect(calendarResponse.status).toBe(201);
     expect(calendarUrl).toContain('supportsAttachments=true');
     expect(calendarRequests).toHaveLength(2);
-    expect(calendarRequests.map((request) => request.summary)).toEqual(['Gemini ファイル解析テスト会議', 'テスト懇親会']);
+    expect(calendarRequests.map((request) => request.summary)).toEqual(['AI ファイル解析テスト会議', 'テスト懇親会']);
     expect(calendarRequests[0]?.attachments).toEqual([{
       fileUrl: 'https://drive.example/xlsx',
       title: '式典案内.xlsx',

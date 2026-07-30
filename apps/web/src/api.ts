@@ -49,13 +49,8 @@ export interface OrganizationConnections {
   };
   ai: {
     apiKeyConfigured: boolean;
-    provider: string;
     model: string;
     baseUrl: string;
-    authMode: string;
-    gcpProjectId: string;
-    gcpLocation: string;
-    oauthConfigured: boolean;
   };
 }
 
@@ -129,8 +124,8 @@ export interface OrganizationTask {
 export interface TaskRoleAssignment { role: 'organizer' | 'treasurer'; identityId: string; displayName: string; }
 export interface TaskRoleConfiguration { members: Array<{ identityId: string; displayName: string }>; assignments: TaskRoleAssignment[]; }
 
-/** The Gemini JSON body prepared for review; credentials are never included. */
-export interface MailboxTestGeminiRequest extends MailboxTestMatch {
+/** The OpenAI-compatible JSON body prepared for review; credentials are never included. */
+export interface MailboxTestAiRequest extends MailboxTestMatch {
   request: Record<string, unknown>;
 }
 
@@ -184,27 +179,23 @@ export const api = {
   saveOrganizationConnections: (organizationId: string, input: {
     line: { channelAccessToken?: string | undefined; channelSecret?: string | undefined };
     ai: {
-      provider?: string | undefined;
       apiKey?: string | undefined;
       model?: string | undefined;
       baseUrl?: string | undefined;
-      authMode?: string | undefined;
-      gcpProjectId?: string | undefined;
-      gcpLocation?: string | undefined;
     };
   }): Promise<OrganizationConnections> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections`, {
     method: 'PUT',
     body: JSON.stringify(input),
   }),
-  testGeminiConnection: (organizationId: string, prompt: string, model: string): Promise<{ text: string; model: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections/gemini/test`, {
+  testAiConnection: (organizationId: string, prompt: string): Promise<{ text: string; model: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections/ai/test`, {
     method: 'POST',
-    body: JSON.stringify({ prompt, model }),
+    body: JSON.stringify({ prompt }),
   }),
   searchMailboxForTest: (organizationId: string, subject: string): Promise<{ messages: MailboxTestMatch[] }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/search`, {
     method: 'POST',
     body: JSON.stringify({ subject }),
   }),
-  prepareMailboxTestGeminiRequest: (organizationId: string, messageId: string): Promise<MailboxTestGeminiRequest> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/${encodeURIComponent(messageId)}/gemini-request`, {
+  prepareMailboxTestAiRequest: (organizationId: string, messageId: string): Promise<MailboxTestAiRequest> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/${encodeURIComponent(messageId)}/ai-request`, {
     method: 'POST',
   }),
   previewMailboxTestEvent: (organizationId: string, messageId: string): Promise<MailboxTestPreview> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/${encodeURIComponent(messageId)}/preview`, {

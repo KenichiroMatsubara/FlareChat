@@ -22,7 +22,7 @@ export interface ConvertedAttachment {
   /** Workers AI's conversion estimate (or the local fallback estimate). */
   text: string;
   tokens: number;
-  /** Estimated tokens of the conversion text admitted to the Gemini extraction request. */
+  /** Estimated tokens of the conversion text admitted to the AI extraction request. */
   selectedTokens: number;
   converter: 'workers_ai' | 'local_office';
 }

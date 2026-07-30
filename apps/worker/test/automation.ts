@@ -64,9 +64,9 @@ export const createAutomationTestApp = async (
   if (options.ai) {
     const aiCredential = await encrypt(
       JSON.stringify({
-        provider: 'Google Gemini API',
         apiKey: 'api-key',
-        model: 'gemini-3.5-flash-lite',
+        baseUrl: 'https://ai.example.com/v1',
+        model: 'test-model',
       }),
       organizationKey,
       'organization-connection:organization-1:ai',
@@ -76,7 +76,7 @@ export const createAutomationTestApp = async (
         (id, kind, label, credential, status, created_at, updated_at)
        VALUES (?, 'ai', ?, ?, 'active', ?, ?)`,
       'ai-1',
-      'Gemini',
+      'OpenAI-compatible API',
       JSON.stringify(aiCredential),
       CREATED_AT,
       CREATED_AT,

@@ -2,7 +2,7 @@ import { CheckSquare, CircleAlert, LogOut, Mail, Menu, Play, Settings, ShieldChe
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
-import type { AutomationStatus, AutomationSummary, MailboxTestGeminiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationConnections, OrganizationMembership, OrganizationRule, OrganizationRuleInput, OrganizationTask, TaskRoleAssignment } from './api';
+import type { AutomationStatus, AutomationSummary, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationConnections, OrganizationMembership, OrganizationRule, OrganizationRuleInput, OrganizationTask, TaskRoleAssignment } from './api';
 import { AutomationPage, ConnectionsPage, MailboxTestPage, RulesPage, TasksPage } from './dashboard-pages';
 
 export type Page = 'automation' | 'connections' | 'rules' | 'mail-test' | 'tasks';
@@ -49,22 +49,24 @@ export interface DashboardProps {
   connections: OrganizationConnections | null;
   lineChannelAccessToken: string;
   lineChannelSecret: string;
-  geminiApiKey: string;
+  aiApiKey: string;
   aiModel: string;
+  aiBaseUrl: string;
   onLineChannelAccessTokenChange: (value: string) => void;
   onLineChannelSecretChange: (value: string) => void;
-  onGeminiApiKeyChange: (value: string) => void;
+  onAiApiKeyChange: (value: string) => void;
   onAiModelChange: (value: string) => void;
+  onAiBaseUrlChange: (value: string) => void;
   settingsBusy: boolean;
   onSaveConnections: () => void;
-  geminiTestPrompt: string;
-  geminiTestResult: string;
-  geminiTestBusy: boolean;
-  onGeminiTestPromptChange: (value: string) => void;
-  onTestGemini: () => void;
+  aiTestPrompt: string;
+  aiTestResult: string;
+  aiTestBusy: boolean;
+  onAiTestPromptChange: (value: string) => void;
+  onTestAi: () => void;
   mailTestSubject: string;
   mailTestMatches: MailboxTestMatch[];
-  mailTestGeminiRequest: MailboxTestGeminiRequest | null;
+  mailTestAiRequest: MailboxTestAiRequest | null;
   mailTestPreview: MailboxTestPreview | null;
   mailTestBusy: boolean;
   mailTestCreatedEventIds: string[];

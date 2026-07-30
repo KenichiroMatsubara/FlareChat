@@ -42,16 +42,16 @@ export const TasksPage = (props: DashboardProps) => {
 
 export const ConnectionsPage = (props: DashboardProps) => {
   const settingsReady = Boolean(props.organization && props.canManage);
-  const hasGemini = Boolean(props.connections?.ai.apiKeyConfigured);
+  const hasAiApi = Boolean(props.connections?.ai.apiKeyConfigured);
   return <section className="page-layout settings-page">
-    <div className="page-title"><p>CONNECTIONS</p><h1>接続設定</h1><span>Gemini と LINE の資格情報はここで管理します。</span></div>
+    <div className="page-title"><p>CONNECTIONS</p><h1>接続設定</h1><span>OpenAI 互換 API と LINE の資格情報はここで管理します。</span></div>
     {!settingsReady ? <section className="empty-page"><Settings size={30} /><h2>設定を読み込めません</h2><p>Googleでログインし直した後、このページを再読み込みしてください。</p></section> : <>
       <div className="settings-grid">
-        <section className="settings-card"><div className="settings-card-title"><Settings size={19} /><div><h2>Gemini API</h2><p>メールの予定抽出に使うAIです。</p></div></div><p className="api-guide">キーをまだ作成していない場合は、<a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">Google AI Studio で Gemini API キーを作成</a>してから、この画面に戻って貼り付けてください。</p><label>使用するモデル<select value={props.aiModel} onChange={(event) => props.onAiModelChange(event.target.value)}><option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option><option value="gemini-3.6-flash">gemini-3.6-flash</option></select></label><label>Gemini API キー<SecretInput label="Gemini API キー" value={props.geminiApiKey} onChange={props.onGeminiApiKeyChange} placeholder={hasGemini ? '登録済み（変更時のみ入力）' : 'AIza…'} /></label><p className="connection-state">{hasGemini ? '接続設定済み' : '未設定'}</p></section>
+        <section className="settings-card"><div className="settings-card-title"><Settings size={19} /><div><h2>OpenAI 互換 API</h2><p>メールの予定抽出に使う AI です。</p></div></div><p className="api-guide">利用するサービスの OpenAI 互換 API の Base URL、model、API キーを入力してください。</p><label>Base URL<input value={props.aiBaseUrl} onChange={(event) => props.onAiBaseUrlChange(event.target.value)} placeholder="https://api.openai.com/v1" autoCapitalize="none" spellCheck={false} /></label><label>model<input value={props.aiModel} onChange={(event) => props.onAiModelChange(event.target.value)} placeholder="例: gpt-4.1-mini" autoCapitalize="none" spellCheck={false} /></label><label>API キー<SecretInput label="OpenAI 互換 API キー" value={props.aiApiKey} onChange={props.onAiApiKeyChange} placeholder={hasAiApi ? '登録済み（変更時のみ入力）' : 'API キー'} /></label><p className="connection-state">{hasAiApi ? '接続設定済み' : '未設定'}</p></section>
         <section className="settings-card"><div className="settings-card-title"><Mail size={19} /><div><h2>LINE Messaging API</h2><p>LINE通知を使う場合だけ設定します。</p></div></div><label>チャネルアクセストークン<SecretInput label="LINEチャネルアクセストークン" value={props.lineChannelAccessToken} onChange={props.onLineChannelAccessTokenChange} placeholder={props.connections?.line.channelAccessTokenConfigured ? '登録済み（変更時のみ入力）' : 'チャネルアクセストークン'} /></label><label>チャネルシークレット<SecretInput label="LINEチャネルシークレット" value={props.lineChannelSecret} onChange={props.onLineChannelSecretChange} placeholder={props.connections?.line.channelSecretConfigured ? '登録済み（変更時のみ入力）' : 'チャネルシークレット'} /></label></section>
       </div>
-      <div className="settings-actions"><button className="primary" onClick={props.onSaveConnections} disabled={props.settingsBusy || (!props.geminiApiKey && !hasGemini)}><Save size={17} />{props.settingsBusy ? '保存中…' : '接続設定を保存'}</button></div>
-      <section className="test-card"><div><p>GEMINI CONNECTION TEST</p><h2>Gemini API をテスト</h2><span>選択中の {props.aiModel} で、保存済みのキーに任意の質問を送信します。</span></div><textarea value={props.geminiTestPrompt} onChange={(event) => props.onGeminiTestPromptChange(event.target.value)} maxLength={10_000} aria-label="Geminiへの質問" /><button className="secondary" onClick={props.onTestGemini} disabled={props.geminiTestBusy || !hasGemini}>{props.geminiTestBusy ? '問い合わせ中…' : 'Gemini に質問する'}</button>{props.geminiTestResult && <pre>{props.geminiTestResult}</pre>}</section>
+      <div className="settings-actions"><button className="primary" onClick={props.onSaveConnections} disabled={props.settingsBusy || !props.aiBaseUrl.trim() || !props.aiModel.trim() || (!props.aiApiKey && !hasAiApi)}><Save size={17} />{props.settingsBusy ? '保存中…' : '接続設定を保存'}</button></div>
+      <section className="test-card"><div><p>AI CONNECTION TEST</p><h2>OpenAI 互換 API をテスト</h2><span>保存済みの接続設定を使って、任意の質問を送信します。</span></div><textarea value={props.aiTestPrompt} onChange={(event) => props.onAiTestPromptChange(event.target.value)} maxLength={10_000} aria-label="APIへの質問" /><button className="secondary" onClick={props.onTestAi} disabled={props.aiTestBusy || !hasAiApi}>{props.aiTestBusy ? '問い合わせ中…' : 'API に質問する'}</button>{props.aiTestResult && <pre>{props.aiTestResult}</pre>}</section>
     </>}
   </section>;
 };
@@ -59,19 +59,19 @@ export const ConnectionsPage = (props: DashboardProps) => {
 export const MailboxTestPage = (props: DashboardProps) => {
   const settingsReady = Boolean(props.organization && props.canManage);
   const hasConfiguredAiApi = Boolean(props.connections?.ai.apiKeyConfigured);
-  const [geminiRequestCopied, setGeminiRequestCopied] = useState(false);
+  const [aiRequestCopied, setAiRequestCopied] = useState(false);
   const [copyFeedbackId, setCopyFeedbackId] = useState(0);
   const copyFeedbackTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const sendPreparedAiRequest = (): void => {
-    if (props.mailTestGeminiRequest) props.onPreviewMailbox(props.mailTestGeminiRequest.id);
+    if (props.mailTestAiRequest) props.onPreviewMailbox(props.mailTestAiRequest.id);
   };
-  const copyPreparedGeminiRequest = (): void => {
-    if (!props.mailTestGeminiRequest) return;
-    void navigator.clipboard.writeText(JSON.stringify(props.mailTestGeminiRequest.request, null, 2)).then(() => {
-      setGeminiRequestCopied(true);
+  const copyPreparedAiRequest = (): void => {
+    if (!props.mailTestAiRequest) return;
+    void navigator.clipboard.writeText(JSON.stringify(props.mailTestAiRequest.request, null, 2)).then(() => {
+      setAiRequestCopied(true);
       setCopyFeedbackId((current) => current + 1);
       if (copyFeedbackTimer.current) clearTimeout(copyFeedbackTimer.current);
-      copyFeedbackTimer.current = setTimeout(() => setGeminiRequestCopied(false), 1_800);
+      copyFeedbackTimer.current = setTimeout(() => setAiRequestCopied(false), 1_800);
     });
   };
   return <section className="page-layout mail-test-page">
@@ -79,7 +79,7 @@ export const MailboxTestPage = (props: DashboardProps) => {
     {!settingsReady || !props.automation ? <section className="empty-page"><SlidersHorizontal size={30} /><h2>メールテストを開始できません</h2><p>Automation Inbox の Google 接続を完了してください。</p></section> : <>
       <section className="test-card"><div><p>1. FIND MAIL</p><h2>件名からメールを探す</h2><span>完全一致する件名を入力してください。AI の API キーは不要です。</span></div><label>メール件名<input value={props.mailTestSubject} onChange={(event) => props.onMailTestSubjectChange(event.target.value)} maxLength={300} /></label><button className="primary" onClick={props.onSearchMailbox} disabled={props.mailTestBusy}>{props.mailTestBusy ? '検索中…' : 'Gmailを検索'}</button></section>
       {props.mailTestMatches.length > 0 && <section className="test-card"><div><p>2. PREPARE AI REQUEST</p><h2>AI への送信内容を確認</h2><span>対象メールを選ぶと、OpenAI 互換形式のリクエスト本文を生成します。この時点では AI に送信しません。</span></div><div className="mail-matches">{props.mailTestMatches.map((message) => <button key={message.id} className="mail-match" onClick={() => props.onPrepareMailbox(message.id)} disabled={props.mailTestBusy}><strong>{message.subject}</strong><small>{message.sender || '差出人なし'}</small></button>)}</div></section>}
-      {props.mailTestGeminiRequest && <section className="test-card event-preview"><div className="gemini-request-heading"><div><p>3. REVIEW OPENAI-COMPATIBLE REQUEST</p><h2>OpenAI 互換リクエスト本文</h2><span>API キーは含まれません。送信先の model を指定すれば、任意の OpenAI 互換 API で利用できます。</span></div><button className={`secondary copy-request-button${geminiRequestCopied ? ' copied' : ''}`} onClick={copyPreparedGeminiRequest} aria-live="polite">{geminiRequestCopied ? <CheckCircle2 size={16} /> : <Copy size={16} />}{geminiRequestCopied ? <span key={copyFeedbackId} className="copy-feedback">コピーしました</span> : 'リクエスト全文をコピー'}</button></div><pre className="gemini-request">{JSON.stringify(props.mailTestGeminiRequest.request, null, 2)}</pre><div className="mail-test-actions">{hasConfiguredAiApi ? <button className="primary" onClick={sendPreparedAiRequest} disabled={props.mailTestBusy}>{props.mailTestBusy ? 'API に送信中…' : '設定済みの API で予定を抽出'}</button> : <p className="dashboard-warning api-configuration-prompt"><span>OpenAI 互換 API が設定されていません</span><Link to={props.organizationId ? `/organizations/${encodeURIComponent(props.organizationId)}/connections` : '../connections'}>APIを設定する</Link></p>}</div></section>}
+      {props.mailTestAiRequest && <section className="test-card event-preview"><div className="ai-request-heading"><div><p>3. REVIEW OPENAI-COMPATIBLE REQUEST</p><h2>OpenAI 互換リクエスト本文</h2><span>API キーは含まれません。送信先の model を指定すれば、任意の OpenAI 互換 API で利用できます。</span></div><button className={`secondary copy-request-button${aiRequestCopied ? ' copied' : ''}`} onClick={copyPreparedAiRequest} aria-live="polite">{aiRequestCopied ? <CheckCircle2 size={16} /> : <Copy size={16} />}{aiRequestCopied ? <span key={copyFeedbackId} className="copy-feedback">コピーしました</span> : 'リクエスト全文をコピー'}</button></div><pre className="ai-request">{JSON.stringify(props.mailTestAiRequest.request, null, 2)}</pre><div className="mail-test-actions">{hasConfiguredAiApi ? <button className="primary" onClick={sendPreparedAiRequest} disabled={props.mailTestBusy}>{props.mailTestBusy ? 'API に送信中…' : '設定済みの API で予定を抽出'}</button> : <p className="dashboard-warning api-configuration-prompt"><span>OpenAI 互換 API が設定されていません</span><Link to={props.organizationId ? `/organizations/${encodeURIComponent(props.organizationId)}/connections` : '../connections'}>APIを設定する</Link></p>}</div></section>}
       {props.mailTestPreview && <section className="test-card event-preview"><div><p>4. REVIEW AND CREATE</p><h2>予定とタスク候補を確認</h2><span>予定は確認後にだけ Google Calendar へ作成します。タスク候補はメール全体に対して一度だけ抽出されます。</span></div><h3>予定（{props.mailTestPreview.events.length}件）</h3>{props.mailTestPreview.events.map((event, index) => <dl key={`${event.title}-${event.startsAt}`}><dt>予定 {index + 1}</dt><dd>{event.title}</dd><dt>日時</dt><dd>{formatted(event.startsAt)} 〜 {formatted(event.endsAt)}</dd><dt>場所</dt><dd>{event.location || '指定なし'}</dd><dt>説明</dt><dd>{event.description || '指定なし'}</dd></dl>)}<h3>期限タスク候補（{props.mailTestPreview.tasks.length}件）</h3>{props.mailTestPreview.tasks.length ? props.mailTestPreview.tasks.map((task) => <dl key={`${task.assigneeRole}-${task.deadline}-${task.title}`}><dt>{task.assigneeRole === 'organizer' ? '幹事' : '会計'}</dt><dd>{task.title}</dd><dt>期限</dt><dd>{task.deadline}</dd><dt>内容</dt><dd>{task.description}</dd></dl>) : <p>明示された登録・振込期限はありません。</p>}<button className="primary" onClick={props.onCreateCalendarEvent} disabled={props.mailTestBusy || Boolean(props.mailTestCreatedEventIds.length)}>{props.mailTestCreatedEventIds.length ? 'Calendarに作成済み' : props.mailTestBusy ? '作成中…' : `${props.mailTestPreview.events.length}件を Calendar に追加`}</button>{props.mailTestCreatedEventIds.length > 0 && <p className="dashboard-success"><CheckCircle2 size={17} />テスト予定 {props.mailTestCreatedEventIds.length}件を作成しました。</p>}</section>}
     </>}
   </section>;

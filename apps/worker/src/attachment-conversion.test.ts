@@ -8,7 +8,7 @@ import {
 
 describe('attachment conversion for Event Details', () => {
   it('preserves Workers AI Markdown even when it contains no event-looking words', async () => {
-    const workbook = await readFile(new URL('../../../fixtures/gemini-file-probe/event-invitation.xlsx', import.meta.url));
+    const workbook = await readFile(new URL('../../../fixtures/ai-file-probe/event-invitation.xlsx', import.meta.url));
     const markdown = {
       toMarkdown: vi.fn().mockResolvedValue({
         format: 'markdown',
@@ -32,7 +32,7 @@ describe('attachment conversion for Event Details', () => {
 
   it('compacts Workers AI XLSX tables to TSV before the mail flow uses them', async () => {
     const source = [
-      '# GEMINI-FILE-PROBE-001',
+      '# FILE-PROBE-001',
       '',
       '| __EMPTY_1 | Event date  | Time        | Venue                    | __EMPTY_2 |',
       '| ----------- | ----------- | ----------- | ------------------------ | --------- |',
@@ -52,7 +52,7 @@ describe('attachment conversion for Event Details', () => {
     expect(converted).toMatchObject({
       converter: 'workers_ai',
       tokens: 200,
-      text: '# GEMINI-FILE-PROBE-001\n\nEvent date\tTime\tVenue\n2026-08-18\t14:30-16:00\t名古屋\\|イノベーションセンター',
+      text: '# FILE-PROBE-001\n\nEvent date\tTime\tVenue\n2026-08-18\t14:30-16:00\t名古屋\\|イノベーションセンター',
     });
     expect(converted?.selectedTokens).toBeLessThan(200);
   });

@@ -2,7 +2,7 @@ import { and, count, eq, isNotNull } from 'drizzle-orm';
 
 import { decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
 import { fromBase64Url } from './encoding';
-import { buildGeminiEventDetailsRequest, type EventDetails, type GeminiEventDetailsRequest, type MailExtraction } from './event-details';
+import { buildAiEventDetailsRequest, type AiEventDetailsRequest, type EventDetails, type MailExtraction } from './event-details';
 import { createTaskWorkflow } from './tasks';
 import type { SourceAttachmentContent } from './drive-attachments';
 import type { GoogleTokenSet } from './google';
@@ -63,11 +63,7 @@ export interface AutomationSummary {
   exceptions: number;
 }
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
-export const GEMINI_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.6-flash'] as const;
-
-const isGeminiModel = (value: string): value is typeof GEMINI_MODELS[number] =>
-  GEMINI_MODELS.includes(value as typeof GEMINI_MODELS[number]);
+export const LEGACY_AI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai';
 
 interface EventCandidate {
   title: string;
@@ -232,8 +228,14 @@ const verifyOrganizationInboxCredentialWithDependencies = async (
   }
 };
 
-/** Uses the Organization-scoped Gemini connection when it is configured. */
-const geminiExtraction = async (
+interface AiCredential {
+  apiKey?: string;
+  model?: string;
+  baseUrl?: string;
+}
+
+/** Uses the Organization-scoped OpenAI-compatible connection when it is configured. */
+const aiExtraction = async (
   env: Bindings,
   organizationId: string,
   database: D1Database,
@@ -246,10 +248,11 @@ const geminiExtraction = async (
   if (!connection) return undefined;
   try {
     const key = await organizationKeyFor(env, organizationId);
-    const credential = JSON.parse(await decrypt(JSON.parse(connection.credential), key, `organization-connection:${organizationId}:ai`)) as { provider?: string; apiKey?: string; model?: string };
-    if (credential.provider !== 'Google Gemini API' || !credential.apiKey || !credential.model) return null;
-    return dependencies.gemini.extract({
+    const credential = JSON.parse(await decrypt(JSON.parse(connection.credential), key, `organization-connection:${organizationId}:ai`)) as AiCredential;
+    if (!credential.apiKey || !credential.model) return null;
+    return dependencies.ai.extract({
       apiKey: credential.apiKey,
+      baseUrl: credential.baseUrl || LEGACY_AI_BASE_URL,
       model: credential.model,
       source,
       attachments,
@@ -271,30 +274,25 @@ const extractMailboxTestPackage = async (
 ): Promise<MailExtraction | null> => {
   const connection = await drizzleOrganizationDatabase(database).select().from(connections)
     .where(and(eq(connections.kind, 'ai'), eq(connections.status, 'active'))).limit(1).get();
-  if (!connection) throw new Error('先に Gemini API キーを保存してください。');
+  if (!connection) throw new Error('先に OpenAI 互換 API を設定してください。');
   const key = await organizationKeyFor(env, organizationId);
-  const credential = JSON.parse(await decrypt(JSON.parse(connection.credential), key, `organization-connection:${organizationId}:ai`)) as {
-    provider?: string;
-    apiKey?: string;
-    model?: string;
-  };
-  if (credential.provider !== 'Google Gemini API' || !credential.apiKey) throw new Error('先に Gemini API キーを保存してください。');
-  const model = credential.model || DEFAULT_GEMINI_MODEL;
-  if (!isGeminiModel(model)) throw new Error('Gemini モデルは gemini-3.5-flash-lite または gemini-3.6-flash を選択してください。');
-  return dependencies.gemini.extract({
+  const credential = JSON.parse(await decrypt(JSON.parse(connection.credential), key, `organization-connection:${organizationId}:ai`)) as AiCredential;
+  if (!credential.apiKey || !credential.model) throw new Error('先に OpenAI 互換 API を設定してください。');
+  return dependencies.ai.extract({
     apiKey: credential.apiKey,
-    model,
+    baseUrl: credential.baseUrl || LEGACY_AI_BASE_URL,
+    model: credential.model,
     source,
     attachments,
     markdown: env.AI,
   });
 };
 
-/** Produces the exact bounded Gemini payload for an Owner/Admin to inspect before sending. */
-const previewMailboxTestGeminiRequest = async (
+/** Produces the exact bounded OpenAI-compatible payload for review before sending. */
+const previewMailboxTestAiRequest = async (
   env: Bindings,
   input: { source: string; attachments: SourceAttachmentContent[] },
-): Promise<GeminiEventDetailsRequest> => buildGeminiEventDetailsRequest({
+): Promise<AiEventDetailsRequest> => buildAiEventDetailsRequest({
   source: input.source,
   attachments: input.attachments,
   markdown: env.AI,
@@ -506,13 +504,13 @@ const processOrganizationMessage = async (
       .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
   }
-  const extraction = await geminiExtraction(env, organizationId, database, `${subject}\n${body}`, attachmentContents, dependencies);
+  const extraction = await aiExtraction(env, organizationId, database, `${subject}\n${body}`, attachmentContents, dependencies);
   if (extraction === null) {
     await db.insert(automationExceptions).values({
       id: crypto.randomUUID(),
       sourceMessageId,
-      code: 'gemini_event_details_invalid',
-      message: 'Gemini could not produce safe Event Details.',
+      code: 'ai_event_details_invalid',
+      message: 'The AI API could not produce safe Event Details.',
       state: 'open',
       createdAt: now(),
     }).run();
@@ -742,8 +740,8 @@ export const createAutomation = (
         createMailboxTestCalendarEventsWithGoogle(env, input.organizationId, input.database, { messageId: input.messageId, events: input.events }, dependencies),
       extractPackage: (input: { organizationId: string; database: D1Database; source: string; attachments: SourceAttachmentContent[] }): Promise<MailExtraction | null> =>
         extractMailboxTestPackage(env, input.organizationId, input.database, input.source, input.attachments, dependencies),
-      previewGeminiRequest: (input: { source: string; attachments: SourceAttachmentContent[] }): Promise<GeminiEventDetailsRequest> =>
-        previewMailboxTestGeminiRequest(env, input),
+      previewAiRequest: (input: { source: string; attachments: SourceAttachmentContent[] }): Promise<AiEventDetailsRequest> =>
+        previewMailboxTestAiRequest(env, input),
     },
   };
 };

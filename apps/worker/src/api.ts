@@ -4,7 +4,7 @@ import { and, asc, count, desc, eq, gt, gte, inArray, isNull, max, ne } from 'dr
 
 import { canUpdateAttendance, discoveredLineDestinations, displayRecipientIdentifier, verifyLineWebhookSignature } from '@mail/domain';
 
-import { createAutomation } from './automation';
+import { createAutomation, LEGACY_AI_BASE_URL } from './automation';
 import { decrypt, encrypt } from './cryptography';
 import { randomToken } from './encoding';
 import { readRecoveryReceipt, restoreDeliveryRecordFromReceipt } from './recovery-receipts';
@@ -16,7 +16,7 @@ import { createRequestContext } from './routes/request-context';
 import { typedListRoutes } from './routes/typed-lists';
 import type { Bindings, ConnectionRow, SessionRow } from './types';
 import type { CipherEnvelope } from './cryptography';
-import type { EventDetails, MailExtraction, TaskDetails } from './event-details';
+import { openAiChatCompletionsUrl, type EventDetails, type MailExtraction, type TaskDetails } from './event-details';
 import { createTaskWorkflow, type OperationalTaskRole } from './tasks';
 import { controlDatabase as drizzleControlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
 import { createOrganizationStore } from './storage/organization-store';
@@ -43,12 +43,6 @@ import {
 } from './storage/organization-schema';
 
 const RECIPIENT_LINK_WINDOW_MS = 15 * 60 * 1_000;
-export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
-export const GEMINI_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.6-flash'] as const;
-
-const isGeminiModel = (value: string): value is typeof GEMINI_MODELS[number] =>
-  GEMINI_MODELS.includes(value as typeof GEMINI_MODELS[number]);
-
 type OrganizationCredential = Record<string, string>;
 
 interface OrganizationConnectionInput {
@@ -57,14 +51,13 @@ interface OrganizationConnectionInput {
     channelSecret?: string;
   };
   ai?: {
-    provider?: string;
     apiKey?: string;
     model?: string;
     baseUrl?: string;
   };
 }
 
-interface GeminiGenerateContentResponse {
+interface OpenAiCompatibleResponse {
   choices?: Array<{ message?: { content?: string } }>;
   error?: { message?: string };
 }
@@ -146,18 +139,23 @@ const connectionView = (line: OrganizationCredential, ai: OrganizationCredential
   },
   ai: {
     apiKeyConfigured: Boolean(ai.apiKey),
-    provider: ai.provider ?? '',
     model: ai.model ?? '',
-    baseUrl: ai.baseUrl ?? '',
-    authMode: ai.authMode ?? 'api_key',
-    gcpProjectId: ai.gcpProjectId ?? '',
-    gcpLocation: ai.gcpLocation ?? '',
-    oauthConfigured: Boolean(ai.oauthRefreshToken),
+    baseUrl: ai.baseUrl ?? (ai.apiKey ? LEGACY_AI_BASE_URL : ''),
   },
 });
 
-export const generatedText = (response: GeminiGenerateContentResponse): string =>
+export const generatedText = (response: OpenAiCompatibleResponse): string =>
   response.choices?.[0]?.message?.content?.trim() ?? '';
+
+const normalizedAiBaseUrl = (value: string | undefined): string | null => {
+  try {
+    const url = new URL(value?.trim() ?? '');
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) return null;
+    return `${url.origin}${url.pathname.replace(/\/+$/u, '')}`;
+  } catch {
+    return null;
+  }
+};
 
 app.get('/api/organizations/:organizationId/connections', async (context) => {
   try {
@@ -202,8 +200,13 @@ app.put('/api/organizations/:organizationId/connections', async (context) => {
     const nextAi: OrganizationCredential = { ...aiCredential, ...input.ai };
     const updatingLine = Boolean(input.line?.channelAccessToken || input.line?.channelSecret);
     if (updatingLine && (!nextLine.channelAccessToken || !nextLine.channelSecret)) return failure(context, 'LINEのチャネルアクセストークンとチャネルシークレットを両方入力してください。');
-    if (nextAi.provider !== 'Google Gemini API' || !nextAi.apiKey || !nextAi.model) return failure(context, 'Gemini API キーを入力してください。');
-    if (!isGeminiModel(nextAi.model)) return failure(context, 'Gemini モデルは gemini-3.5-flash-lite または gemini-3.6-flash を選択してください。');
+    const aiBaseUrl = normalizedAiBaseUrl(nextAi.baseUrl);
+    const aiModel = nextAi.model?.trim();
+    if (!nextAi.apiKey || !aiModel || !aiBaseUrl) return failure(context, 'OpenAI 互換 API の Base URL、model、API キーを入力してください。');
+    if (aiModel.length > 200) return failure(context, 'model は 200 文字以内で入力してください。');
+    nextAi.provider = 'OpenAI-compatible API';
+    nextAi.model = aiModel;
+    nextAi.baseUrl = aiBaseUrl;
     const timestamp = now();
     const lineEnvelope = await encrypt(JSON.stringify(nextLine), organizationKey, connectionContext(organizationId, 'line'));
     const aiEnvelope = await encrypt(JSON.stringify(nextAi), organizationKey, connectionContext(organizationId, 'ai'));
@@ -217,7 +220,7 @@ app.put('/api/organizations/:organizationId/connections', async (context) => {
     };
     await Promise.all([
       save(existingLine, 'line', 'LINE Messaging API', JSON.stringify(lineEnvelope)),
-      save(existingAi, 'ai', `${nextAi.provider} AI`, JSON.stringify(aiEnvelope)),
+      save(existingAi, 'ai', 'OpenAI 互換 API', JSON.stringify(aiEnvelope)),
     ]);
     return json(context, { organizationId, organizationName: access.organization.name, ...connectionView(nextLine, nextAi) });
   } catch (error) {
@@ -226,44 +229,34 @@ app.put('/api/organizations/:organizationId/connections', async (context) => {
   }
 });
 
-app.post('/api/organizations/:organizationId/connections/gemini-oauth', async (context) => {
-  return failure(context, 'Google Cloud OAuth 接続は廃止されました。Google AI Studio の Gemini API キーを設定してください。', 410);
-});
-
-app.get('/oauth/gemini/callback', async (context) => {
-  const discontinuedTarget = new URL('/', context.env.WEB_ORIGIN || context.env.APP_URL);
-  discontinuedTarget.searchParams.set('error', 'Google Cloud OAuth 接続は廃止されました。Google AI Studio の Gemini API キーを設定してください。');
-  return context.redirect(discontinuedTarget.toString());
-});
-
-app.post('/api/organizations/:organizationId/connections/gemini/test', async (context) => {
+app.post('/api/organizations/:organizationId/connections/ai/test', async (context) => {
   try {
     const organizationId = context.req.param('organizationId');
     const access = await organizationForRequest(context.req.raw, context.env, organizationId);
     if (!access.database) return failure(context, '組織DBに接続できません。接続設定は保存されていません。', 503);
-    const input = await context.req.json<{ prompt?: string; model?: string }>();
+    const input = await context.req.json<{ prompt?: string }>();
     const prompt = input.prompt?.trim() ?? '';
     if (!prompt || prompt.length > 10_000) return failure(context, 'テスト用の質問は 1〜10,000 文字で入力してください。');
     const existing = await drizzleOrganizationDatabase(access.database).select().from(organizationConnections)
       .where(and(eq(organizationConnections.kind, 'ai'), eq(organizationConnections.status, 'active'))).limit(1).get();
-    if (!existing) return failure(context, 'Gemini API キーを設定してください。', 409);
+    if (!existing) return failure(context, 'OpenAI 互換 API を設定してください。', 409);
     const organizationKey = await organizationKeyForRequest(context.env, organizationId);
     const credential = await connectionCredential(existing, organizationKey, organizationId, 'ai');
-    if (credential.provider !== 'Google Gemini API' || !credential.apiKey) return failure(context, 'Gemini API キーを設定してください。', 409);
-    const model = input.model?.trim() || credential.model || DEFAULT_GEMINI_MODEL;
-    if (!isGeminiModel(model)) return failure(context, 'Gemini モデルは gemini-3.5-flash-lite または gemini-3.6-flash を選択してください。');
-    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
+    const model = credential.model?.trim();
+    const baseUrl = normalizedAiBaseUrl(credential.baseUrl || LEGACY_AI_BASE_URL);
+    if (!credential.apiKey || !model || !baseUrl) return failure(context, 'OpenAI 互換 API を設定してください。', 409);
+    const response = await fetch(openAiChatCompletionsUrl(baseUrl), {
       method: 'POST',
       headers: { Authorization: `Bearer ${credential.apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }] }),
     });
-    const body = await response.json() as GeminiGenerateContentResponse;
-    if (!response.ok) throw new Error(body.error?.message ?? 'Gemini API が応答しませんでした。');
+    const body = await response.json() as OpenAiCompatibleResponse;
+    if (!response.ok) throw new Error(body.error?.message ?? 'OpenAI 互換 API が応答しませんでした。');
     const text = generatedText(body);
-    if (!text) throw new Error('Gemini API からテキスト応答を受け取れませんでした。');
+    if (!text) throw new Error('OpenAI 互換 API からテキスト応答を受け取れませんでした。');
     return json(context, { text, model });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Gemini API の接続テストに失敗しました。';
+    const message = error instanceof Error ? error.message : 'OpenAI 互換 API の接続テストに失敗しました。';
     return failure(context, message, message === 'Authentication is required.' ? 401 : 500);
   }
 });
@@ -286,8 +279,8 @@ app.post('/api/organizations/:organizationId/mail-tests/search', async (context)
   }
 });
 
-/** Returns the exact, redacted Gemini payload for review without calling Gemini. */
-app.post('/api/organizations/:organizationId/mail-tests/:messageId/gemini-request', async (context) => {
+/** Returns the exact, redacted OpenAI-compatible payload without calling the AI API. */
+app.post('/api/organizations/:organizationId/mail-tests/:messageId/ai-request', async (context) => {
   try {
     const organizationId = context.req.param('organizationId');
     const access = await organizationForRequest(context.req.raw, context.env, organizationId);
@@ -296,10 +289,10 @@ app.post('/api/organizations/:organizationId/mail-tests/:messageId/gemini-reques
     const messageId = context.req.param('messageId');
     if (!/^[A-Za-z0-9_-]{1,200}$/u.test(messageId)) return failure(context, 'Gmail メッセージ ID が不正です。');
     const source = await createAutomation(context.env).mailboxTest.readSource({ organizationId, database: access.database, messageId });
-    const request = await createAutomation(context.env).mailboxTest.previewGeminiRequest({ source: source.source, attachments: source.attachments });
+    const request = await createAutomation(context.env).mailboxTest.previewAiRequest({ source: source.source, attachments: source.attachments });
     return json(context, { id: source.id, subject: source.subject, sender: source.sender, request });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Gemini 送信内容の準備に失敗しました。';
+    const message = error instanceof Error ? error.message : 'AI 送信内容の準備に失敗しました。';
     return failure(context, message, message === 'Authentication is required.' ? 401 : 500);
   }
 });

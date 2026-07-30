@@ -5,7 +5,7 @@ import { isRouteErrorResponse, NavLink, Outlet, useLoaderData, useNavigate, useR
 import type { AppState } from '@mail/domain';
 
 import { api } from './api';
-import type { AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, MailboxTestGeminiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationConnections, OrganizationDashboard, OrganizationMembership, OrganizationRule, OrganizationRuleInput, OrganizationTask, TaskRoleConfiguration } from './api';
+import type { AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationConnections, OrganizationDashboard, OrganizationMembership, OrganizationRule, OrganizationRuleInput, OrganizationTask, TaskRoleConfiguration } from './api';
 import { defaultOrganizationName, setupPhaseLabel, SignedOutEntry } from './entry';
 import { Dashboard } from './dashboard';
 
@@ -152,7 +152,7 @@ interface OrganizationContextValue extends OrganizationRouteData {
   setEnabled: (enabled: boolean) => void;
   run: () => void;
   saveConnections: () => void;
-  testGemini: () => void;
+  testAi: () => void;
   searchMailbox: () => void;
   prepareMailbox: (messageId: string) => void;
   previewMailbox: (messageId: string) => void;
@@ -162,14 +162,15 @@ interface OrganizationContextValue extends OrganizationRouteData {
   assignTaskRole: (role: 'organizer' | 'treasurer', identityId: string) => void;
   lineChannelAccessToken: string;
   lineChannelSecret: string;
-  geminiApiKey: string;
+  aiApiKey: string;
   aiModel: string;
-  geminiTestPrompt: string;
-  geminiTestResult: string;
-  geminiTestBusy: boolean;
+  aiBaseUrl: string;
+  aiTestPrompt: string;
+  aiTestResult: string;
+  aiTestBusy: boolean;
   mailTestSubject: string;
   mailTestMatches: MailboxTestMatch[];
-  mailTestGeminiRequest: MailboxTestGeminiRequest | null;
+  mailTestAiRequest: MailboxTestAiRequest | null;
   mailTestPreview: MailboxTestPreview | null;
   mailTestBusy: boolean;
   mailTestCreatedEventIds: string[];
@@ -177,9 +178,10 @@ interface OrganizationContextValue extends OrganizationRouteData {
   ruleBusy: boolean;
   setLineChannelAccessToken: (value: string) => void;
   setLineChannelSecret: (value: string) => void;
-  setGeminiApiKey: (value: string) => void;
+  setAiApiKey: (value: string) => void;
   setAiModel: (value: string) => void;
-  setGeminiTestPrompt: (value: string) => void;
+  setAiBaseUrl: (value: string) => void;
+  setAiTestPrompt: (value: string) => void;
   setMailTestSubject: (value: string) => void;
   logout: () => void;
   reauthenticate: () => void;
@@ -203,14 +205,15 @@ export const OrganizationLayout = () => {
   const [summary, setSummary] = useState<AutomationSummary | null>(null);
   const [lineChannelAccessToken, setLineChannelAccessToken] = useState('');
   const [lineChannelSecret, setLineChannelSecret] = useState('');
-  const [geminiApiKey, setGeminiApiKey] = useState('');
+  const [aiApiKey, setAiApiKey] = useState('');
   const [aiModel, setAiModel] = useState(data.connections.ai.model);
-  const [geminiTestPrompt, setGeminiTestPrompt] = useState('日本の首都を一文で教えてください。');
-  const [geminiTestResult, setGeminiTestResult] = useState('');
-  const [geminiTestBusy, setGeminiTestBusy] = useState(false);
+  const [aiBaseUrl, setAiBaseUrl] = useState(data.connections.ai.baseUrl);
+  const [aiTestPrompt, setAiTestPrompt] = useState('日本の首都を一文で教えてください。');
+  const [aiTestResult, setAiTestResult] = useState('');
+  const [aiTestBusy, setAiTestBusy] = useState(false);
   const [mailTestSubject, setMailTestSubject] = useState(DEFAULT_MAIL_TEST_SUBJECT);
   const [mailTestMatches, setMailTestMatches] = useState<MailboxTestMatch[]>([]);
-  const [mailTestGeminiRequest, setMailTestGeminiRequest] = useState<MailboxTestGeminiRequest | null>(null);
+  const [mailTestAiRequest, setMailTestAiRequest] = useState<MailboxTestAiRequest | null>(null);
   const [mailTestPreview, setMailTestPreview] = useState<MailboxTestPreview | null>(null);
   const [mailTestBusy, setMailTestBusy] = useState(false);
   const [mailTestCreatedEventIds, setMailTestCreatedEventIds] = useState<string[]>([]);
@@ -218,9 +221,10 @@ export const OrganizationLayout = () => {
   useEffect(() => {
     setData(initial);
     setAiModel(initial.connections.ai.model);
+    setAiBaseUrl(initial.connections.ai.baseUrl);
     setLineChannelAccessToken('');
     setLineChannelSecret('');
-    setGeminiApiKey('');
+    setAiApiKey('');
     setSummary(null);
   }, [initial]);
 
@@ -233,14 +237,14 @@ export const OrganizationLayout = () => {
   const run = () => void withError(async () => { const value = await api.runAutomation(data.organization.organizationId); const automation = await api.currentAutomation(data.organization.organizationId); setSummary(value); setData((current) => ({ ...current, automation })); }, setBusy);
   const setEnabled = (enabled: boolean) => void withError(async () => { await api.setEnabled(data.organization.organizationId, enabled); const automation = await api.currentAutomation(data.organization.organizationId); setData((current) => ({ ...current, automation })); }, setBusy);
   const saveConnections = () => void withError(async () => {
-    const connections = await api.saveOrganizationConnections(data.organization.organizationId, { line: { channelAccessToken: lineChannelAccessToken || undefined, channelSecret: lineChannelSecret || undefined }, ai: { apiKey: geminiApiKey || undefined, model: aiModel } });
-    setData((current) => ({ ...current, connections })); setLineChannelAccessToken(''); setLineChannelSecret(''); setGeminiApiKey('');
+    const connections = await api.saveOrganizationConnections(data.organization.organizationId, { line: { channelAccessToken: lineChannelAccessToken || undefined, channelSecret: lineChannelSecret || undefined }, ai: { apiKey: aiApiKey || undefined, model: aiModel, baseUrl: aiBaseUrl } });
+    setData((current) => ({ ...current, connections })); setLineChannelAccessToken(''); setLineChannelSecret(''); setAiApiKey('');
   }, setSettingsBusy);
-  const testGemini = () => void withError(async () => { const result = await api.testGeminiConnection(data.organization.organizationId, geminiTestPrompt, aiModel); setGeminiTestResult(result.text); }, setGeminiTestBusy);
-  const searchMailbox = () => void withError(async () => { setMailTestGeminiRequest(null); setMailTestPreview(null); setMailTestCreatedEventIds([]); setMailTestMatches((await api.searchMailboxForTest(data.organization.organizationId, mailTestSubject.trim())).messages); }, setMailTestBusy);
-  const prepareMailbox = (messageId: string) => void withError(async () => { setMailTestGeminiRequest(await api.prepareMailboxTestGeminiRequest(data.organization.organizationId, messageId)); setMailTestPreview(null); setMailTestCreatedEventIds([]); }, setMailTestBusy);
+  const testAi = () => void withError(async () => { const result = await api.testAiConnection(data.organization.organizationId, aiTestPrompt); setAiTestResult(result.text); }, setAiTestBusy);
+  const searchMailbox = () => void withError(async () => { setMailTestAiRequest(null); setMailTestPreview(null); setMailTestCreatedEventIds([]); setMailTestMatches((await api.searchMailboxForTest(data.organization.organizationId, mailTestSubject.trim())).messages); }, setMailTestBusy);
+  const prepareMailbox = (messageId: string) => void withError(async () => { setMailTestAiRequest(await api.prepareMailboxTestAiRequest(data.organization.organizationId, messageId)); setMailTestPreview(null); setMailTestCreatedEventIds([]); }, setMailTestBusy);
   const previewMailbox = (messageId: string) => void withError(async () => {
-    if (mailTestGeminiRequest?.id !== messageId) throw new Error('先に Gemini への送信内容を確認してください。');
+    if (mailTestAiRequest?.id !== messageId) throw new Error('先に AI への送信内容を確認してください。');
     setMailTestPreview(await api.previewMailboxTestEvent(data.organization.organizationId, messageId));
     setMailTestCreatedEventIds([]);
   }, setMailTestBusy);
@@ -256,7 +260,7 @@ export const OrganizationLayout = () => {
   }, setBusy);
   const logout = () => void withError(async () => { await api.logout(); navigate('/', { replace: true }); }, setBusy);
   const reauthenticate = () => void withError(async () => { window.location.assign((await api.reauthorizeAutomationInbox(data.organization.organizationId)).authorizationUrl); }, setBusy);
-  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveConnections, testGemini, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateTask, assignTaskRole, lineChannelAccessToken, lineChannelSecret, geminiApiKey, aiModel, geminiTestPrompt, geminiTestResult, geminiTestBusy, mailTestSubject, mailTestMatches, mailTestGeminiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, settingsBusy, ruleBusy, setLineChannelAccessToken, setLineChannelSecret, setGeminiApiKey, setAiModel, setGeminiTestPrompt, setMailTestSubject, logout, reauthenticate };
+  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveConnections, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateTask, assignTaskRole, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, aiTestBusy, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, settingsBusy, ruleBusy, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
   return <OrganizationContext.Provider value={value}><Outlet /></OrganizationContext.Provider>;
 };
 
@@ -281,22 +285,24 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     connections={value.connections}
     lineChannelAccessToken={value.lineChannelAccessToken}
     lineChannelSecret={value.lineChannelSecret}
-    geminiApiKey={value.geminiApiKey}
+    aiApiKey={value.aiApiKey}
     aiModel={value.aiModel}
+    aiBaseUrl={value.aiBaseUrl}
     onLineChannelAccessTokenChange={value.setLineChannelAccessToken}
     onLineChannelSecretChange={value.setLineChannelSecret}
-    onGeminiApiKeyChange={value.setGeminiApiKey}
+    onAiApiKeyChange={value.setAiApiKey}
     onAiModelChange={value.setAiModel}
+    onAiBaseUrlChange={value.setAiBaseUrl}
     settingsBusy={value.settingsBusy}
     onSaveConnections={value.saveConnections}
-    geminiTestPrompt={value.geminiTestPrompt}
-    geminiTestResult={value.geminiTestResult}
-    geminiTestBusy={value.geminiTestBusy}
-    onGeminiTestPromptChange={value.setGeminiTestPrompt}
-    onTestGemini={value.testGemini}
+    aiTestPrompt={value.aiTestPrompt}
+    aiTestResult={value.aiTestResult}
+    aiTestBusy={value.aiTestBusy}
+    onAiTestPromptChange={value.setAiTestPrompt}
+    onTestAi={value.testAi}
     mailTestSubject={value.mailTestSubject}
     mailTestMatches={value.mailTestMatches}
-    mailTestGeminiRequest={value.mailTestGeminiRequest}
+    mailTestAiRequest={value.mailTestAiRequest}
     mailTestPreview={value.mailTestPreview}
     mailTestBusy={value.mailTestBusy}
     mailTestCreatedEventIds={value.mailTestCreatedEventIds}

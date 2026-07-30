@@ -12,8 +12,8 @@ export interface AutomationDependencies {
     read: typeof readGmailAttachments;
     publish: typeof publishDriveAttachment;
   };
-  gemini: {
-    extract: typeof extractGeminiEventDetails;
+  ai: {
+    extract: typeof extractAiEventDetails;
   };
   tokens: {
     refresh: typeof refreshGoogleToken;
@@ -37,9 +37,9 @@ export const productionGoogleAutomationPort: GoogleAutomationPort = {
 export const productionAutomationDependencies: AutomationDependencies = {
   google: productionGoogleAutomationPort,
   attachments: { read: readGmailAttachments, publish: publishDriveAttachment },
-  gemini: { extract: extractGeminiEventDetails },
+  ai: { extract: extractAiEventDetails },
   tokens: { refresh: refreshGoogleToken },
 };
-import { extractGeminiEventDetails } from '../event-details';
+import { extractAiEventDetails } from '../event-details';
 import { publishDriveAttachment, readGmailAttachments } from '../drive-attachments';
 import { refreshGoogleToken } from '../google';

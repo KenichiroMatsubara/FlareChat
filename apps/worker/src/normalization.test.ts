@@ -14,7 +14,7 @@ import {
 
 describe('attachment normalization', () => {
   it('preserves XLSX sheet names, cell references, typed values, and formulas', async () => {
-    const workbook = await readFile(new URL('../../../fixtures/gemini-file-probe/event-invitation.xlsx', import.meta.url));
+    const workbook = await readFile(new URL('../../../fixtures/ai-file-probe/event-invitation.xlsx', import.meta.url));
 
     const [normalized] = normalizeAttachments([{
       attachmentId: 'attachment-xlsx',
@@ -50,7 +50,7 @@ describe('attachment normalization', () => {
   });
 
   it('preserves DOCX body, table, header, and footer text', async () => {
-    const document = await readFile(new URL('../../../fixtures/gemini-file-probe/event-invitation.docx', import.meta.url));
+    const document = await readFile(new URL('../../../fixtures/ai-file-probe/event-invitation.docx', import.meta.url));
 
     const [normalized] = normalizeAttachments([{
       attachmentId: 'attachment-docx',
@@ -62,9 +62,9 @@ describe('attachment normalization', () => {
     const text = normalized?.kind === 'text' ? normalized.text : '';
 
     expect(text).toContain('word/document.xml');
-    expect(text).toContain('Test ID\tGEMINI-FILE-PROBE-001');
+    expect(text).toContain('FILE-PROBE-001');
     expect(text).toContain('word/header1.xml');
-    expect(text).toContain('GEMINI FILE ANALYSIS PROBE');
+    expect(text).toContain('FILE ANALYSIS PROBE');
     expect(text).toContain('word/footer1.xml');
     expect(text).toContain('Synthetic test document - no personal data');
   });

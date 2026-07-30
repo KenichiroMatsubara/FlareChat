@@ -2,9 +2,9 @@ import { readFile } from 'node:fs/promises';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { extractGeminiEventDetails, validatedEventDetails, validatedMailExtraction } from './event-details';
+import { extractAiEventDetails, validatedEventDetails, validatedMailExtraction } from './event-details';
 
-describe('Gemini Event Details validation', () => {
+describe('OpenAI-compatible Event Details validation', () => {
   it('accepts one complete, explicitly timed Event Candidate and rejects unsafe output', () => {
     expect(validatedEventDetails(JSON.stringify({
       title: '例会',
@@ -25,14 +25,14 @@ describe('Gemini Event Details validation', () => {
     expect(validatedEventDetails('not json')).toBeNull();
   });
 
-  it('uses a bounded Gemini request and accepts only a validated JSON candidate', async () => {
+  it('uses a bounded OpenAI-compatible request and accepts only a validated JSON candidate', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ title: '例会', startsAt: '2026-08-03T19:00:00+09:00', endsAt: '2026-08-03T21:00:00+09:00', timeZone: 'Asia/Tokyo', location: '', description: '月例会' }) } }] }), { status: 200 }));
 
     const source = 'A'.repeat(20_010);
-    const result = await extractGeminiEventDetails({ apiKey: 'api-key', model: 'gemini-3.5-flash-lite', source, fetch: fetchMock });
+    const result = await extractAiEventDetails({ baseUrl: 'https://ai.example.com/v1', apiKey: 'api-key', model: 'test-model', source, fetch: fetchMock });
 
     expect(result).toMatchObject({ events: [{ title: '例会' }], tasks: [] });
-    expect(fetchMock).toHaveBeenCalledWith('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ Authorization: 'Bearer api-key' }) }));
+    expect(fetchMock).toHaveBeenCalledWith('https://ai.example.com/v1/chat/completions', expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ Authorization: 'Bearer api-key' }) }));
     const body = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string) as {
       model: string;
       messages: Array<{ role: string; content: string }>;
@@ -40,32 +40,34 @@ describe('Gemini Event Details validation', () => {
         json_schema: {
           schema: {
             required: string[];
+            additionalProperties: boolean;
             properties: Record<string, { type: string }>;
           };
         };
       };
     };
-    expect(body.model).toBe('gemini-3.5-flash-lite');
+    expect(body.model).toBe('test-model');
     expect(body.messages[1]?.content).toContain(source);
     expect(body.response_format.json_schema.schema.required).toEqual(['events', 'tasks']);
+    expect(body.response_format.json_schema.schema.additionalProperties).toBe(false);
     expect(body.response_format.json_schema.schema.properties.events).toMatchObject({ type: 'array' });
     expect(body.messages[0]?.content).toContain('ceremony and its banquet');
   });
 
-  it('reports the upstream Gemini error instead of disguising it as an invalid event', async () => {
+  it('reports the upstream AI API error instead of disguising it as an invalid event', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       error: { message: 'Unsupported MIME type: text/calendar' },
     }), { status: 400 }));
 
-    await expect(extractGeminiEventDetails({
-      apiKey: 'api-key',
-      model: 'gemini-3.5-flash-lite',
+    await expect(extractAiEventDetails({
+      baseUrl: 'https://ai.example.com/v1', apiKey: 'api-key',
+      model: 'test-model',
       source: '案内',
       fetch: fetchMock,
-    })).rejects.toThrow('Gemini API: Unsupported MIME type: text/calendar');
+    })).rejects.toThrow('OpenAI 互換 API: Unsupported MIME type: text/calendar');
   });
 
-  it('passes converted PDF text, rather than its source bytes, to Gemini', async () => {
+  it('passes converted PDF text, rather than its source bytes, to the AI API', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       choices: [{ message: { content: JSON.stringify({
         title: '30周年記念式典',
@@ -87,9 +89,9 @@ describe('Gemini Event Details validation', () => {
       }),
     };
 
-    await extractGeminiEventDetails({
-      apiKey: 'api-key',
-      model: 'gemini-3.5-flash-lite',
+    await extractAiEventDetails({
+      baseUrl: 'https://ai.example.com/v1', apiKey: 'api-key',
+      model: 'test-model',
       source: '名古屋名城RAC30周年記念式典のご案内',
       attachments: [{
         attachmentId: 'attachment-pdf',
@@ -100,7 +102,7 @@ describe('Gemini Event Details validation', () => {
       }],
       fetch: fetchMock,
       markdown,
-    } as Parameters<typeof extractGeminiEventDetails>[0]);
+    } as Parameters<typeof extractAiEventDetails>[0]);
 
     const body = JSON.parse(fetchMock.mock.calls[0]?.[1].body as string) as {
       messages: Array<{ role: string; content: string }>;
@@ -114,7 +116,7 @@ describe('Gemini Event Details validation', () => {
     }));
   });
 
-  it('does not call Gemini with an attachment omitted after its conversion fails', async () => {
+  it('does not call the AI API with an attachment omitted after its conversion fails', async () => {
     const fetchMock = vi.fn();
     const markdown = {
       toMarkdown: vi.fn().mockResolvedValue({
@@ -125,9 +127,9 @@ describe('Gemini Event Details validation', () => {
       }),
     };
 
-    await expect(extractGeminiEventDetails({
-      apiKey: 'api-key',
-      model: 'gemini-3.5-flash-lite',
+    await expect(extractAiEventDetails({
+      baseUrl: 'https://ai.example.com/v1', apiKey: 'api-key',
+      model: 'test-model',
       source: '添付をご確認ください。',
       attachments: [{
         attachmentId: 'scanned-pdf',
@@ -144,19 +146,19 @@ describe('Gemini Event Details validation', () => {
   });
 
   it('extracts Event Details when the date and times exist only in an XLSX attachment', async () => {
-    const workbook = await readFile(new URL('../../../fixtures/gemini-file-probe/event-invitation.xlsx', import.meta.url));
+    const workbook = await readFile(new URL('../../../fixtures/ai-file-probe/event-invitation.xlsx', import.meta.url));
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const requestBody = JSON.parse(String(init?.body)) as {
         messages: Array<{ role: string; content: string }>;
       };
       const normalizedText = requestBody.messages[1]?.content ?? '';
-      return normalizedText.includes('GEMINI-FILE-PROBE-001')
+      return normalizedText.includes('FILE-PROBE-001')
         && normalizedText.includes('2026-08-18')
         && normalizedText.includes('14:30')
         && normalizedText.includes('16:00')
         ? new Response(JSON.stringify({
           choices: [{ message: { content: JSON.stringify({
-            title: 'Gemini ファイル解析テスト会議',
+            title: 'AI ファイル解析テスト会議',
             startsAt: '2026-08-18T14:30:00+09:00',
             endsAt: '2026-08-18T16:00:00+09:00',
             timeZone: 'Asia/Tokyo',
@@ -167,9 +169,9 @@ describe('Gemini Event Details validation', () => {
         : new Response(JSON.stringify({ error: { message: 'Normalized XLSX content was not provided.' } }), { status: 400 });
     });
 
-    const result = await extractGeminiEventDetails({
-      apiKey: 'api-key',
-      model: 'gemini-3.5-flash-lite',
+    const result = await extractAiEventDetails({
+      baseUrl: 'https://ai.example.com/v1', apiKey: 'api-key',
+      model: 'test-model',
       source: '日時は添付ファイルをご確認ください。',
       attachments: [{
         attachmentId: 'attachment-xlsx',
@@ -183,7 +185,7 @@ describe('Gemini Event Details validation', () => {
 
     expect(result).toMatchObject({
       events: [{
-        title: 'Gemini ファイル解析テスト会議',
+        title: 'AI ファイル解析テスト会議',
         startsAt: '2026-08-18T14:30:00+09:00',
         endsAt: '2026-08-18T16:00:00+09:00',
       }],

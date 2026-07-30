@@ -124,17 +124,6 @@ export const oauthFlows = sqliteTable('oauth_flows', {
   index('oauth_flows_expiry_idx').on(table.expiresAt),
 ]);
 
-export const geminiOauthStates = sqliteTable('gemini_oauth_states', {
-  id: text('id').primaryKey(),
-  organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
-  identityId: text('identity_id').notNull().references(() => identities.id, { onDelete: 'cascade' }),
-  stateHash: text('state_hash').notNull().unique(),
-  pkceVerifierEnvelope: text('pkce_verifier_envelope').notNull(),
-  configurationEnvelope: text('configuration_envelope').notNull(),
-  expiresAt: text('expires_at').notNull(),
-  createdAt: text('created_at').notNull(),
-});
-
 export const recoveryRequests = sqliteTable('recovery_requests', {
   id: text('id').primaryKey(),
   organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),

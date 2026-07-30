@@ -13,20 +13,6 @@ CREATE TABLE `automation_inbox_claims` (
 CREATE UNIQUE INDEX `automation_inbox_claims_inbox_address_unique` ON `automation_inbox_claims` (`inbox_address`);--> statement-breakpoint
 CREATE UNIQUE INDEX `automation_inbox_claims_setup_id_unique` ON `automation_inbox_claims` (`setup_id`);--> statement-breakpoint
 CREATE UNIQUE INDEX `automation_inbox_claims_organization_id_unique` ON `automation_inbox_claims` (`organization_id`);--> statement-breakpoint
-CREATE TABLE `gemini_oauth_states` (
-	`id` text PRIMARY KEY NOT NULL,
-	`organization_id` text NOT NULL,
-	`identity_id` text NOT NULL,
-	`state_hash` text NOT NULL,
-	`pkce_verifier_envelope` text NOT NULL,
-	`configuration_envelope` text NOT NULL,
-	`expires_at` text NOT NULL,
-	`created_at` text NOT NULL,
-	FOREIGN KEY (`organization_id`) REFERENCES `organizations`(`id`) ON UPDATE no action ON DELETE cascade,
-	FOREIGN KEY (`identity_id`) REFERENCES `identities`(`id`) ON UPDATE no action ON DELETE cascade
-);
---> statement-breakpoint
-CREATE UNIQUE INDEX `gemini_oauth_states_state_hash_unique` ON `gemini_oauth_states` (`state_hash`);--> statement-breakpoint
 CREATE TABLE `identities` (
 	`id` text PRIMARY KEY NOT NULL,
 	`google_subject` text NOT NULL,

@@ -1,9 +1,10 @@
 # Convert Source Attachments to Markdown before Event Extraction
 
 Mail Automation converts every accepted Source Attachment with the Worker AI
-binding's `env.AI.toMarkdown()` before sending material to Gemini. Gemini
-receives only the filename, original MIME type, and bounded event-relevant
-Markdown or plain text; it never receives an attachment's original bytes.
+binding's `env.AI.toMarkdown()` before sending material to the selected AI
+Connection. The OpenAI-compatible API receives only the filename, original
+MIME type, and bounded event-relevant Markdown or plain text; it never
+receives an attachment's original bytes.
 
 The converter records Cloudflare's `ConversionResult.tokens` and admits at
 most 4,000 attachment tokens in total to a single Event Details extraction.
