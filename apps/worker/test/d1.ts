@@ -3,6 +3,12 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 type SqliteDatabase = InstanceType<typeof BetterSqlite3>;
+const TEST_QUERY = Symbol('test-query');
+
+interface TestPreparedQuery {
+  query: string;
+  parameters: unknown[];
+}
 
 const d1Result = <T>(results: T[], changes = 0): D1Result<T> => ({
   success: true,
@@ -20,6 +26,7 @@ const d1Result = <T>(results: T[], changes = 0): D1Result<T> => ({
 });
 
 const createStatement = (database: SqliteDatabase, query: string, parameters: unknown[] = []): D1PreparedStatement => ({
+  [TEST_QUERY]: { query, parameters },
   bind: (...values: unknown[]) => createStatement(database, query, values),
   first: async <T>(column?: string): Promise<T | null> => {
     const row = database.prepare(query).get(...parameters) as Record<string, T> | undefined;
@@ -50,9 +57,22 @@ export const createTestD1Database = (): TestD1Database => {
   const binding = {
     prepare: (query: string) => createStatement(database, query),
     batch: async <T>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> => {
-      const results: D1Result<T>[] = [];
-      for (const statement of statements) results.push(await statement.run<T>());
-      return results;
+      database.exec('BEGIN');
+      try {
+        const results = statements.map((statement) => {
+          const prepared = (statement as unknown as {
+            [TEST_QUERY]?: TestPreparedQuery;
+          })[TEST_QUERY];
+          if (!prepared) throw new Error('Test D1 received an unsupported prepared statement.');
+          const result = database.prepare(prepared.query).run(...prepared.parameters);
+          return d1Result<T>([], result.changes);
+        });
+        database.exec('COMMIT');
+        return results;
+      } catch (error) {
+        database.exec('ROLLBACK');
+        throw error;
+      }
     },
     exec: async (query: string): Promise<D1ExecResult> => {
       database.exec(query);
@@ -72,10 +92,19 @@ const migrationDirectory = (kind: 'control' | 'organization'): string =>
   resolve(import.meta.dirname, `../migrations/${kind}`);
 
 export const applyTestMigrations = (database: TestD1Database, kind: 'control' | 'organization'): void => {
-  for (const name of readdirSync(migrationDirectory(kind)).filter((file) => file.endsWith('.sql')).sort()) {
+  const names = readdirSync(migrationDirectory(kind)).filter((file) => file.endsWith('.sql')).sort();
+  for (const name of names) {
     const migration = readFileSync(resolve(migrationDirectory(kind), name), 'utf8');
     for (const statement of migration.split(';').map((value) => value.trim()).filter(Boolean)) {
       database.execute(statement);
+    }
+  }
+  if (kind === 'organization') {
+    database.execute(
+      'CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)',
+    );
+    for (const name of names) {
+      database.execute('INSERT INTO d1_migrations (name) VALUES (?)', name);
     }
   }
 };

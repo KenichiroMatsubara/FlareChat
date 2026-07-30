@@ -3,16 +3,11 @@ import { and, isNotNull, ne } from 'drizzle-orm';
 import { controlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
 import { organizationProvisionings, organizations } from './storage/control-schema';
 import { googleConnections } from './storage/organization-schema';
+import { schemaLifecycle } from './schema-lifecycle';
 
-import organizationSchemaMigration from '../migrations/organization/0000_initial.sql';
-import organizationTasksMigration from '../migrations/organization/0001_tasks.sql';
 import type { Bindings } from './types';
 
 const LOCAL_BINDING = /^LOCAL_ORGANIZATION_DB_\d+$/u;
-const ORGANIZATION_MIGRATIONS = [
-  { name: '0000_initial.sql', sql: organizationSchemaMigration },
-  { name: '0001_tasks.sql', sql: organizationTasksMigration },
-] as const;
 const DATABASE_NAME_PREFIX = 'flarechat-organization-';
 const DATABASE_NAME_HASH_LENGTH = 12;
 const BINDING_HASH_LENGTH = 24;
@@ -29,25 +24,8 @@ const localBindings = (env: Bindings): string[] =>
     .filter((name) => LOCAL_BINDING.test(name))
     .sort((left, right) => left.localeCompare(right, 'en', { numeric: true }));
 
-const migrationStatements = (migration: string): string[] =>
-  migration
-    .split('--> statement-breakpoint')
-    .map((statement) => statement.trim())
-    .filter(Boolean);
-
 const initializeDatabase = async (database: D1Database): Promise<void> => {
-  await database.prepare(
-    'CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)',
-  ).run();
-  const applied = await database.prepare('SELECT name FROM d1_migrations').all<{ name: string }>();
-  const appliedNames = new Set(applied.results.map(({ name }) => name));
-  for (const migration of ORGANIZATION_MIGRATIONS) {
-    if (appliedNames.has(migration.name)) continue;
-    await database.batch([
-      ...migrationStatements(migration.sql).map((statement) => database.prepare(statement)),
-      database.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind(migration.name),
-    ]);
-  }
+  await schemaLifecycle.ensureCurrent({ kind: 'organization', database });
 };
 
 const verifyDatabase = async (database: D1Database): Promise<void> => {
@@ -163,7 +141,3 @@ export const provisionOrganizationDatabase = async (
     },
   };
 };
-
-/** Opens an Organization D1 only through its Worker binding. */
-export const organizationDatabase = (env: Bindings, bindingName: string, _databaseId?: string | null): D1Database | null =>
-  boundDatabase(env, bindingName);

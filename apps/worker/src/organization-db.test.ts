@@ -120,6 +120,8 @@ describe('Organization database resolver', () => {
     expect(first.rows<{ name: string }>('SELECT name FROM d1_migrations ORDER BY name')).toEqual([
       { name: '0000_initial.sql' },
       { name: '0001_tasks.sql' },
+      { name: '0002_line_destination_roster.sql' },
+      { name: '0003_release_safe_line_destination_index.sql' },
     ]);
   });
 
@@ -127,25 +129,39 @@ describe('Organization database resolver', () => {
     const control = createMigratedTestD1('control');
     openDatabases.push(control);
     const requests: Array<{ batch?: Array<{ sql: string; params: unknown[] }>; sql?: string }> = [];
+    const applied = new Map<string, string | null>([['0000_initial.sql', null]]);
     vi.stubGlobal('fetch', vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as {
         batch?: Array<{ sql: string; params: unknown[] }>;
         sql?: string;
+        params?: unknown[];
       };
       requests.push(body);
       if (body.batch) {
+        for (const query of body.batch) {
+          if (query.sql.startsWith('INSERT INTO d1_migrations')) {
+            applied.set(String(query.params[0]), String(query.params[1]));
+          }
+        }
         return new Response(JSON.stringify({
           success: true,
           result: body.batch.map(() => ({ success: true, results: [], meta: {} })),
         }));
       }
+      const results = body.sql === 'PRAGMA table_info(d1_migrations)'
+        ? ['id', 'name', 'checksum', 'applied_at'].map((name) => ({ name }))
+        : body.sql === 'SELECT name, checksum FROM d1_migrations'
+          ? [...applied].map(([name, checksum]) => ({ name, checksum }))
+          : body.sql === 'SELECT checksum FROM d1_migrations WHERE name = ?'
+            ? applied.has(String(body.params?.[0]))
+              ? [{ checksum: applied.get(String(body.params?.[0])) }]
+              : []
+            : [];
       return new Response(JSON.stringify({
         success: true,
         result: [{
           success: true,
-          results: body.sql === 'SELECT name FROM d1_migrations'
-            ? [{ name: '0000_initial.sql' }]
-            : [],
+          results,
           meta: {},
         }],
       }));
@@ -164,11 +180,11 @@ describe('Organization database resolver', () => {
     });
     await provisioned.initialize();
 
-    expect(requests).toHaveLength(3);
-    const statements = requests[2]?.batch?.map(({ sql }) => sql) ?? [];
+    const statements = requests.flatMap(({ batch }) => batch?.map(({ sql }) => sql) ?? []);
     expect(statements).toEqual(expect.arrayContaining([
       expect.stringContaining('CREATE TABLE `tasks`'),
-      'INSERT INTO d1_migrations (name) VALUES (?)',
+      expect.stringContaining('ALTER TABLE `line_destinations` ADD `display_name`'),
+      'INSERT INTO d1_migrations (name, checksum) VALUES (?, ?)',
     ]));
     expect(statements.some((statement) => statement.includes('DROP TABLE'))).toBe(false);
   });

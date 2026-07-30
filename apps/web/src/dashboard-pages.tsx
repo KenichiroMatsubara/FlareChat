@@ -1,4 +1,4 @@
-import { CalendarDays, CheckCircle2, Copy, Eye, EyeOff, Mail, Play, RefreshCw, Save, Settings, SlidersHorizontal } from 'lucide-react';
+import { CalendarDays, CheckCircle2, Copy, Eye, EyeOff, Mail, MessageCircle, Pencil, Play, RefreshCw, Save, Search, Settings, SlidersHorizontal, UserPlus, UsersRound, X } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -23,6 +23,136 @@ export const AutomationPage = (props: DashboardProps) => <section className="pag
     <section className="info-panel"><CalendarDays size={20} /><div><strong>予定として認識する書式</strong><p>件名または本文に <code>2026/08/03 19:00-21:00</code> のような日付と開始・終了時刻を含めてください。</p></div></section>
   </> : <section className="empty-page"><Mail size={30} /><h2>Googleアカウントを接続してください</h2><p>接続後、このページから自動化を操作できます。</p></section>}
 </section>;
+
+const normalizeSearch = (value: string): string => value.normalize('NFKC').toLocaleLowerCase('ja-JP').replace(/\s+/gu, '');
+const destinationKindLabel = (kind: 'user' | 'group' | 'room'): string =>
+  kind === 'user' ? '個人' : kind === 'group' ? 'グループ' : 'ルーム';
+
+export const MembersPage = (props: DashboardProps) => {
+  const [query, setQuery] = useState('');
+  const [stateFilter, setStateFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [selectedLineDestinationId, setSelectedLineDestinationId] = useState('');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [tags, setTags] = useState('');
+  const [editingId, setEditingId] = useState('');
+  const [editName, setEditName] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [editTags, setEditTags] = useState('');
+  const [editState, setEditState] = useState<'active' | 'inactive'>('active');
+  const unassignedDestinations = props.lineDestinations.filter((destination) =>
+    destination.status === 'discovered' && !destination.recipientProfileId);
+  const searchToken = normalizeSearch(query);
+  const visibleRecipients = props.organizationRecipients.filter((recipient) => {
+    if (stateFilter !== 'all' && recipient.state !== stateFilter) return false;
+    if (!searchToken) return true;
+    return normalizeSearch([
+      recipient.name,
+      recipient.email,
+      ...recipient.tags,
+      ...recipient.lineDestinations.flatMap((destination) => [destination.displayName, destination.destinationId]),
+    ].join(' ')).includes(searchToken);
+  });
+  const withEmail = props.organizationRecipients.filter((recipient) => recipient.email && recipient.email !== '***').length;
+  const linkedToLine = props.organizationRecipients.filter((recipient) => recipient.lineDestinations.length > 0).length;
+  const lineConfigured = Boolean(
+    props.connections?.line.channelAccessTokenConfigured && props.connections.line.channelSecretConfigured,
+  );
+
+  const selectLineDestination = (id: string): void => {
+    setSelectedLineDestinationId(id);
+    const destination = unassignedDestinations.find((value) => value.id === id);
+    if (destination?.displayName) setName(destination.displayName);
+  };
+  const createRecipient = async (event: React.FormEvent): Promise<void> => {
+    event.preventDefault();
+    await props.onCreateRecipient({
+      name: name.trim(),
+      email: email.trim(),
+      tags: tags.split(',').map((tag) => tag.trim()).filter(Boolean),
+      ...(selectedLineDestinationId ? { lineDestinationId: selectedLineDestinationId } : {}),
+    });
+    setSelectedLineDestinationId('');
+    setName('');
+    setEmail('');
+    setTags('');
+  };
+  const beginEdit = (recipient: DashboardProps['organizationRecipients'][number]): void => {
+    setEditingId(recipient.id);
+    setEditName(recipient.name);
+    setEditEmail(recipient.email === '***' ? '' : recipient.email);
+    setEditTags(recipient.tags.join(', '));
+    setEditState(recipient.state);
+  };
+  const saveEdit = async (recipientId: string): Promise<void> => {
+    await props.onUpdateRecipient(recipientId, {
+      name: editName.trim(),
+      email: editEmail.trim(),
+      tags: editTags.split(',').map((tag) => tag.trim()).filter(Boolean),
+      state: editState,
+    });
+    setEditingId('');
+  };
+
+  return <section className="page-layout members-page">
+    <div className="page-title"><p>MEMBER ROSTER</p><h1>メンバー管理</h1><span>LINEで見つけた表示名・ユーザーIDに、氏名、メールアドレス、分類を紐付けます。</span></div>
+    <section className="member-metrics">
+      <div><span className="member-metric-icon green"><UsersRound size={18} /></span><p><b>{props.organizationRecipients.length}</b><small>登録メンバー</small></p></div>
+      <div><span className="member-metric-icon blue"><MessageCircle size={18} /></span><p><b>{linkedToLine}</b><small>LINE紐付け済み</small></p></div>
+      <div><span className="member-metric-icon amber"><Mail size={18} /></span><p><b>{withEmail}</b><small>メール設定済み</small></p></div>
+      <div><span className="member-metric-icon violet"><UserPlus size={18} /></span><p><b>{unassignedDestinations.length}</b><small>未登録のLINE</small></p></div>
+    </section>
+
+    {props.canManage && <section className="member-onboarding">
+      <div className="member-onboarding-copy">
+        <span className="line-mark">LINE</span>
+        <div><p>LINEからメンバーを追加</p><h2>{unassignedDestinations.length ? `${unassignedDestinations.length}件のLINEアカウントが登録待ちです` : 'LINEアカウントの受信を待っています'}</h2><span>公式アカウントにメッセージが届くと、表示名とIDを自動取得します。</span></div>
+        <button type="button" className="secondary member-refresh" onClick={props.onRefreshRecipients} disabled={props.memberBusy}><RefreshCw className={props.memberBusy ? 'spin' : ''} size={16} />更新</button>
+      </div>
+      {!lineConfigured && <p className="dashboard-warning member-connection-warning">LINE Messaging APIが未設定です。<Link to="../connections">接続設定を開く</Link></p>}
+      <form className="member-create-form" onSubmit={(event) => void createRecipient(event)}>
+        <label className="member-line-select">LINEアカウント<select value={selectedLineDestinationId} onChange={(event) => selectLineDestination(event.target.value)}><option value="">LINEなしで登録</option>{unassignedDestinations.map((destination) => <option key={destination.id} value={destination.id}>{destination.displayName || '表示名未取得'} · {destinationKindLabel(destination.kind)} · {destination.destinationId}</option>)}</select></label>
+        <label>氏名<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例: 山田 太郎" required /></label>
+        <label>メールアドレス<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="member@example.com" required /></label>
+        <label>分類タグ<input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="例: 会員, 2026年度" /></label>
+        <button className="primary" disabled={props.memberBusy}><UserPlus size={16} />{props.memberBusy ? '登録中…' : 'メンバーに追加'}</button>
+      </form>
+    </section>}
+
+    <section className="member-directory">
+      <div className="member-directory-heading"><div><p>MEMBER DIRECTORY</p><h2>メンバー名簿</h2></div><span>{visibleRecipients.length} / {props.organizationRecipients.length}件</span></div>
+      <div className="member-filters">
+        <label className="member-search"><Search size={16} /><input aria-label="メンバーを検索" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="名前・メール・LINE IDで検索" /></label>
+        <select aria-label="状態で絞り込み" value={stateFilter} onChange={(event) => setStateFilter(event.target.value as typeof stateFilter)}><option value="all">すべての状態</option><option value="active">有効</option><option value="inactive">無効</option></select>
+      </div>
+      <div className="member-list">
+        {visibleRecipients.map((recipient) => <article key={recipient.id} className={`member-card ${recipient.state}`}>
+          <div className="member-avatar" aria-hidden="true">{recipient.name.trim().slice(0, 1) || '?'}</div>
+          {editingId === recipient.id ? <div className="member-edit-form">
+            <div className="member-edit-grid">
+              <label>氏名<input value={editName} onChange={(event) => setEditName(event.target.value)} /></label>
+              <label>メールアドレス<input type="email" value={editEmail} onChange={(event) => setEditEmail(event.target.value)} /></label>
+              <label>分類タグ<input value={editTags} onChange={(event) => setEditTags(event.target.value)} /></label>
+              <label>状態<select value={editState} onChange={(event) => setEditState(event.target.value as 'active' | 'inactive')}><option value="active">有効</option><option value="inactive">無効</option></select></label>
+            </div>
+            <div className="member-edit-actions"><button className="primary" onClick={() => void saveEdit(recipient.id)} disabled={props.memberBusy}><Save size={15} />保存</button><button className="secondary" onClick={() => setEditingId('')}><X size={15} />キャンセル</button></div>
+          </div> : <>
+            <div className="member-identity">
+              <div><h3>{recipient.name}</h3><span className={`member-state ${recipient.state}`}>{recipient.state === 'active' ? '有効' : '無効'}</span></div>
+              <p><Mail size={14} />{recipient.email || 'メール未設定'}</p>
+              <div className="member-tags">{recipient.tags.length ? recipient.tags.map((tag) => <span key={tag}>{tag}</span>) : <small>タグなし</small>}</div>
+            </div>
+            <div className="member-line-details">
+              {recipient.lineDestinations.length ? recipient.lineDestinations.map((destination) => <div key={destination.id}><span className="line-badge"><MessageCircle size={13} />LINE {destinationKindLabel(destination.kind)}</span><strong>{destination.displayName || recipient.name}</strong><code>{destination.destinationId}</code><button type="button" className="member-copy" aria-label={`${destination.destinationId}をコピー`} onClick={() => void navigator.clipboard.writeText(destination.destinationId)}><Copy size={14} /></button></div>) : <div className="member-line-empty"><MessageCircle size={15} /><span>LINE未連携</span></div>}
+            </div>
+            {props.canManage && <button type="button" className="member-edit-button" onClick={() => beginEdit(recipient)}><Pencil size={15} />編集</button>}
+          </>}
+        </article>)}
+        {visibleRecipients.length === 0 && <div className="member-empty"><UsersRound size={28} /><h3>{props.organizationRecipients.length ? '条件に一致するメンバーがいません' : 'メンバーはまだ登録されていません'}</h3><p>{props.organizationRecipients.length ? '検索条件を変更してください。' : 'LINEアカウントを選ぶか、氏名とメールアドレスを直接入力して追加できます。'}</p></div>}
+      </div>
+    </section>
+  </section>;
+};
 
 export const TasksPage = (props: DashboardProps) => {
   const [assignee, setAssignee] = useState('');

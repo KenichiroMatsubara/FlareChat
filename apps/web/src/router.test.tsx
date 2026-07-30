@@ -21,6 +21,7 @@ describe('application routes', () => {
       automation: 'automation',
       connections: 'connections',
       rules: 'rules',
+      members: 'members',
       mailboxTest: 'mailbox-test',
       tasks: 'tasks',
     });
@@ -80,6 +81,20 @@ describe('application routes', () => {
     }), { initialEntries: ['/organizations/org-1/tasks'] });
     await router.initialize();
     expect(router.state.matches.at(-1)?.route.path).toBe('tasks');
+  });
+
+  it('opens the member roster as a durable deep link', async () => {
+    const ready = {
+      kind: 'ready',
+      identity: { email: 'owner@example.com', displayName: 'Owner' },
+      organizations: [{ organizationId: 'org-1', name: 'Example', role: 'owner', status: 'active' }],
+    } as AppState;
+    const router = createMemoryRouter(createAppRoutes({
+      bootstrap: async () => ready,
+      logout: async () => ({ loggedOut: true }),
+    }), { initialEntries: ['/organizations/org-1/members'] });
+    await router.initialize();
+    expect(router.state.matches.at(-1)?.route.path).toBe('members');
   });
 
   it('offers a real logout action when a route cannot be displayed', async () => {

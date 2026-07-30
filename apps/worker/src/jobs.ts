@@ -1,4 +1,4 @@
-import { organizationDatabase } from './organization-db';
+import { createDatabaseAccess } from './database-access';
 import type { Bindings } from './types';
 import { nextRetry } from '@mail/domain';
 import { and, asc, eq, isNotNull, lte } from 'drizzle-orm';
@@ -101,10 +101,14 @@ export const recoverDueOrganizationJobs = async (env: Bindings, dueAt: string): 
     databaseId: organizations.databaseId,
   }).from(organizations).where(and(eq(organizations.status, 'active'), isNotNull(organizations.databaseId))).all();
   const claimed: ClaimedJob[] = [];
+  const databases = createDatabaseAccess(env);
   for (const organization of activeOrganizations) {
-    const database = organizationDatabase(env, organization.bindingName, organization.databaseId);
-    if (!database) continue;
-    claimed.push(...await claimDueJobs(database, dueAt));
+    const database = await databases.open({
+      kind: 'organization',
+      bindingName: organization.bindingName,
+      databaseId: organization.databaseId,
+    });
+    claimed.push(...await claimDueJobs(database.raw, dueAt));
   }
   return claimed;
 };

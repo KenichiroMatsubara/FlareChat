@@ -263,6 +263,7 @@ export const lineDestinations = sqliteTable('line_destinations', {
   id: text('id').primaryKey(),
   connectionId: text('connection_id').notNull().references(() => connections.id, { onDelete: 'cascade' }),
   destinationId: text('destination_id').notNull(),
+  displayName: text('display_name').notNull().default(''),
   kind: text('kind', { enum: ['user', 'group', 'room'] }).notNull(),
   status: text('status', { enum: ['discovered', 'disabled'] }).notNull().default('discovered'),
   discoveredAt: text('discovered_at').notNull(),
@@ -287,6 +288,7 @@ export const recipientLineDestinations = sqliteTable('recipient_line_destination
   createdAt: text('created_at').notNull(),
 }, (table) => [
   primaryKey({ columns: [table.recipientProfileId, table.lineDestinationId] }),
+  uniqueIndex('recipient_line_destinations_destination_unique').on(table.lineDestinationId),
 ]);
 
 export const eventAttachments = sqliteTable('event_attachments', {

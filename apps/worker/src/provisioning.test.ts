@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { app } from './api';
 import { provisionOrganization } from './provisioning';
+import { fleetMigration } from './fleet-migration';
+import { retryProvisioning } from './onboarding';
 import { applyTestMigrations } from '../test/d1';
 import { createProvisioningTestApp, type ProvisioningTestApp } from '../test/provisioning';
 
@@ -14,6 +16,33 @@ afterEach(() => {
 });
 
 describe('Organization provisioning', () => {
+  it('does not activate a new Organization while a schema release is being prepared', async () => {
+    fixture = await createProvisioningTestApp();
+    await fleetMigration.prepareRelease(fixture.environment);
+
+    await expect(provisionOrganization(
+      fixture.environment,
+      fixture.provisioning,
+    )).rejects.toThrow(/schema release/u);
+
+    expect(fixture.control.row<{ status: string }>(
+      'SELECT status FROM organizations WHERE id = ?',
+      fixture.provisioning.organizationId,
+    )).toEqual({ status: 'provisioning' });
+  });
+
+  it('keeps provisioning pending instead of failing while a schema release is in progress', async () => {
+    fixture = await createProvisioningTestApp();
+    await fleetMigration.prepareRelease(fixture.environment);
+
+    await retryProvisioning(fixture.environment);
+
+    expect(fixture.control.row<{ state: string }>(
+      'SELECT state FROM organization_provisionings WHERE organization_id = ?',
+      fixture.provisioning.organizationId,
+    )).toEqual({ state: 'provisioning' });
+  });
+
   it('activates an isolated Organization with its granted account as the Automation Inbox', async () => {
     fixture = await createProvisioningTestApp();
     const cloudflare = vi.fn();
@@ -55,14 +84,6 @@ describe('Organization provisioning', () => {
   it('refreshes the same Automation Inbox credential without erasing a rediscovered database', async () => {
     fixture = await createProvisioningTestApp();
     applyTestMigrations(fixture.organization, 'organization');
-    fixture.organization.execute(
-      'CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)',
-    );
-    fixture.organization.execute(
-      'INSERT INTO d1_migrations (name) VALUES (?), (?)',
-      '0000_initial.sql',
-      '0001_tasks.sql',
-    );
     fixture.organization.execute(
       `INSERT INTO google_connections
         (id, kind, google_subject, inbox_address, granted_scopes, token_envelope,

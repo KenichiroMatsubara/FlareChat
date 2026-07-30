@@ -62,6 +62,21 @@ interface OpenAiCompatibleResponse {
   error?: { message?: string };
 }
 
+interface LineProfileResponse {
+  displayName?: string;
+}
+
+interface LineWebhookPayload {
+  events?: Array<{
+    source?: {
+      type?: string;
+      userId?: string;
+      groupId?: string;
+      roomId?: string;
+    };
+  }>;
+}
+
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.use('/api/*', cors({ origin: (origin) => origin || 'http://localhost:5173', credentials: true }));
@@ -121,6 +136,31 @@ const isMailExtraction = (value: unknown): value is MailExtraction => {
 };
 
 const connectionContext = (organizationId: string, kind: 'line' | 'ai'): string => `organization-connection:${organizationId}:${kind}`;
+
+const lineDestinationDisplayName = async (
+  credential: OrganizationCredential,
+  destination: { destinationId: string; kind: 'user' | 'group' | 'room' },
+  payload: LineWebhookPayload,
+): Promise<string> => {
+  if (destination.kind !== 'user' || !credential.channelAccessToken) return '';
+  try {
+    const source = payload.events?.find((event) => event.source?.userId === destination.destinationId)?.source;
+    const profilePath = source?.type === 'group' && source.groupId
+      ? `group/${encodeURIComponent(source.groupId)}/member/${encodeURIComponent(destination.destinationId)}`
+      : source?.type === 'room' && source.roomId
+        ? `room/${encodeURIComponent(source.roomId)}/member/${encodeURIComponent(destination.destinationId)}`
+        : `profile/${encodeURIComponent(destination.destinationId)}`;
+    const response = await fetch(
+      `https://api.line.me/v2/bot/${profilePath}`,
+      { headers: { Authorization: `Bearer ${credential.channelAccessToken}` } },
+    );
+    if (!response.ok) return '';
+    const profile = await response.json() as LineProfileResponse;
+    return profile.displayName?.trim() ?? '';
+  } catch {
+    return '';
+  }
+};
 
 const connectionCredential = async (
   row: ConnectionRow | null,
@@ -530,20 +570,93 @@ app.get('/api/organizations/:organizationId/recipients', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
     if (!access.database) throw new Error('Organization database is not available.');
-    const rows = await drizzleOrganizationDatabase(access.database).select().from(recipientProfiles)
+    const rows = await drizzleOrganizationDatabase(access.database).select({
+      id: recipientProfiles.id,
+      name: recipientProfiles.name,
+      email: recipientProfiles.email,
+      state: recipientProfiles.state,
+      tags: recipientProfiles.tags,
+      createdAt: recipientProfiles.createdAt,
+      updatedAt: recipientProfiles.updatedAt,
+      lineDestinationRowId: lineDestinations.id,
+      lineDestinationId: lineDestinations.destinationId,
+      lineDisplayName: lineDestinations.displayName,
+      lineKind: lineDestinations.kind,
+      lineStatus: lineDestinations.status,
+    }).from(recipientProfiles)
+      .leftJoin(recipientLineDestinations, eq(recipientLineDestinations.recipientProfileId, recipientProfiles.id))
+      .leftJoin(lineDestinations, eq(lineDestinations.id, recipientLineDestinations.lineDestinationId))
       .orderBy(asc(recipientProfiles.name)).all();
-    return json(context, rows.map((row) => ({
-      id: row.id,
-      organizationId: access.organization.id,
-      name: row.name,
-      email: displayRecipientIdentifier(access.role as 'owner' | 'admin' | 'operator' | 'viewer', row.email),
-      state: row.state,
-      tags: JSON.parse(row.tags) as string[],
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-    })));
+    const recipients = new Map<string, {
+      id: string;
+      organizationId: string;
+      name: string;
+      email: string;
+      state: 'active' | 'inactive';
+      tags: string[];
+      createdAt: string;
+      updatedAt: string;
+      lineDestinations: Array<{
+        id: string;
+        destinationId: string;
+        displayName: string;
+        kind: 'user' | 'group' | 'room';
+        status: 'discovered' | 'disabled';
+      }>;
+    }>();
+    for (const row of rows) {
+      const recipient = recipients.get(row.id) ?? {
+        id: row.id,
+        organizationId: access.organization.id,
+        name: row.name,
+        email: displayRecipientIdentifier(access.role as 'owner' | 'admin' | 'operator' | 'viewer', row.email),
+        state: row.state,
+        tags: JSON.parse(row.tags) as string[],
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        lineDestinations: [],
+      };
+      if (row.lineDestinationRowId && row.lineDestinationId && row.lineKind && row.lineStatus) {
+        recipient.lineDestinations.push({
+          id: row.lineDestinationRowId,
+          destinationId: displayRecipientIdentifier(access.role as 'owner' | 'admin' | 'operator' | 'viewer', row.lineDestinationId),
+          displayName: row.lineDisplayName ?? '',
+          kind: row.lineKind,
+          status: row.lineStatus,
+        });
+      }
+      recipients.set(row.id, recipient);
+    }
+    return json(context, [...recipients.values()]);
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Recipient Profiles could not be loaded.', 403);
+  }
+});
+
+app.get('/api/organizations/:organizationId/line-destinations', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const rows = await drizzleOrganizationDatabase(access.database).select({
+      id: lineDestinations.id,
+      destinationId: lineDestinations.destinationId,
+      displayName: lineDestinations.displayName,
+      kind: lineDestinations.kind,
+      status: lineDestinations.status,
+      discoveredAt: lineDestinations.discoveredAt,
+      recipientProfileId: recipientLineDestinations.recipientProfileId,
+    }).from(lineDestinations)
+      .leftJoin(recipientLineDestinations, eq(recipientLineDestinations.lineDestinationId, lineDestinations.id))
+      .orderBy(desc(lineDestinations.discoveredAt)).all();
+    return json(context, rows.map((row) => ({
+      ...row,
+      destinationId: displayRecipientIdentifier(
+        access.role as 'owner' | 'admin' | 'operator' | 'viewer',
+        row.destinationId,
+      ),
+    })));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'LINE Destinations could not be loaded.', 403);
   }
 });
 
@@ -564,23 +677,70 @@ app.post('/api/organizations/:organizationId/recipients', async (context) => {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
     if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Recipient Profiles can only be changed by an Owner, Admin, or Operator.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
-    const input = await context.req.json<{ name?: string; email?: string }>();
+    const input = await context.req.json<{ name?: string; email?: string; tags?: unknown; lineDestinationId?: string }>();
     const name = input.name?.trim();
     const email = input.email?.trim().toLowerCase();
     if (!name || !email || !email.includes('@')) return failure(context, 'Recipient name and a valid email address are required.');
+    const tags = input.tags === undefined ? [] : input.tags;
+    if (!Array.isArray(tags) || tags.some((tag) => typeof tag !== 'string' || !tag.trim())) {
+      return failure(context, 'Recipient tags must be non-empty strings.');
+    }
+    const normalizedTags = tags.map((tag) => String(tag).trim());
+    const database = drizzleOrganizationDatabase(access.database);
+    const requestedLineDestinationId = input.lineDestinationId?.trim();
+    const lineDestination = requestedLineDestinationId
+      ? await database.select({
+        id: lineDestinations.id,
+        destinationId: lineDestinations.destinationId,
+        displayName: lineDestinations.displayName,
+        kind: lineDestinations.kind,
+        status: lineDestinations.status,
+      }).from(lineDestinations)
+        .leftJoin(recipientLineDestinations, eq(recipientLineDestinations.lineDestinationId, lineDestinations.id))
+        .where(and(
+          eq(lineDestinations.id, requestedLineDestinationId),
+          eq(lineDestinations.status, 'discovered'),
+          isNull(recipientLineDestinations.recipientProfileId),
+        )).get()
+      : null;
+    if (requestedLineDestinationId && !lineDestination) {
+      return failure(context, 'The LINE Destination is unavailable or already assigned.', 409);
+    }
     const id = crypto.randomUUID();
     const timestamp = now();
-    await drizzleOrganizationDatabase(access.database).insert(recipientProfiles).values({
+    const recipientInsert = database.insert(recipientProfiles).values({
       id,
       organizationId: access.organization.id,
       name,
       email,
       state: 'active',
-      tags: '[]',
+      tags: JSON.stringify(normalizedTags),
       createdAt: timestamp,
       updatedAt: timestamp,
-    }).run();
-    return json(context, { id, organizationId: access.organization.id, name, email, state: 'active', tags: [], createdAt: timestamp, updatedAt: timestamp }, 201);
+    });
+    if (lineDestination) {
+      await database.batch([
+        recipientInsert,
+        database.insert(recipientLineDestinations).values({
+          recipientProfileId: id,
+          lineDestinationId: lineDestination.id,
+          createdAt: timestamp,
+        }),
+      ]);
+    } else {
+      await recipientInsert.run();
+    }
+    return json(context, {
+      id,
+      organizationId: access.organization.id,
+      name,
+      email,
+      state: 'active',
+      tags: normalizedTags,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      lineDestinations: lineDestination ? [lineDestination] : [],
+    }, 201);
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Recipient Profile could not be created.', 409);
   }
@@ -1131,17 +1291,29 @@ app.post('/api/public/organizations/:organizationId/line/webhook', async (contex
     const rawBody = await context.req.text();
     const signature = context.req.header('x-line-signature') ?? '';
     if (!credential.channelSecret || !await verifyLineWebhookSignature(credential.channelSecret, rawBody, signature)) return failure(context, 'Invalid LINE webhook signature.', 401);
-    const destinations = discoveredLineDestinations(JSON.parse(rawBody) as { events?: Array<{ source?: { type?: string; userId?: string; groupId?: string; roomId?: string } }> });
+    const payload = JSON.parse(rawBody) as LineWebhookPayload;
+    const destinations = discoveredLineDestinations(payload);
     const timestamp = now();
-    await Promise.all(destinations.map((destination) => organizationDb.insert(lineDestinations).values({
-      id: crypto.randomUUID(),
-      connectionId: connection.id,
-      destinationId: destination.destinationId,
-      kind: destination.kind,
-      status: 'discovered',
-      discoveredAt: timestamp,
-      updatedAt: timestamp,
-    }).onConflictDoNothing().run()));
+    await Promise.all(destinations.map(async (destination) => {
+      const displayName = await lineDestinationDisplayName(credential, destination, payload);
+      await organizationDb.insert(lineDestinations).values({
+        id: crypto.randomUUID(),
+        connectionId: connection.id,
+        destinationId: destination.destinationId,
+        displayName,
+        kind: destination.kind,
+        status: 'discovered',
+        discoveredAt: timestamp,
+        updatedAt: timestamp,
+      }).onConflictDoUpdate({
+        target: [lineDestinations.connectionId, lineDestinations.destinationId],
+        set: {
+          ...(displayName ? { displayName } : {}),
+          status: 'discovered',
+          updatedAt: timestamp,
+        },
+      }).run();
+    }));
     return json(context, { discovered: destinations.length });
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'LINE webhook could not be processed.', 400);

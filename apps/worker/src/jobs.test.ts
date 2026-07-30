@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
+import organizationInitialMigration from '../migrations/organization/0000_initial.sql';
 import { claimDueJobs, completeJob, enqueueJob, recoverDueOrganizationJobs, retryJob } from './jobs';
-import { createMigratedTestD1, type TestD1Database } from '../test/d1';
+import { createMigratedTestD1, createTestD1Database, type TestD1Database } from '../test/d1';
 import { seedOrganizationRoute } from '../test/seed';
 
 const openDatabases: TestD1Database[] = [];
@@ -60,6 +61,32 @@ describe('Durable Jobs', () => {
     } as unknown as Parameters<typeof recoverDueOrganizationJobs>[0], '2099-01-01T00:00:00.000Z');
 
     expect(recovered.map((job) => job.idempotencyKey).sort()).toEqual(['job-1', 'job-2']);
+  });
+
+  it('upgrades an active Organization before scheduled Job recovery queries it', async () => {
+    const control = createMigratedTestD1('control');
+    const organization = createTestD1Database();
+    openDatabases.push(control, organization);
+    for (const statement of organizationInitialMigration
+      .split('--> statement-breakpoint')
+      .map((value) => value.trim())
+      .filter(Boolean)) {
+      organization.execute(statement);
+    }
+    organization.execute(
+      'CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)',
+    );
+    organization.execute('INSERT INTO d1_migrations (name) VALUES (?)', '0000_initial.sql');
+    seedOrganizationRoute(control, { id: 'organization-1', bindingName: 'ORG_ONE' });
+
+    await expect(recoverDueOrganizationJobs({
+      CONTROL_DB: control.binding,
+      ORG_ONE: organization.binding,
+    } as unknown as Parameters<typeof recoverDueOrganizationJobs>[0], '2099-01-01T00:00:00.000Z'))
+      .resolves.toEqual([]);
+    expect(organization.rows<{ display_name: string }>(
+      'SELECT display_name FROM line_destinations',
+    )).toEqual([]);
   });
 
   it('keeps completed work unclaimable and makes retryable work claimable only when due', async () => {

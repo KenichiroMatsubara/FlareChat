@@ -28,6 +28,7 @@ const dashboardProps = (): DashboardProps => ({
   mailTestPreview: null, mailTestBusy: false, mailTestCreatedEventIds: [], onMailTestSubjectChange: vi.fn(), onSearchMailbox: vi.fn(),
   onPrepareMailbox: vi.fn(), onPreviewMailbox: vi.fn(), onCreateCalendarEvent: vi.fn(), organizationRules: [], ruleBusy: false,
   onCreateRule: vi.fn(), organizationTasks: [], onUpdateTask: vi.fn(), taskRoleAssignments: [], taskMembers: [], onAssignTaskRole: vi.fn(),
+  organizationRecipients: [], lineDestinations: [], memberBusy: false, onCreateRecipient: vi.fn(), onUpdateRecipient: vi.fn(), onRefreshRecipients: vi.fn(),
 });
 
 const markup = (): string => renderToStaticMarkup(
@@ -48,7 +49,7 @@ describe('responsive dashboard shell', () => {
   it('keeps every navigation target inside the collapsible panel', () => {
     const panel = /<div id="app-navigation" class="topbar-panel">(.*?)<\/header>/su.exec(markup())?.[1] ?? '';
     expect(panel).toContain('class="organization-picker"');
-    for (const label of ['自動化', '接続設定', 'ルール', 'タスク', 'メールテスト', 'ログアウト']) expect(panel).toContain(label);
+    for (const label of ['自動化', '接続設定', 'ルール', 'メンバー', 'タスク', 'メールテスト', 'ログアウト']) expect(panel).toContain(label);
   });
 
   it('stacks the AI request heading and its copy action on narrow screens', async () => {
@@ -56,6 +57,65 @@ describe('responsive dashboard shell', () => {
 
     expect(stylesheet).toContain('@media (max-width: 560px) {\n  .ai-request-heading { flex-direction: column; }');
     expect(stylesheet).toContain('.ai-request-heading .secondary { width: 100%; }');
+  });
+});
+
+describe('member roster', () => {
+  it('shows discovered LINE identities next to editable member contact data', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/members']}>
+        <Dashboard
+          {...dashboardProps()}
+          page="members"
+          connections={{
+            organizationId: 'org-1',
+            organizationName: 'Example',
+            ai: { apiKeyConfigured: false, model: '', baseUrl: '' },
+            line: { channelAccessTokenConfigured: true, channelSecretConfigured: true },
+          }}
+          organizationRecipients={[{
+            id: 'recipient-1',
+            organizationId: 'org-1',
+            name: '山田 太郎',
+            email: 'taro@example.com',
+            state: 'active',
+            tags: ['会員'],
+            createdAt: '2026-07-30T00:00:00.000Z',
+            updatedAt: '2026-07-30T00:00:00.000Z',
+            lineDestinations: [{
+              id: 'line-1',
+              destinationId: 'U1234567890',
+              displayName: 'やまだ',
+              kind: 'user',
+              status: 'discovered',
+            }],
+          }]}
+          lineDestinations={[{
+            id: 'line-2',
+            destinationId: 'U0987654321',
+            displayName: '鈴木 花子',
+            kind: 'user',
+            status: 'discovered',
+            discoveredAt: '2026-07-30T00:00:00.000Z',
+            recipientProfileId: null,
+          }]}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('メンバー管理');
+    expect(html).toContain('鈴木 花子');
+    expect(html).toContain('taro@example.com');
+    expect(html).toContain('U1234567890');
+    expect(html).toContain('LINEからメンバーを追加');
+  });
+
+  it('stacks member controls and LINE identifiers on narrow screens', async () => {
+    const stylesheet = await readFile(new URL('./styles.css', import.meta.url), 'utf8');
+
+    expect(stylesheet).toContain('.member-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }');
+    expect(stylesheet).toContain('.member-create-form { grid-template-columns: minmax(0, 1fr); }');
+    expect(stylesheet).toContain('.member-line-details code { grid-column: 1 / 3; grid-row: 2;');
   });
 });
 

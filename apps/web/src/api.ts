@@ -121,6 +121,38 @@ export interface OrganizationTask {
   id: string; title: string; deadline: string; assigneeRole: 'organizer' | 'treasurer'; assigneeIdentityId: string | null; assigneeName: string; sourceMessageSubject: string; description: string; remarks: string; completed: boolean; completedAt: string | null;
 }
 
+export interface RecipientLineDestination {
+  id: string;
+  destinationId: string;
+  displayName: string;
+  kind: 'user' | 'group' | 'room';
+  status: 'discovered' | 'disabled';
+}
+
+export interface OrganizationRecipient {
+  id: string;
+  organizationId: string;
+  name: string;
+  email: string;
+  state: 'active' | 'inactive';
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
+  lineDestinations: RecipientLineDestination[];
+}
+
+export interface OrganizationLineDestination extends RecipientLineDestination {
+  discoveredAt: string;
+  recipientProfileId: string | null;
+}
+
+export interface OrganizationRecipientInput {
+  name: string;
+  email: string;
+  tags?: string[];
+  lineDestinationId?: string;
+}
+
 export interface TaskRoleAssignment { role: 'organizer' | 'treasurer'; identityId: string; displayName: string; }
 export interface TaskRoleConfiguration { members: Array<{ identityId: string; displayName: string }>; assignments: TaskRoleAssignment[]; }
 
@@ -168,6 +200,20 @@ export const api = {
   organizationRules: (organizationId: string): Promise<OrganizationRule[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules`),
   organizationDeliveryAudit: (organizationId: string): Promise<DeliveryAuditRecord[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/audit/deliveries`),
   organizationTasks: (organizationId: string): Promise<OrganizationTask[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/tasks`),
+  organizationRecipients: (organizationId: string): Promise<OrganizationRecipient[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/recipients`),
+  organizationLineDestinations: (organizationId: string): Promise<OrganizationLineDestination[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/line-destinations`),
+  createOrganizationRecipient: (organizationId: string, input: OrganizationRecipientInput): Promise<OrganizationRecipient> => request(`/api/organizations/${encodeURIComponent(organizationId)}/recipients`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }),
+  updateOrganizationRecipient: (
+    organizationId: string,
+    recipientId: string,
+    input: Partial<Pick<OrganizationRecipient, 'name' | 'email' | 'tags' | 'state'>>,
+  ): Promise<Partial<OrganizationRecipient> & { id: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/recipients/${encodeURIComponent(recipientId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  }),
   organizationTaskRoles: (organizationId: string): Promise<TaskRoleConfiguration> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles`),
   assignOrganizationTaskRole: (organizationId: string, role: 'organizer' | 'treasurer', identityId: string): Promise<TaskRoleAssignment> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles/${role}`, { method: 'PUT', body: JSON.stringify({ identityId }) }),
   updateOrganizationTask: (organizationId: string, taskId: string, input: { completed?: boolean; remarks?: string }): Promise<OrganizationTask> => request(`/api/organizations/${encodeURIComponent(organizationId)}/tasks/${encodeURIComponent(taskId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
