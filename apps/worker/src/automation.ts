@@ -8,7 +8,7 @@ import type { SourceAttachmentContent } from './drive-attachments';
 import type { GoogleTokenSet } from './google';
 import { productionAutomationDependencies } from './automation/providers';
 import type { AutomationDependencies, GoogleAutomationPort } from './automation/providers';
-import { organizationDatabase } from './organization-db';
+import { createDatabaseAccess } from './database-access';
 import type { Bindings } from './types';
 import { validateAttachmentIntake } from '@mail/domain';
 import { controlDatabase as drizzleControlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
@@ -693,10 +693,14 @@ const runEnabledAutomationsWithDependencies = async (env: Bindings, dependencies
     eq(organizations.status, 'active'),
     isNotNull(organizations.databaseId),
   )).orderBy(organizations.updatedAt).limit(20).all();
+  const databases = createDatabaseAccess(env);
   for (const organization of activeOrganizations) {
-    const database = organizationDatabase(env, organization.bindingName, organization.databaseId);
-    if (!database) continue;
-    const orgDb = drizzleOrganizationDatabase(database);
+    const database = await databases.open({
+      kind: 'organization',
+      bindingName: organization.bindingName,
+      databaseId: organization.databaseId,
+    });
+    const orgDb = drizzleOrganizationDatabase(database.raw);
     const inboxes = await orgDb.select().from(googleConnections).where(and(
       eq(googleConnections.kind, 'automation_inbox'),
       eq(googleConnections.status, 'active'),
@@ -704,7 +708,7 @@ const runEnabledAutomationsWithDependencies = async (env: Bindings, dependencies
     )).all();
     for (const inbox of inboxes) {
       try {
-        await runOrganizationInbox(dependencies, env, organization.id, database, inbox);
+        await runOrganizationInbox(dependencies, env, organization.id, database.raw, inbox);
       } catch (error) {
         await orgDb.update(googleConnections).set({
           status: 'reauthentication_required',

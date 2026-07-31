@@ -23,7 +23,11 @@ interface D1Query {
 }
 
 interface WorkerSettings {
-  bindings?: Array<{ name?: unknown }>;
+  bindings?: Array<{
+    name?: unknown;
+    type?: unknown;
+    database_id?: unknown;
+  }>;
 }
 
 interface WorkerDeployment {
@@ -61,6 +65,7 @@ export type CloudflareFetch = (
 export interface CloudflareControlPlane {
   ensureDatabase(name: string): Promise<string>;
   openDatabase(databaseId: string): D1Database;
+  openBoundDatabase(bindingName: string): Promise<D1Database>;
   attachDatabase(bindingName: string, databaseId: string): Promise<void>;
 }
 
@@ -216,6 +221,20 @@ export const cloudflareControlPlane = (
     }
   };
 
+  const openBoundDatabase = async (bindingName: string): Promise<D1Database> => {
+    if (!env.CLOUDFLARE_WORKER_NAME) throw new Error('Cloudflare Worker name is not configured.');
+    const script = encodeURIComponent(env.CLOUDFLARE_WORKER_NAME);
+    const settings = await request<WorkerSettings>(`/workers/scripts/${script}/settings`);
+    const binding = (settings.bindings ?? []).find((candidate) =>
+      candidate.name === bindingName
+      && candidate.type === 'd1'
+      && typeof candidate.database_id === 'string');
+    if (!binding || typeof binding.database_id !== 'string') {
+      throw new Error(`Cloudflare Worker D1 binding ${bindingName} is unavailable.`);
+    }
+    return openDatabase(binding.database_id);
+  };
+
   const attachDatabase = async (bindingName: string, databaseId: string): Promise<void> => {
     if (!env.CLOUDFLARE_WORKER_NAME) throw new Error('Cloudflare Worker name is not configured.');
     const script = encodeURIComponent(env.CLOUDFLARE_WORKER_NAME);
@@ -263,6 +282,7 @@ export const cloudflareControlPlane = (
   return {
     ensureDatabase,
     openDatabase,
+    openBoundDatabase,
     attachDatabase,
   };
 };

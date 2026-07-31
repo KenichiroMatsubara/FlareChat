@@ -140,6 +140,16 @@ export const recoveryRequests = sqliteTable('recovery_requests', {
   index('recovery_requests_org_state_idx').on(table.organizationId, table.state, table.createdAt),
 ]);
 
+export const schemaReleases = sqliteTable('schema_releases', {
+  id: text('id').primaryKey(),
+  state: text('state', { enum: ['ready', 'migrating'] }).notNull().default('ready'),
+  targetMigration: text('target_migration').notNull().default(''),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  check('schema_releases_id_check', sql`${table.id} = 'organization'`),
+  check('schema_releases_state_check', sql`${table.state} in ('ready', 'migrating')`),
+]);
+
 export type OrganizationSetupRecord = typeof organizationSetups.$inferSelect;
 export type OrganizationProvisioningRecord = typeof organizationProvisionings.$inferSelect;
 export type OrganizationRecord = typeof organizations.$inferSelect;

@@ -13,11 +13,22 @@ const migrations = (kind: 'control' | 'organization'): string[] =>
 const migrationSql = (kind: 'control' | 'organization'): string =>
   readFileSync(resolve(import.meta.dirname, `../../migrations/${kind}/0000_initial.sql`), 'utf8');
 
+const workerPackage = (): { scripts?: Record<string, string> } =>
+  JSON.parse(readFileSync(resolve(import.meta.dirname, '../../package.json'), 'utf8')) as {
+    scripts?: Record<string, string>;
+  };
+
+const rootPackage = (): { scripts?: Record<string, string> } =>
+  JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../../package.json'), 'utf8')) as {
+    scripts?: Record<string, string>;
+  };
+
 const applicationSources = (): Array<{ name: string; source: string }> => {
   const sourceRoot = resolve(import.meta.dirname, '..');
   const infrastructure = new Set([
     'cloudflare.ts',
     'organization-db.ts',
+    'schema-lifecycle.ts',
     'storage/database.ts',
   ]);
   return readdirSync(sourceRoot, { recursive: true })
@@ -39,8 +50,23 @@ const tableNames = (kind: 'control' | 'organization'): string[] => {
 
 describe('canonical D1 schemas', () => {
   it('has one Drizzle-generated initial migration per database kind', () => {
-    expect(migrations('control')).toEqual(['0000_initial.sql']);
-    expect(migrations('organization')).toEqual(['0000_initial.sql', '0001_tasks.sql']);
+    expect(migrations('control')).toEqual(['0000_initial.sql', '0001_schema_release.sql']);
+    expect(migrations('organization')).toEqual([
+      '0000_initial.sql',
+      '0001_tasks.sql',
+      '0002_line_destination_roster.sql',
+      '0003_release_safe_line_destination_index.sql',
+    ]);
+  });
+
+  it('applies local D1 migrations before starting the Worker dev server', () => {
+    expect(workerPackage().scripts?.predev).toBe('npm run db:local');
+  });
+
+  it('migrates and verifies the production database fleet before promoting Worker code', () => {
+    expect(rootPackage().scripts?.['deploy:cloudflare']).toBe(
+      'npm run db:migrate:control:remote && npm run db:migrate:organization:remote && npm run deploy -w @mail/worker && npm run db:migrate:complete:remote',
+    );
   });
 
   it('creates only Control-plane tables in Control D1', () => {
@@ -54,6 +80,7 @@ describe('canonical D1 schemas', () => {
       'organization_setups',
       'organizations',
       'recovery_requests',
+      'schema_releases',
       'sessions',
     ]);
     expect(migrationSql('control')).not.toMatch(

@@ -431,6 +431,67 @@ describe('Public attendance and operational outcomes', () => {
 });
 
 describe('LINE destinations', () => {
+  it('captures a LINE display name and assigns the discovered ID to a Recipient Profile', async () => {
+    fixture = await createAutomationTestApp({ lineSecret: 'line-secret' });
+    const profileFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      displayName: '山田 太郎',
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', profileFetch);
+    const payload = JSON.stringify({ events: [{ source: { type: 'user', userId: 'U1234567890' } }] });
+    const hmacKey = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode('line-secret'),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign'],
+    );
+    const signature = Buffer.from(
+      await crypto.subtle.sign('HMAC', hmacKey, new TextEncoder().encode(payload)),
+    ).toString('base64');
+
+    const webhook = await app.fetch(new Request(
+      'https://app.example.com/api/public/organizations/organization-1/line/webhook',
+      { method: 'POST', headers: { 'x-line-signature': signature }, body: payload },
+    ), fixture.environment);
+    const destinations = await app.fetch(
+      fixture.request('/api/organizations/organization-1/line-destinations'),
+      fixture.environment,
+    );
+    const destinationsBody = await destinations.json() as { data: Array<{ id: string }> };
+    const recipient = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/recipients',
+      {
+        name: '山田 太郎',
+        email: 'taro@example.com',
+        tags: ['ロータリー'],
+        lineDestinationId: destinationsBody.data[0]?.id,
+      },
+    ), fixture.environment);
+    const roster = await app.fetch(
+      fixture.request('/api/organizations/organization-1/recipients'),
+      fixture.environment,
+    );
+
+    expect(webhook.status).toBe(200);
+    expect(recipient.status).toBe(201);
+    expect(profileFetch).toHaveBeenCalledWith(
+      'https://api.line.me/v2/bot/profile/U1234567890',
+      { headers: { Authorization: 'Bearer line-token' } },
+    );
+    await expect(roster.json()).resolves.toMatchObject({
+      data: [{
+        name: '山田 太郎',
+        email: 'taro@example.com',
+        tags: ['ロータリー'],
+        lineDestinations: [{
+          destinationId: 'U1234567890',
+          displayName: '山田 太郎',
+          kind: 'user',
+        }],
+      }],
+    });
+  });
+
   it('verifies a webhook, discovers a destination, and consumes its Recipient Link once', async () => {
     fixture = await createAutomationTestApp({ lineSecret: 'line-secret' });
     const payload = JSON.stringify({ events: [{ source: { type: 'group', groupId: 'group-1' } }] });

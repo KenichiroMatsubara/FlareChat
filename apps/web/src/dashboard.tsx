@@ -1,11 +1,11 @@
-import { CheckSquare, CircleAlert, LogOut, Mail, Menu, Play, Settings, ShieldCheck, SlidersHorizontal, X } from 'lucide-react';
+import { CheckSquare, CircleAlert, LogOut, Mail, Menu, Play, Settings, ShieldCheck, SlidersHorizontal, UsersRound, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
-import type { AutomationStatus, AutomationSummary, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationConnections, OrganizationMembership, OrganizationRule, OrganizationRuleInput, OrganizationTask, TaskRoleAssignment } from './api';
-import { AutomationPage, ConnectionsPage, MailboxTestPage, RulesPage, TasksPage } from './dashboard-pages';
+import type { AutomationStatus, AutomationSummary, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationRecipient, OrganizationRecipientInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, TaskRoleAssignment } from './api';
+import { AutomationPage, ConnectionsPage, MailboxTestPage, MembersPage, RulesPage, TasksPage } from './dashboard-pages';
 
-export type Page = 'automation' | 'connections' | 'rules' | 'mail-test' | 'tasks';
+export type Page = 'automation' | 'connections' | 'rules' | 'members' | 'mail-test' | 'tasks';
 
 export const needsGoogleReauthentication = (error: string): boolean =>
   /token has been expired or revoked/iu.test(error);
@@ -14,7 +14,7 @@ export const GoogleReauthenticationAction = ({ onClick }: { onClick: () => void 
   <button className="secondary credential-recovery" onClick={onClick}><ShieldCheck size={16} />Automation Inbox を再接続する</button>;
 
 /** Width at which the collapsed navigation panel becomes the inline top bar. */
-export const DESKTOP_NAVIGATION_QUERY = '(min-width: 861px)';
+export const DESKTOP_NAVIGATION_QUERY = '(min-width: 1101px)';
 
 export const NAVIGATION_PANEL_ID = 'app-navigation';
 
@@ -28,6 +28,7 @@ const navigationItems: readonly NavigationItem[] = [
   { to: '../automation', label: '自動化', icon: <Play size={16} /> },
   { to: '../connections', label: '接続設定', icon: <Settings size={16} /> },
   { to: '../rules', label: 'ルール', icon: <SlidersHorizontal size={16} /> },
+  { to: '../members', label: 'メンバー', icon: <UsersRound size={16} /> },
   { to: '../tasks', label: 'タスク', icon: <CheckSquare size={16} /> },
   { to: '../mailbox-test', label: 'メールテスト', icon: <SlidersHorizontal size={16} /> },
 ];
@@ -83,6 +84,12 @@ export interface DashboardProps {
   taskRoleAssignments: TaskRoleAssignment[];
   taskMembers: Array<{ identityId: string; displayName: string }>;
   onAssignTaskRole: (role: 'organizer' | 'treasurer', identityId: string) => void;
+  organizationRecipients: OrganizationRecipient[];
+  lineDestinations: OrganizationLineDestination[];
+  memberBusy: boolean;
+  onCreateRecipient: (input: OrganizationRecipientInput) => Promise<void>;
+  onUpdateRecipient: (recipientId: string, input: Partial<Pick<OrganizationRecipient, 'name' | 'email' | 'tags' | 'state'>>) => Promise<void>;
+  onRefreshRecipients: () => void;
 }
 
 export const Dashboard = (props: DashboardProps) => {
@@ -96,7 +103,9 @@ export const Dashboard = (props: DashboardProps) => {
       ? <ConnectionsPage {...props} />
       : page === 'rules'
         ? <RulesPage {...props} />
-        : page === 'tasks' ? <TasksPage {...props} /> : <MailboxTestPage {...props} />;
+        : page === 'members'
+          ? <MembersPage {...props} />
+          : page === 'tasks' ? <TasksPage {...props} /> : <MailboxTestPage {...props} />;
   const requiresGoogleReauthentication = needsGoogleReauthentication(props.error)
     || props.automation?.status === 'reauthentication_required';
   const recoveryMessage = props.error || 'Automation Inbox の認証が失効しています。Google に再接続してください。';

@@ -14,7 +14,7 @@ import {
   revokeGoogleToken,
 } from './google';
 import { loginReturnOrigin } from './origin';
-import { organizationDatabase } from './organization-db';
+import { createDatabaseAccess } from './database-access';
 import { controlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
 import {
   automationInboxClaims,
@@ -195,9 +195,12 @@ export const completeGoogleEntry = async (
         eq(organizations.status, 'active'),
       )).get();
       if (!authorizedOrganization) throw new Error('この Automation Inbox を再接続する権限がありません。');
-      const database = organizationDatabase(env, authorizedOrganization.bindingName, authorizedOrganization.databaseId);
-      if (!database) throw new Error('Organization database is not available.');
-      const organization = drizzleOrganizationDatabase(database);
+      const database = await createDatabaseAccess(env).open({
+        kind: 'organization',
+        bindingName: authorizedOrganization.bindingName,
+        databaseId: authorizedOrganization.databaseId,
+      });
+      const organization = drizzleOrganizationDatabase(database.raw);
       const inbox = await organization.select().from(googleConnections).where(eq(googleConnections.kind, 'automation_inbox')).get();
       if (!inbox || inbox.googleSubject !== identity.subject) {
         await revokeGoogleToken(tokenSet.refreshToken);

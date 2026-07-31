@@ -1,7 +1,10 @@
 import { and, eq, gt, isNull } from 'drizzle-orm';
 
 import { masterKey, unwrapOrganizationKey } from '../cryptography';
-import { organizationDatabase } from '../organization-db';
+import {
+  createDatabaseAccess,
+  DatabaseBindingUnavailableError,
+} from '../database-access';
 import type { Bindings, OrganizationRow, SessionRow } from '../types';
 import { controlDatabase } from '../storage/database';
 import { identities, members, organizationKeys, organizations, sessions } from '../storage/control-schema';
@@ -32,6 +35,7 @@ const requestCookie = (header: string | undefined, name: string): string | null 
 };
 
 export const createRequestContext = (request: Request, env: Bindings): RequestContext => {
+  const databases = createDatabaseAccess(env);
   const session = async (): Promise<SessionRow | null> => {
     const id = requestCookie(request.headers.get('Cookie') ?? undefined, 'mail_session');
     if (!id) return null;
@@ -64,11 +68,21 @@ export const createRequestContext = (request: Request, env: Bindings): RequestCo
         .get();
       if (!membership) throw new Error('この組織へのアクセス権がありません。');
       if (membership.status !== 'active') throw new Error('この組織は現在利用できません。');
+      let database: D1Database | null = null;
+      try {
+        database = (await databases.open({
+          kind: 'organization',
+          bindingName: membership.binding_name,
+          databaseId: membership.database_id,
+        })).raw;
+      } catch (error) {
+        if (!(error instanceof DatabaseBindingUnavailableError)) throw error;
+      }
       return {
         session: currentSession,
         organization: membership,
         role: membership.role,
-        database: organizationDatabase(env, membership.binding_name, membership.database_id),
+        database,
       };
     },
     async organizationKey(organizationId) {
@@ -91,7 +105,17 @@ export const createRequestContext = (request: Request, env: Bindings): RequestCo
         eq(organizations.id, organizationId),
         eq(organizations.status, 'active'),
       )).get();
-      return organization ? organizationDatabase(env, organization.bindingName, organization.databaseId) : null;
+      if (!organization) return null;
+      try {
+        return (await databases.open({
+          kind: 'organization',
+          bindingName: organization.bindingName,
+          databaseId: organization.databaseId,
+        })).raw;
+      } catch (error) {
+        if (error instanceof DatabaseBindingUnavailableError) return null;
+        throw error;
+      }
     },
   };
 };

@@ -1,6 +1,6 @@
 import { shouldSendAttendanceReminder } from '@mail/domain';
 import { and, eq, isNotNull } from 'drizzle-orm';
-import { organizationDatabase } from './organization-db';
+import { createDatabaseAccess } from './database-access';
 import type { Bindings } from './types';
 import { controlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
 import { organizations } from './storage/control-schema';
@@ -57,10 +57,14 @@ export const enqueueDueOrganizationAttendanceReminders = async (env: Bindings, n
     databaseId: organizations.databaseId,
   }).from(organizations).where(and(eq(organizations.status, 'active'), isNotNull(organizations.databaseId))).all();
   let queued = 0;
+  const databases = createDatabaseAccess(env);
   for (const organization of activeOrganizations) {
-    const database = organizationDatabase(env, organization.bindingName, organization.databaseId);
-    if (!database) continue;
-    queued += await enqueueDueAttendanceReminders(database, now);
+    const database = await databases.open({
+      kind: 'organization',
+      bindingName: organization.bindingName,
+      databaseId: organization.databaseId,
+    });
+    queued += await enqueueDueAttendanceReminders(database.raw, now);
   }
   return queued;
 };

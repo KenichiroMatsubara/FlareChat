@@ -40,14 +40,18 @@ export const verifyLineWebhookSignature = async (channelSecret: string, rawBody:
 export const discoveredLineDestinations = (payload: { events?: LineWebhookEvent[] }): LineDestination[] => {
   const destinations: LineDestination[] = [];
   const seen = new Set<string>();
+  const add = (kind: LineDestination['kind'], destinationId: string | undefined): void => {
+    if (!destinationId || seen.has(`${kind}:${destinationId}`)) return;
+    seen.add(`${kind}:${destinationId}`);
+    destinations.push({ kind, destinationId });
+  };
   for (const event of payload.events ?? []) {
     const source = event.source;
     if (!source || !['user', 'group', 'room'].includes(source.type ?? '')) continue;
     const kind = source.type as LineDestination['kind'];
     const destinationId = kind === 'user' ? source.userId : kind === 'group' ? source.groupId : source.roomId;
-    if (!destinationId || seen.has(`${kind}:${destinationId}`)) continue;
-    seen.add(`${kind}:${destinationId}`);
-    destinations.push({ kind, destinationId });
+    add(kind, destinationId);
+    if (kind !== 'user') add('user', source.userId);
   }
   return destinations;
 };

@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 
 import { createOrganizationKey, decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
+import { fleetMigration } from './fleet-migration';
 import { provisionOrganizationDatabase } from './organization-db';
 import { controlDatabase, organizationDatabase } from './storage/database';
 import { members, organizationKeys, organizationProvisionings, organizations } from './storage/control-schema';
@@ -9,6 +10,19 @@ import { googleConnections } from './storage/organization-schema';
 import type { Bindings } from './types';
 
 type ProvisioningPhase = NonNullable<OrganizationProvisioningRecord['phase']>;
+
+export class SchemaReleaseInProgressError extends Error {
+  constructor() {
+    super('Organization provisioning is paused during a schema release.');
+    this.name = 'SchemaReleaseInProgressError';
+  }
+}
+
+const requireProvisioningAllowed = async (env: Bindings): Promise<void> => {
+  if (!await fleetMigration.provisioningAllowed(env)) {
+    throw new SchemaReleaseInProgressError();
+  }
+};
 
 const recordPhase = async (env: Bindings, organizationId: string, phase: ProvisioningPhase): Promise<void> => {
   await controlDatabase(env.CONTROL_DB).update(organizationProvisionings).set({
@@ -21,6 +35,7 @@ export const provisionOrganization = async (
   env: Bindings,
   provisioning: OrganizationProvisioningRecord,
 ): Promise<void> => {
+  await requireProvisioningAllowed(env);
   const key = await masterKey(env.CREDENTIAL_MASTER_KEY);
   await recordPhase(env, provisioning.organizationId, 'allocating_database');
   const provisioned = await provisionOrganizationDatabase(env, {
@@ -85,6 +100,7 @@ export const provisionOrganization = async (
   }).run();
   await recordPhase(env, provisioning.organizationId, 'verifying_binding');
   await provisioned.finalize();
+  await requireProvisioningAllowed(env);
   await recordPhase(env, provisioning.organizationId, 'activating_organization');
   await control.batch([
     control.update(organizations).set({

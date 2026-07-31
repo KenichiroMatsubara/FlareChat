@@ -4,9 +4,14 @@ import type { AppState } from '@mail/domain';
 
 import { createAutomation } from './automation';
 import { decrypt, masterKey } from './cryptography';
+import { createDatabaseAccess } from './database-access';
 import { revokeGoogleToken } from './google';
-import { organizationDatabase, organizationDatabaseIdentity } from './organization-db';
-import { createProvisioningOrganizationKey, provisionOrganization } from './provisioning';
+import { organizationDatabaseIdentity } from './organization-db';
+import {
+  createProvisioningOrganizationKey,
+  provisionOrganization,
+  SchemaReleaseInProgressError,
+} from './provisioning';
 import { controlDatabase } from './storage/database';
 import {
   automationInboxClaims,
@@ -74,6 +79,7 @@ const attemptProvision = async (env: Bindings, provisioning: OrganizationProvisi
     await createProvisioningOrganizationKey(env, provisioning.organizationId);
     await provisionOrganization(env, provisioning);
   } catch (error) {
+    if (error instanceof SchemaReleaseInProgressError) return;
     await controlDatabase(env.CONTROL_DB).update(organizationProvisionings).set({
       state: 'failed',
       errorMessage: error instanceof Error ? error.message : 'Provisioning failed.',
@@ -205,11 +211,16 @@ export const applicationState = async (env: Bindings, session: SessionRow): Prom
       isNotNull(organizations.databaseId),
     )).all();
   if (memberships.length > 0) {
+    const databases = createDatabaseAccess(env);
     await Promise.all(memberships.map(async (membership) => {
-      const database = organizationDatabase(env, membership.bindingName, membership.databaseId);
-      if (database) await createAutomation(env).verifyOrganizationInboxCredential({
+      const database = await databases.open({
+        kind: 'organization',
+        bindingName: membership.bindingName,
+        databaseId: membership.databaseId,
+      });
+      await createAutomation(env).verifyOrganizationInboxCredential({
         organizationId: membership.organizationId,
-        database,
+        database: database.raw,
       });
     }));
     return {

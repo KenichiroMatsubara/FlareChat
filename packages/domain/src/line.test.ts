@@ -56,14 +56,16 @@ describe('LINE webhook destinations', () => {
   it('extracts only distinct user, group, and room sources from verified webhook events', () => {
     expect(discoveredLineDestinations({ events: [
       { source: { type: 'user', userId: 'user-1' } },
+      { source: { type: 'group', groupId: 'group-1', userId: 'group-member-1' } },
       { source: { type: 'group', groupId: 'group-1' } },
-      { source: { type: 'group', groupId: 'group-1' } },
-      { source: { type: 'room', roomId: 'room-1' } },
+      { source: { type: 'room', roomId: 'room-1', userId: 'room-member-1' } },
       { source: { type: 'user' } },
     ] })).toEqual([
       { kind: 'user', destinationId: 'user-1' },
       { kind: 'group', destinationId: 'group-1' },
+      { kind: 'user', destinationId: 'group-member-1' },
       { kind: 'room', destinationId: 'room-1' },
+      { kind: 'user', destinationId: 'room-member-1' },
     ]);
   });
 });
