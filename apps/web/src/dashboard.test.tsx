@@ -28,7 +28,8 @@ const dashboardProps = (): DashboardProps => ({
   mailTestPreview: null, mailTestBusy: false, mailTestCreatedEventIds: [], onMailTestSubjectChange: vi.fn(), onSearchMailbox: vi.fn(),
   onPrepareMailbox: vi.fn(), onPreviewMailbox: vi.fn(), onCreateCalendarEvent: vi.fn(), organizationRules: [], ruleBusy: false,
   onCreateRule: vi.fn(), organizationTasks: [], onUpdateTask: vi.fn(), taskRoleAssignments: [], taskMembers: [], onAssignTaskRole: vi.fn(),
-  organizationRecipients: [], lineDestinations: [], memberBusy: false, onCreateRecipient: vi.fn(), onUpdateRecipient: vi.fn(), onRefreshRecipients: vi.fn(),
+  organizationRecipients: [], lineDestinations: [], memberBusy: false, onCreateRecipient: vi.fn(), onUpdateRecipient: vi.fn(),
+  onSetLineDestination: vi.fn(), onUnlinkLineDestination: vi.fn(), onRefreshRecipients: vi.fn(),
 });
 
 const markup = (): string => renderToStaticMarkup(
@@ -88,6 +89,7 @@ describe('member roster', () => {
               displayName: 'やまだ',
               kind: 'user',
               status: 'discovered',
+              source: 'webhook',
             }],
           }]}
           lineDestinations={[{
@@ -96,6 +98,7 @@ describe('member roster', () => {
             displayName: '鈴木 花子',
             kind: 'user',
             status: 'discovered',
+            source: 'webhook',
             discoveredAt: '2026-07-30T00:00:00.000Z',
             recipientProfileId: null,
           }]}
@@ -108,6 +111,47 @@ describe('member roster', () => {
     expect(html).toContain('taro@example.com');
     expect(html).toContain('U1234567890');
     expect(html).toContain('LINEからメンバーを追加');
+    expect(html).toContain('LINE IDを手動で入力');
+  });
+
+  it('marks a manually entered LINE Destination separately from a webhook-discovered one', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/members']}>
+        <Dashboard
+          {...dashboardProps()}
+          page="members"
+          connections={{
+            organizationId: 'org-1',
+            organizationName: 'Example',
+            ai: { apiKeyConfigured: false, model: '', baseUrl: '' },
+            line: { channelAccessTokenConfigured: true, channelSecretConfigured: true },
+          }}
+          organizationRecipients={[{
+            id: 'recipient-1',
+            organizationId: 'org-1',
+            name: '手動 花子',
+            email: 'manual@example.com',
+            state: 'active',
+            tags: [],
+            createdAt: '2026-07-30T00:00:00.000Z',
+            updatedAt: '2026-07-30T00:00:00.000Z',
+            lineDestinations: [{
+              id: 'line-3',
+              destinationId: 'Umanual00000000000000000000000000',
+              displayName: '',
+              kind: 'user',
+              status: 'discovered',
+              source: 'manual',
+            }],
+          }]}
+          lineDestinations={[]}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('手動 花子');
+    expect(html).toContain('Umanual00000000000000000000000000');
+    expect(html).toContain('LINE 個人・手動');
   });
 
   it('stacks member controls and LINE identifiers on narrow screens', async () => {

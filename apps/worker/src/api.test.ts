@@ -531,4 +531,138 @@ describe('LINE destinations', () => {
     });
     expect(duplicate.status).toBe(410);
   });
+
+  it('lets an Owner manually attach, correct, and unlink a LINE ID without a webhook event', async () => {
+    fixture = await createAutomationTestApp({ lineSecret: 'line-secret' });
+    const recipient = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/recipients',
+      { name: '手動 太郎', email: 'manual@example.com' },
+    ), fixture.environment);
+    const recipientBody = await recipient.json() as { data: { id: string } };
+
+    const attached = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/recipients/${recipientBody.data.id}/line-destination`,
+      { destinationId: 'Umanualtypo0000000000000000000', displayName: '手動 太郎' },
+      'PUT',
+    ), fixture.environment);
+    const attachedBody = await attached.json() as { data: { id: string } };
+
+    const corrected = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/recipients/${recipientBody.data.id}/line-destination`,
+      { destinationId: 'Ucorrected0000000000000000000000', displayName: '手動 太郎' },
+      'PUT',
+    ), fixture.environment);
+    const roster = await app.fetch(
+      fixture.request('/api/organizations/organization-1/recipients'),
+      fixture.environment,
+    );
+
+    expect(attached.status).toBe(201);
+    expect(corrected.status).toBe(201);
+    await expect(roster.json()).resolves.toMatchObject({
+      data: [{
+        id: recipientBody.data.id,
+        lineDestinations: [{
+          destinationId: 'Ucorrected0000000000000000000000',
+          displayName: '手動 太郎',
+          kind: 'user',
+          source: 'manual',
+        }],
+      }],
+    });
+
+    const unlinked = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/recipients/${recipientBody.data.id}/line-destination/${attachedBody.data.id}`,
+      {},
+      'DELETE',
+    ), fixture.environment);
+    expect(unlinked.status).toBe(404);
+
+    const correctedBody = await corrected.json() as { data: { id: string } };
+    const removed = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/recipients/${recipientBody.data.id}/line-destination/${correctedBody.data.id}`,
+      {},
+      'DELETE',
+    ), fixture.environment);
+    const afterRemoval = await app.fetch(
+      fixture.request('/api/organizations/organization-1/recipients'),
+      fixture.environment,
+    );
+
+    expect(removed.status).toBe(200);
+    await expect(afterRemoval.json()).resolves.toMatchObject({
+      data: [{ id: recipientBody.data.id, lineDestinations: [] }],
+    });
+  });
+
+  it('rejects a manually entered LINE ID that is already linked to a different member', async () => {
+    fixture = await createAutomationTestApp({ lineSecret: 'line-secret' });
+    const first = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/recipients',
+      { name: 'Member One', email: 'one@example.com' },
+    ), fixture.environment);
+    const firstBody = await first.json() as { data: { id: string } };
+    const second = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/recipients',
+      { name: 'Member Two', email: 'two@example.com' },
+    ), fixture.environment);
+    const secondBody = await second.json() as { data: { id: string } };
+    await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/recipients/${firstBody.data.id}/line-destination`,
+      { destinationId: 'Ushared00000000000000000000000000' },
+      'PUT',
+    ), fixture.environment);
+
+    const conflict = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/recipients/${secondBody.data.id}/line-destination`,
+      { destinationId: 'Ushared00000000000000000000000000' },
+      'PUT',
+    ), fixture.environment);
+
+    expect(conflict.status).toBe(409);
+  });
+
+  it('keeps a webhook-discovered destination available for reassignment after it is unlinked', async () => {
+    fixture = await createAutomationTestApp({ lineSecret: 'line-secret' });
+    const payload = JSON.stringify({ events: [{ source: { type: 'user', userId: 'Uwebhook0000000000000000000000000' } }] });
+    const hmacKey = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode('line-secret'),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign'],
+    );
+    const signature = Buffer.from(
+      await crypto.subtle.sign('HMAC', hmacKey, new TextEncoder().encode(payload)),
+    ).toString('base64');
+    await app.fetch(new Request(
+      'https://app.example.com/api/public/organizations/organization-1/line/webhook',
+      { method: 'POST', headers: { 'x-line-signature': signature }, body: payload },
+    ), fixture.environment);
+    const destinations = await app.fetch(
+      fixture.request('/api/organizations/organization-1/line-destinations'),
+      fixture.environment,
+    );
+    const destinationsBody = await destinations.json() as { data: Array<{ id: string }> };
+    const recipient = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/recipients',
+      { name: 'Discovered', email: 'discovered@example.com', lineDestinationId: destinationsBody.data[0]?.id },
+    ), fixture.environment);
+    const recipientBody = await recipient.json() as { data: { id: string } };
+
+    const unlinked = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/recipients/${recipientBody.data.id}/line-destination/${destinationsBody.data[0]?.id}`,
+      {},
+      'DELETE',
+    ), fixture.environment);
+    const stillDiscovered = await app.fetch(
+      fixture.request('/api/organizations/organization-1/line-destinations'),
+      fixture.environment,
+    );
+
+    expect(unlinked.status).toBe(200);
+    await expect(stillDiscovered.json()).resolves.toMatchObject({
+      data: [{ id: destinationsBody.data[0]?.id, recipientProfileId: null, source: 'webhook' }],
+    });
+  });
 });

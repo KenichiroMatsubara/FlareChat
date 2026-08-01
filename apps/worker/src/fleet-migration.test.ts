@@ -82,7 +82,7 @@ describe('Fleet Migration', () => {
     } as unknown as Bindings);
 
     expect(receipt).toMatchObject({
-      targetMigration: '0003_release_safe_line_destination_index.sql',
+      targetMigration: '0004_manual_line_destination_source.sql',
       migratedDatabases: 2,
     });
     expect(active.rows<{ display_name: string }>(
@@ -141,10 +141,10 @@ describe('Fleet Migration', () => {
     } as unknown as Bindings);
 
     expect(receipt).toMatchObject({
-      targetMigration: '0003_release_safe_line_destination_index.sql',
+      targetMigration: '0004_manual_line_destination_source.sql',
       migratedDatabases: 1,
     });
-    expect(applied.has('0003_release_safe_line_destination_index.sql')).toBe(true);
+    expect(applied.has('0004_manual_line_destination_source.sql')).toBe(true);
   });
 
   it('includes an allocated database that is still in Organization provisioning', async () => {

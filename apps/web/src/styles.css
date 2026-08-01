@@ -170,6 +170,10 @@ svg { flex: none; }
 .member-create-form input, .member-create-form select, .member-edit-grid input, .member-edit-grid select, .member-filters input, .member-filters select { width: 100%; min-width: 0; min-height: 40px; padding: 9px 10px; color: #26372b; background: white; border: 1px solid #d7ded7; border-radius: 8px; outline: none; font-size: 11px; }
 .member-create-form input:focus, .member-create-form select:focus, .member-edit-grid input:focus, .member-edit-grid select:focus, .member-filters input:focus, .member-filters select:focus { border-color: #6c967d; box-shadow: 0 0 0 3px #e5eee8; }
 .member-create-form .primary { white-space: nowrap; }
+.member-manual-line { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; grid-column: 1 / -1; padding-top: 12px; border-top: 1px dashed #e0eae1; }
+.member-manual-line label { flex: 1; min-width: 180px; }
+.member-manual-line label:nth-child(2) { flex: 0 0 110px; min-width: 110px; }
+.member-manual-line small { flex-basis: 100%; color: #8a938c; font-size: 9px; line-height: 1.5; }
 
 .member-directory { overflow: hidden; }
 .member-directory-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 21px clamp(18px, 3.6vw, 26px) 14px; }
@@ -208,6 +212,19 @@ svg { flex: none; }
 .member-edit-button:hover { color: #2d6747; border-color: #a9c4b0; background: #f5faf6; }
 .member-edit-form { grid-column: 2 / -1; display: grid; gap: 12px; }
 .member-edit-grid { display: grid; grid-template-columns: 1fr 1.2fr 1fr 120px; gap: 10px; }
+.member-edit-line { display: grid; gap: 10px; padding: 12px; background: #f4f8f4; border: 1px solid #e0eae1; border-radius: 10px; }
+.member-edit-line > p { margin: 0; color: #558166; font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+.member-edit-line-list { display: grid; gap: 6px; }
+.member-edit-line-list > div { display: flex; align-items: center; gap: 9px; padding: 7px 9px; background: white; border: 1px solid #dfeae1; border-radius: 8px; }
+.member-edit-line-list code { flex: 1; overflow: hidden; color: #667168; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.member-line-unlink { display: inline-flex; flex: none; align-items: center; gap: 4px; padding: 5px 8px; color: #a34a3a; background: transparent; border: 1px solid #ecd3cc; border-radius: 7px; font-size: 9px; font-weight: 600; }
+.member-line-unlink:hover { color: #832f22; background: #fbeeeb; }
+.member-edit-line-manual { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
+.member-edit-line-manual label { flex: 1; min-width: 160px; display: grid; gap: 6px; color: #435247; font-size: 10px; font-weight: 600; }
+.member-edit-line-manual label:nth-child(2) { flex: 0 0 100px; min-width: 100px; }
+.member-edit-line-manual input, .member-edit-line-manual select { width: 100%; min-height: 36px; padding: 8px 9px; color: #26372b; background: white; border: 1px solid #d7ded7; border-radius: 8px; outline: none; font-size: 11px; }
+.member-edit-line-manual input:focus, .member-edit-line-manual select:focus { border-color: #6c967d; box-shadow: 0 0 0 3px #e5eee8; }
+.member-edit-line-manual button { flex: none; min-height: 36px; }
 .member-edit-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .member-edit-actions .primary, .member-edit-actions .secondary { min-height: 34px; }
 .member-empty { padding: 55px 22px; color: #6f7f73; text-align: center; }
@@ -280,7 +297,7 @@ svg { flex: none; }
 
 /* Form controls stay at 16px on small viewports so iOS Safari does not zoom on focus */
 @media (max-width: 860px) {
-  .dashboard-secret input, .settings-card input, .test-card input, .test-card textarea, .settings-card select, .rule-builder input, .rule-builder select, .setup-form input, .member-create-form input, .member-create-form select, .member-edit-grid input, .member-edit-grid select, .member-filters input, .member-filters select { min-height: 48px; font-size: 16px; }
+  .dashboard-secret input, .settings-card input, .test-card input, .test-card textarea, .settings-card select, .rule-builder input, .rule-builder select, .setup-form input, .member-create-form input, .member-create-form select, .member-edit-grid input, .member-edit-grid select, .member-edit-line-manual input, .member-edit-line-manual select, .member-filters input, .member-filters select { min-height: 48px; font-size: 16px; }
   .test-card textarea { min-height: 104px; }
 }
 
@@ -323,6 +340,9 @@ svg { flex: none; }
   .member-copy { grid-column: 3; grid-row: 1 / 3; }
   .member-edit-form { grid-column: 2 / -1; }
   .member-edit-grid { grid-template-columns: minmax(0, 1fr); }
+  .member-edit-line-manual { flex-direction: column; align-items: stretch; }
+  .member-edit-line-manual label:nth-child(2) { flex: 1 1 auto; }
+  .member-edit-line-manual button { width: 100%; }
   .member-edit-actions > * { flex: 1; }
 }
 

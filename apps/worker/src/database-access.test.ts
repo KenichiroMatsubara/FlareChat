@@ -36,7 +36,7 @@ describe('Database Access', () => {
     });
 
     expect(ready.schema.currentMigration).toBe(
-      '0003_release_safe_line_destination_index.sql',
+      '0004_manual_line_destination_source.sql',
     );
     await expect(ready.raw.prepare(
       'SELECT display_name FROM line_destinations',

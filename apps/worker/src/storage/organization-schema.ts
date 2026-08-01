@@ -266,6 +266,7 @@ export const lineDestinations = sqliteTable('line_destinations', {
   displayName: text('display_name').notNull().default(''),
   kind: text('kind', { enum: ['user', 'group', 'room'] }).notNull(),
   status: text('status', { enum: ['discovered', 'disabled'] }).notNull().default('discovered'),
+  source: text('source', { enum: ['webhook', 'manual'] }).notNull().default('webhook'),
   discoveredAt: text('discovered_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
