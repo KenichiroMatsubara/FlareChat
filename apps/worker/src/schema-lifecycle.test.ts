@@ -39,11 +39,12 @@ describe('Schema Lifecycle', () => {
 
     expect(receipt).toMatchObject({
       kind: 'organization',
-      currentMigration: '0003_release_safe_line_destination_index.sql',
+      currentMigration: '0004_manual_line_destination_source.sql',
       appliedMigrations: [
         '0001_tasks.sql',
         '0002_line_destination_roster.sql',
         '0003_release_safe_line_destination_index.sql',
+        '0004_manual_line_destination_source.sql',
       ],
     });
     expect(database.rows<{ display_name: string }>(
@@ -68,7 +69,7 @@ describe('Schema Lifecycle', () => {
       kind: 'organization',
       database: database.binding,
     })).resolves.toMatchObject({
-      currentMigration: '0003_release_safe_line_destination_index.sql',
+      currentMigration: '0004_manual_line_destination_source.sql',
     });
   });
 
@@ -112,8 +113,8 @@ describe('Schema Lifecycle', () => {
     ]);
 
     expect(receipts).toEqual([
-      expect.objectContaining({ currentMigration: '0003_release_safe_line_destination_index.sql' }),
-      expect.objectContaining({ currentMigration: '0003_release_safe_line_destination_index.sql' }),
+      expect.objectContaining({ currentMigration: '0004_manual_line_destination_source.sql' }),
+      expect.objectContaining({ currentMigration: '0004_manual_line_destination_source.sql' }),
     ]);
   });
 });

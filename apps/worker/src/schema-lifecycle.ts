@@ -2,6 +2,7 @@ import organizationInitialMigration from '../migrations/organization/0000_initia
 import organizationTasksMigration from '../migrations/organization/0001_tasks.sql';
 import organizationLineDestinationRosterMigration from '../migrations/organization/0002_line_destination_roster.sql';
 import organizationReleaseSafeLineDestinationIndexMigration from '../migrations/organization/0003_release_safe_line_destination_index.sql';
+import organizationManualLineDestinationSourceMigration from '../migrations/organization/0004_manual_line_destination_source.sql';
 
 type SchemaKind = 'organization';
 
@@ -17,6 +18,10 @@ const ORGANIZATION_MIGRATIONS: readonly SchemaMigration[] = [
   {
     name: '0003_release_safe_line_destination_index.sql',
     sql: organizationReleaseSafeLineDestinationIndexMigration,
+  },
+  {
+    name: '0004_manual_line_destination_source.sql',
+    sql: organizationManualLineDestinationSourceMigration,
   },
 ];
 export const ORGANIZATION_SCHEMA_TARGET =

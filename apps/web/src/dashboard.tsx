@@ -2,7 +2,7 @@ import { CheckSquare, CircleAlert, LogOut, Mail, Menu, Play, Settings, ShieldChe
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
-import type { AutomationStatus, AutomationSummary, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationRecipient, OrganizationRecipientInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, TaskRoleAssignment } from './api';
+import type { AutomationStatus, AutomationSummary, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationRecipient, OrganizationRecipientInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, RecipientLineDestinationInput, TaskRoleAssignment } from './api';
 import { AutomationPage, ConnectionsPage, MailboxTestPage, MembersPage, RulesPage, TasksPage } from './dashboard-pages';
 
 export type Page = 'automation' | 'connections' | 'rules' | 'members' | 'mail-test' | 'tasks';
@@ -87,8 +87,12 @@ export interface DashboardProps {
   organizationRecipients: OrganizationRecipient[];
   lineDestinations: OrganizationLineDestination[];
   memberBusy: boolean;
-  onCreateRecipient: (input: OrganizationRecipientInput) => Promise<void>;
+  onCreateRecipient: (input: OrganizationRecipientInput) => Promise<OrganizationRecipient | null>;
   onUpdateRecipient: (recipientId: string, input: Partial<Pick<OrganizationRecipient, 'name' | 'email' | 'tags' | 'state'>>) => Promise<void>;
+  onSetLineDestination: (recipientId: string, input: RecipientLineDestinationInput) => Promise<void>;
+  onUnlinkLineDestination: (recipientId: string, lineDestinationId: string) => Promise<void>;
+  onRegisterLineDestination: (input: RecipientLineDestinationInput) => Promise<void>;
+  onRemoveLineDestination: (lineDestinationId: string) => Promise<void>;
   onRefreshRecipients: () => void;
 }
 

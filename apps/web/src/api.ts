@@ -127,6 +127,7 @@ export interface RecipientLineDestination {
   displayName: string;
   kind: 'user' | 'group' | 'room';
   status: 'discovered' | 'disabled';
+  source: 'webhook' | 'manual';
 }
 
 export interface OrganizationRecipient {
@@ -151,6 +152,12 @@ export interface OrganizationRecipientInput {
   email: string;
   tags?: string[];
   lineDestinationId?: string;
+}
+
+export interface RecipientLineDestinationInput {
+  destinationId: string;
+  kind?: 'user' | 'group' | 'room';
+  displayName?: string;
 }
 
 export interface TaskRoleAssignment { role: 'organizer' | 'treasurer'; identityId: string; displayName: string; }
@@ -213,6 +220,34 @@ export const api = {
   ): Promise<Partial<OrganizationRecipient> & { id: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/recipients/${encodeURIComponent(recipientId)}`, {
     method: 'PATCH',
     body: JSON.stringify(input),
+  }),
+  setRecipientLineDestination: (
+    organizationId: string,
+    recipientId: string,
+    input: RecipientLineDestinationInput,
+  ): Promise<RecipientLineDestination> => request(`/api/organizations/${encodeURIComponent(organizationId)}/recipients/${encodeURIComponent(recipientId)}/line-destination`, {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  }),
+  removeRecipientLineDestination: (
+    organizationId: string,
+    recipientId: string,
+    lineDestinationId: string,
+  ): Promise<{ id: string; unlinked: boolean }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/recipients/${encodeURIComponent(recipientId)}/line-destination/${encodeURIComponent(lineDestinationId)}`, {
+    method: 'DELETE',
+  }),
+  registerLineDestination: (
+    organizationId: string,
+    input: RecipientLineDestinationInput,
+  ): Promise<OrganizationLineDestination> => request(`/api/organizations/${encodeURIComponent(organizationId)}/line-destinations`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }),
+  removeLineDestination: (
+    organizationId: string,
+    lineDestinationId: string,
+  ): Promise<{ id: string; removed: boolean }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/line-destinations/${encodeURIComponent(lineDestinationId)}`, {
+    method: 'DELETE',
   }),
   organizationTaskRoles: (organizationId: string): Promise<TaskRoleConfiguration> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles`),
   assignOrganizationTaskRole: (organizationId: string, role: 'organizer' | 'treasurer', identityId: string): Promise<TaskRoleAssignment> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles/${role}`, { method: 'PUT', body: JSON.stringify({ identityId }) }),

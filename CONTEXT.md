@@ -127,7 +127,7 @@ An Organization-owned model provider authorization used to derive Event Details,
 _Avoid_: endpoint, model account
 
 **LINE Destination**:
-A LINE user, group, or room discovered through a verified webhook on one LINE Connection and named by an Organization member.
+A LINE user, group, or room discovered through a verified webhook, or entered manually by an Owner, Admin, or Operator, on one LINE Connection and named by an Organization member. Its source, webhook or manual, remains recorded and visible.
 _Avoid_: LINE contact, webhook source
 
 **Automation Rule**:
