@@ -168,6 +168,8 @@ interface OrganizationContextValue extends OrganizationRouteData {
   updateRecipient: (recipientId: string, input: Partial<Pick<OrganizationRecipient, 'name' | 'email' | 'tags' | 'state'>>) => Promise<void>;
   setLineDestination: (recipientId: string, input: RecipientLineDestinationInput) => Promise<void>;
   unlinkLineDestination: (recipientId: string, lineDestinationId: string) => Promise<void>;
+  registerLineDestination: (input: RecipientLineDestinationInput) => Promise<void>;
+  removeLineDestination: (lineDestinationId: string) => Promise<void>;
   refreshRecipients: () => void;
   lineChannelAccessToken: string;
   lineChannelSecret: string;
@@ -301,10 +303,20 @@ export const OrganizationLayout = () => {
       await api.removeRecipientLineDestination(data.organization.organizationId, recipientId, lineDestinationId);
       await reloadRecipients();
     }, setMemberBusy);
+  const registerLineDestination = async (input: RecipientLineDestinationInput): Promise<void> =>
+    withError(async () => {
+      await api.registerLineDestination(data.organization.organizationId, input);
+      await reloadRecipients();
+    }, setMemberBusy);
+  const removeLineDestination = async (lineDestinationId: string): Promise<void> =>
+    withError(async () => {
+      await api.removeLineDestination(data.organization.organizationId, lineDestinationId);
+      await reloadRecipients();
+    }, setMemberBusy);
   const refreshRecipients = () => void withError(reloadRecipients, setMemberBusy);
   const logout = () => void withError(async () => { await api.logout(); navigate('/', { replace: true }); }, setBusy);
   const reauthenticate = () => void withError(async () => { window.location.assign((await api.reauthorizeAutomationInbox(data.organization.organizationId)).authorizationUrl); }, setBusy);
-  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveConnections, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateTask, assignTaskRole, createRecipient, updateRecipient, setLineDestination, unlinkLineDestination, refreshRecipients, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, aiTestBusy, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, settingsBusy, ruleBusy, memberBusy, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
+  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveConnections, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateTask, assignTaskRole, createRecipient, updateRecipient, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshRecipients, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, aiTestBusy, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, settingsBusy, ruleBusy, memberBusy, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
   return <OrganizationContext.Provider value={value}><Outlet /></OrganizationContext.Provider>;
 };
 
@@ -370,6 +382,8 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     onUpdateRecipient={value.updateRecipient}
     onSetLineDestination={value.setLineDestination}
     onUnlinkLineDestination={value.unlinkLineDestination}
+    onRegisterLineDestination={value.registerLineDestination}
+    onRemoveLineDestination={value.removeLineDestination}
     onRefreshRecipients={value.refreshRecipients}
   />;
 };

@@ -32,8 +32,9 @@ export const MembersPage = (props: DashboardProps) => {
   const [query, setQuery] = useState('');
   const [stateFilter, setStateFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [selectedLineDestinationId, setSelectedLineDestinationId] = useState('');
-  const [manualDestinationId, setManualDestinationId] = useState('');
-  const [manualKind, setManualKind] = useState<'user' | 'group' | 'room'>('user');
+  const [poolDestinationId, setPoolDestinationId] = useState('');
+  const [poolKind, setPoolKind] = useState<'user' | 'group' | 'room'>('user');
+  const nameInputRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [tags, setTags] = useState('');
@@ -65,28 +66,30 @@ export const MembersPage = (props: DashboardProps) => {
 
   const selectLineDestination = (id: string): void => {
     setSelectedLineDestinationId(id);
-    if (id) { setManualDestinationId(''); }
     const destination = unassignedDestinations.find((value) => value.id === id);
     if (destination?.displayName) setName(destination.displayName);
   };
-  const selectManualDestinationId = (value: string): void => {
-    setManualDestinationId(value);
-    if (value) setSelectedLineDestinationId('');
+  const promoteDestination = (id: string): void => {
+    selectLineDestination(id);
+    nameInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    nameInputRef.current?.focus();
+  };
+  const registerPending = async (event: React.FormEvent): Promise<void> => {
+    event.preventDefault();
+    if (!poolDestinationId.trim()) return;
+    await props.onRegisterLineDestination({ destinationId: poolDestinationId.trim(), kind: poolKind });
+    setPoolDestinationId('');
+    setPoolKind('user');
   };
   const createRecipient = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault();
-    const created = await props.onCreateRecipient({
+    await props.onCreateRecipient({
       name: name.trim(),
       email: email.trim(),
       tags: tags.split(',').map((tag) => tag.trim()).filter(Boolean),
       ...(selectedLineDestinationId ? { lineDestinationId: selectedLineDestinationId } : {}),
     });
-    if (created && manualDestinationId.trim()) {
-      await props.onSetLineDestination(created.id, { destinationId: manualDestinationId.trim(), kind: manualKind });
-    }
     setSelectedLineDestinationId('');
-    setManualDestinationId('');
-    setManualKind('user');
     setName('');
     setEmail('');
     setTags('');
@@ -130,21 +133,36 @@ export const MembersPage = (props: DashboardProps) => {
     {props.canManage && <section className="member-onboarding">
       <div className="member-onboarding-copy">
         <span className="line-mark">LINE</span>
-        <div><p>LINEからメンバーを追加</p><h2>{unassignedDestinations.length ? `${unassignedDestinations.length}件のLINEアカウントが登録待ちです` : 'LINEアカウントの受信を待っています'}</h2><span>公式アカウントにメッセージが届くと、表示名とIDを自動取得します。</span></div>
+        <div><p>LINEからメンバーを追加</p><h2>{unassignedDestinations.length ? `${unassignedDestinations.length}件のLINEアカウントが登録待ちです` : 'LINEアカウントの受信を待っています'}</h2><span>公式アカウントにメッセージが届くと、表示名とIDを自動取得します。手動でも登録できます。</span></div>
         <button type="button" className="secondary member-refresh" onClick={props.onRefreshRecipients} disabled={props.memberBusy}><RefreshCw className={props.memberBusy ? 'spin' : ''} size={16} />更新</button>
       </div>
       {!lineConfigured && <p className="dashboard-warning member-connection-warning">LINE Messaging APIが未設定です。<Link to="../connections">接続設定を開く</Link></p>}
+
+      <div className="pending-line-pool">
+        <p>保留中のLINE連絡先</p>
+        {unassignedDestinations.length > 0 ? <div className="pending-line-list">
+          {unassignedDestinations.map((destination) => <div key={destination.id}>
+            <span className="line-badge"><MessageCircle size={13} />{destinationKindLabel(destination.kind)}{destination.source === 'manual' ? '・手動登録' : '・Webhook検出'}</span>
+            <strong>{destination.displayName || '表示名未取得'}</strong>
+            <code>{destination.destinationId}</code>
+            <button type="button" className="secondary" onClick={() => promoteDestination(destination.id)}><UserPlus size={13} />本メンバーに登録</button>
+            <button type="button" className="member-line-unlink" onClick={() => void props.onRemoveLineDestination(destination.id)} disabled={props.memberBusy}><X size={13} />削除</button>
+          </div>)}
+        </div> : <p className="pending-line-empty">Webhookでの受信、または下のフォームからの手動登録を待っています。</p>}
+        <form className="pending-line-form" onSubmit={(event) => void registerPending(event)}>
+          <label>LINE IDを手動で登録<input value={poolDestinationId} onChange={(event) => setPoolDestinationId(event.target.value)} placeholder="例: U4af498062xxxxxxxxxxxxxxxxxxxxxx" /></label>
+          <label>種別<select value={poolKind} onChange={(event) => setPoolKind(event.target.value as 'user' | 'group' | 'room')}><option value="user">個人</option><option value="group">グループ</option><option value="room">ルーム</option></select></label>
+          <button type="submit" className="secondary" disabled={props.memberBusy || !poolDestinationId.trim()}>追加</button>
+        </form>
+        <small>友だち追加前やWebhook未設定でも、既知のLINE IDを先に登録しておけます。氏名やメールは下のフォームで後から設定してください。</small>
+      </div>
+
       <form className="member-create-form" onSubmit={(event) => void createRecipient(event)}>
         <label className="member-line-select">LINEアカウント<select value={selectedLineDestinationId} onChange={(event) => selectLineDestination(event.target.value)}><option value="">LINEなしで登録</option>{unassignedDestinations.map((destination) => <option key={destination.id} value={destination.id}>{destination.displayName || '表示名未取得'} · {destinationKindLabel(destination.kind)} · {destination.destinationId}</option>)}</select></label>
-        <label>氏名<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例: 山田 太郎" required /></label>
+        <label>氏名<input ref={nameInputRef} value={name} onChange={(event) => setName(event.target.value)} placeholder="例: 山田 太郎" required /></label>
         <label>メールアドレス<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="member@example.com" required /></label>
         <label>分類タグ<input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="例: 会員, 2026年度" /></label>
         <button className="primary" disabled={props.memberBusy}><UserPlus size={16} />{props.memberBusy ? '登録中…' : 'メンバーに追加'}</button>
-        <div className="member-manual-line">
-          <label>LINE IDを手動で入力<input value={manualDestinationId} onChange={(event) => selectManualDestinationId(event.target.value)} placeholder="例: U4af498062xxxxxxxxxxxxxxxxxxxxxx" /></label>
-          <label>種別<select value={manualKind} onChange={(event) => setManualKind(event.target.value as 'user' | 'group' | 'room')} disabled={!manualDestinationId}><option value="user">個人</option><option value="group">グループ</option><option value="room">ルーム</option></select></label>
-          <small>Webhookが未設定、または友だち追加前でも、既知のLINE IDを直接登録できます。IDの入力ミスに注意してください。</small>
-        </div>
       </form>
     </section>}
 

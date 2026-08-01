@@ -43,6 +43,7 @@ import {
 } from './storage/organization-schema';
 
 const RECIPIENT_LINK_WINDOW_MS = 15 * 60 * 1_000;
+const LINE_DESTINATION_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/u;
 type OrganizationCredential = Record<string, string>;
 
 interface OrganizationConnectionInput {
@@ -664,6 +665,99 @@ app.get('/api/organizations/:organizationId/line-destinations', async (context) 
   }
 });
 
+app.post('/api/organizations/:organizationId/line-destinations', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'LINE Destinations can only be changed by an Owner, Admin, or Operator.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ destinationId?: string; kind?: string; displayName?: string }>();
+    const destinationId = input.destinationId?.trim() ?? '';
+    if (!LINE_DESTINATION_ID_PATTERN.test(destinationId)) return failure(context, 'A valid LINE ID is required.');
+    const kind: 'user' | 'group' | 'room' = input.kind === 'group' || input.kind === 'room' ? input.kind : 'user';
+    const displayName = input.displayName?.trim() ?? '';
+    const database = drizzleOrganizationDatabase(access.database);
+    const connection = await database.select({ id: organizationConnections.id }).from(organizationConnections).where(and(
+      eq(organizationConnections.kind, 'line'),
+      eq(organizationConnections.status, 'active'),
+    )).limit(1).get();
+    if (!connection) return failure(context, 'A LINE Connection must be configured before a LINE Destination can be entered manually.', 409);
+    const existing = await database.select({
+      id: lineDestinations.id,
+      recipientProfileId: recipientLineDestinations.recipientProfileId,
+    }).from(lineDestinations)
+      .leftJoin(recipientLineDestinations, eq(recipientLineDestinations.lineDestinationId, lineDestinations.id))
+      .where(and(eq(lineDestinations.connectionId, connection.id), eq(lineDestinations.destinationId, destinationId)))
+      .get();
+    if (existing?.recipientProfileId) return failure(context, 'This LINE ID is already linked to a member.', 409);
+    const timestamp = now();
+    if (existing) {
+      await database.update(lineDestinations).set({
+        kind,
+        ...(displayName ? { displayName } : {}),
+        status: 'discovered',
+        updatedAt: timestamp,
+      }).where(eq(lineDestinations.id, existing.id)).run();
+      return json(context, {
+        id: existing.id,
+        destinationId: displayRecipientIdentifier(access.role as 'owner' | 'admin' | 'operator' | 'viewer', destinationId),
+        displayName,
+        kind,
+        status: 'discovered' as const,
+        source: 'manual' as const,
+        discoveredAt: timestamp,
+        recipientProfileId: null,
+      });
+    }
+    const id = crypto.randomUUID();
+    await database.insert(lineDestinations).values({
+      id,
+      connectionId: connection.id,
+      destinationId,
+      displayName,
+      kind,
+      status: 'discovered',
+      source: 'manual',
+      discoveredAt: timestamp,
+      updatedAt: timestamp,
+    }).run();
+    return json(context, {
+      id,
+      destinationId: displayRecipientIdentifier(access.role as 'owner' | 'admin' | 'operator' | 'viewer', destinationId),
+      displayName,
+      kind,
+      status: 'discovered' as const,
+      source: 'manual' as const,
+      discoveredAt: timestamp,
+      recipientProfileId: null,
+    }, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'LINE Destination could not be registered.', 409);
+  }
+});
+
+app.delete('/api/organizations/:organizationId/line-destinations/:lineDestinationId', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'LINE Destinations can only be changed by an Owner, Admin, or Operator.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const lineDestinationId = context.req.param('lineDestinationId');
+    const database = drizzleOrganizationDatabase(access.database);
+    const existing = await database.select({
+      id: lineDestinations.id,
+      recipientProfileId: recipientLineDestinations.recipientProfileId,
+    }).from(lineDestinations)
+      .leftJoin(recipientLineDestinations, eq(recipientLineDestinations.lineDestinationId, lineDestinations.id))
+      .where(eq(lineDestinations.id, lineDestinationId))
+      .get();
+    if (!existing) return failure(context, 'LINE Destination was not found.', 404);
+    if (existing.recipientProfileId) return failure(context, 'Unlink this LINE Destination from its member before removing it.', 409);
+    await database.delete(lineDestinations).where(eq(lineDestinations.id, lineDestinationId)).run();
+    return json(context, { id: lineDestinationId, removed: true });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'LINE Destination could not be removed.', 409);
+  }
+});
+
 app.get('/api/organizations/:organizationId/recipients/export', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
@@ -827,8 +921,6 @@ app.post('/api/organizations/:organizationId/recipients/:recipientId/line-links'
     return failure(context, error instanceof Error ? error.message : 'Recipient Link could not be issued.', 409);
   }
 });
-
-const LINE_DESTINATION_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/u;
 
 app.put('/api/organizations/:organizationId/recipients/:recipientId/line-destination', async (context) => {
   try {

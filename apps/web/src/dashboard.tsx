@@ -91,6 +91,8 @@ export interface DashboardProps {
   onUpdateRecipient: (recipientId: string, input: Partial<Pick<OrganizationRecipient, 'name' | 'email' | 'tags' | 'state'>>) => Promise<void>;
   onSetLineDestination: (recipientId: string, input: RecipientLineDestinationInput) => Promise<void>;
   onUnlinkLineDestination: (recipientId: string, lineDestinationId: string) => Promise<void>;
+  onRegisterLineDestination: (input: RecipientLineDestinationInput) => Promise<void>;
+  onRemoveLineDestination: (lineDestinationId: string) => Promise<void>;
   onRefreshRecipients: () => void;
 }
 

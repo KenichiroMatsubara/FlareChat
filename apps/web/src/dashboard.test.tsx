@@ -29,7 +29,7 @@ const dashboardProps = (): DashboardProps => ({
   onPrepareMailbox: vi.fn(), onPreviewMailbox: vi.fn(), onCreateCalendarEvent: vi.fn(), organizationRules: [], ruleBusy: false,
   onCreateRule: vi.fn(), organizationTasks: [], onUpdateTask: vi.fn(), taskRoleAssignments: [], taskMembers: [], onAssignTaskRole: vi.fn(),
   organizationRecipients: [], lineDestinations: [], memberBusy: false, onCreateRecipient: vi.fn(), onUpdateRecipient: vi.fn(),
-  onSetLineDestination: vi.fn(), onUnlinkLineDestination: vi.fn(), onRefreshRecipients: vi.fn(),
+  onSetLineDestination: vi.fn(), onUnlinkLineDestination: vi.fn(), onRegisterLineDestination: vi.fn(), onRemoveLineDestination: vi.fn(), onRefreshRecipients: vi.fn(),
 });
 
 const markup = (): string => renderToStaticMarkup(
@@ -111,7 +111,54 @@ describe('member roster', () => {
     expect(html).toContain('taro@example.com');
     expect(html).toContain('U1234567890');
     expect(html).toContain('LINEからメンバーを追加');
-    expect(html).toContain('LINE IDを手動で入力');
+    expect(html).toContain('LINE IDを手動で登録');
+    expect(html).toContain('本メンバーに登録');
+    expect(html).toContain('保留中のLINE連絡先');
+  });
+
+  it('distinguishes a manually registered pending LINE contact from a webhook-discovered one in the pool', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/members']}>
+        <Dashboard
+          {...dashboardProps()}
+          page="members"
+          connections={{
+            organizationId: 'org-1',
+            organizationName: 'Example',
+            ai: { apiKeyConfigured: false, model: '', baseUrl: '' },
+            line: { channelAccessTokenConfigured: true, channelSecretConfigured: true },
+          }}
+          organizationRecipients={[]}
+          lineDestinations={[
+            {
+              id: 'line-webhook',
+              destinationId: 'Uwebhook00000000000000000000000000',
+              displayName: '受信 太郎',
+              kind: 'user',
+              status: 'discovered',
+              source: 'webhook',
+              discoveredAt: '2026-07-30T00:00:00.000Z',
+              recipientProfileId: null,
+            },
+            {
+              id: 'line-manual-pending',
+              destinationId: 'Upending000000000000000000000000000',
+              displayName: '',
+              kind: 'group',
+              status: 'discovered',
+              source: 'manual',
+              discoveredAt: '2026-07-30T00:00:00.000Z',
+              recipientProfileId: null,
+            },
+          ]}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('個人・Webhook検出');
+    expect(html).toContain('グループ・手動登録');
+    expect(html).toContain('Upending000000000000000000000000000');
+    expect(html).not.toContain('pending-line-empty');
   });
 
   it('marks a manually entered LINE Destination separately from a webhook-discovered one', () => {

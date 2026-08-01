@@ -236,6 +236,19 @@ export const api = {
   ): Promise<{ id: string; unlinked: boolean }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/recipients/${encodeURIComponent(recipientId)}/line-destination/${encodeURIComponent(lineDestinationId)}`, {
     method: 'DELETE',
   }),
+  registerLineDestination: (
+    organizationId: string,
+    input: RecipientLineDestinationInput,
+  ): Promise<OrganizationLineDestination> => request(`/api/organizations/${encodeURIComponent(organizationId)}/line-destinations`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }),
+  removeLineDestination: (
+    organizationId: string,
+    lineDestinationId: string,
+  ): Promise<{ id: string; removed: boolean }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/line-destinations/${encodeURIComponent(lineDestinationId)}`, {
+    method: 'DELETE',
+  }),
   organizationTaskRoles: (organizationId: string): Promise<TaskRoleConfiguration> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles`),
   assignOrganizationTaskRole: (organizationId: string, role: 'organizer' | 'treasurer', identityId: string): Promise<TaskRoleAssignment> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles/${role}`, { method: 'PUT', body: JSON.stringify({ identityId }) }),
   updateOrganizationTask: (organizationId: string, taskId: string, input: { completed?: boolean; remarks?: string }): Promise<OrganizationTask> => request(`/api/organizations/${encodeURIComponent(organizationId)}/tasks/${encodeURIComponent(taskId)}`, { method: 'PATCH', body: JSON.stringify(input) }),

@@ -665,4 +665,73 @@ describe('LINE destinations', () => {
       data: [{ id: destinationsBody.data[0]?.id, recipientProfileId: null, source: 'webhook' }],
     });
   });
+
+  it('registers a bare LINE ID into the pending pool and lets it be removed before it is promoted', async () => {
+    fixture = await createAutomationTestApp({ lineSecret: 'line-secret' });
+
+    const registered = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/line-destinations',
+      { destinationId: 'Upending00000000000000000000000000', displayName: '保留 太郎' },
+      'POST',
+    ), fixture.environment);
+    const registeredBody = await registered.json() as { data: { id: string } };
+    const pending = await app.fetch(
+      fixture.request('/api/organizations/organization-1/line-destinations'),
+      fixture.environment,
+    );
+
+    expect(registered.status).toBe(201);
+    await expect(pending.json()).resolves.toMatchObject({
+      data: [{
+        id: registeredBody.data.id,
+        destinationId: 'Upending00000000000000000000000000',
+        displayName: '保留 太郎',
+        source: 'manual',
+        status: 'discovered',
+        recipientProfileId: null,
+      }],
+    });
+
+    const removed = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/line-destinations/${registeredBody.data.id}`,
+      {},
+      'DELETE',
+    ), fixture.environment);
+    const afterRemoval = await app.fetch(
+      fixture.request('/api/organizations/organization-1/line-destinations'),
+      fixture.environment,
+    );
+
+    expect(removed.status).toBe(200);
+    await expect(afterRemoval.json()).resolves.toMatchObject({ data: [] });
+  });
+
+  it('promotes a pending LINE contact to a full Recipient Profile and blocks removing a linked one', async () => {
+    fixture = await createAutomationTestApp({ lineSecret: 'line-secret' });
+    const registered = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/line-destinations',
+      { destinationId: 'Upromote0000000000000000000000000' },
+      'POST',
+    ), fixture.environment);
+    const registeredBody = await registered.json() as { data: { id: string } };
+
+    const promoted = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/recipients',
+      { name: '昇格 花子', email: 'promoted@example.com', lineDestinationId: registeredBody.data.id },
+    ), fixture.environment);
+    const blockedRemoval = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/line-destinations/${registeredBody.data.id}`,
+      {},
+      'DELETE',
+    ), fixture.environment);
+    const duplicateRegistration = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/line-destinations',
+      { destinationId: 'Upromote0000000000000000000000000' },
+      'POST',
+    ), fixture.environment);
+
+    expect(promoted.status).toBe(201);
+    expect(blockedRemoval.status).toBe(409);
+    expect(duplicateRegistration.status).toBe(409);
+  });
 });
