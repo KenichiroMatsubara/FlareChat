@@ -269,6 +269,30 @@ describe('Organization management', () => {
     });
   });
 
+  it('stores the Organization role subset an Automation Rule may assign', async () => {
+    fixture = createTestApp();
+    const first = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/task-roles', {
+      displayName: '参加登録担当', description: '申込期限を扱う',
+    }), fixture.environment);
+    const second = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/task-roles', {
+      displayName: '支払担当', description: '支払期限を扱う',
+    }), fixture.environment);
+    const firstId = (await first.json() as { data: { id: string } }).data.id;
+    const secondId = (await second.json() as { data: { id: string } }).data.id;
+
+    const created = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/rules', {
+      name: 'Registration only', state: 'active', taskRoleIds: [firstId],
+    }), fixture.environment);
+    const listed = await app.fetch(fixture.request('/api/organizations/organization-1/rules'), fixture.environment);
+    const listedText = await listed.clone().text();
+
+    expect(created.status).toBe(201);
+    await expect(listed.json()).resolves.toMatchObject({ data: [{
+      name: 'Registration only', taskRoleIds: [firstId],
+    }] });
+    expect(listedText).not.toContain(secondId);
+  });
+
   it('creates, changes, imports, reads, and snapshots Recipient Profiles', async () => {
     fixture = createTestApp('operator');
     seedScheduledEvent(fixture.organization, { id: 'event-1' });

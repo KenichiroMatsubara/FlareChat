@@ -2,7 +2,7 @@ import { and, count, eq, isNotNull } from 'drizzle-orm';
 
 import { decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
 import { fromBase64Url } from './encoding';
-import { buildAiEventDetailsRequest, type AiEventDetailsRequest, type EventDetails, type MailExtraction } from './event-details';
+import { buildAiEventDetailsRequest, type AiEventDetailsRequest, type EventDetails, type MailExtraction, type TaskRoleDescription } from './event-details';
 import { createTaskWorkflow } from './tasks';
 import type { SourceAttachmentContent } from './drive-attachments';
 import type { GoogleTokenSet } from './google';
@@ -16,10 +16,12 @@ import { organizationKeys, organizations } from './storage/control-schema';
 import {
   connections,
   deliveries,
+  automationWarnings,
   eventAttachments,
   events,
   exceptions as automationExceptions,
   googleConnections,
+  operationalTaskRoles,
   rules as automationRules,
   sourceMessages,
 } from './storage/organization-schema';
@@ -86,6 +88,7 @@ export interface ActiveRule {
   id: string;
   priority: number;
   selectionPolicy: Record<string, unknown>;
+  taskRoleIds?: string[];
 }
 
 export interface RuleSource {
@@ -241,6 +244,7 @@ const aiExtraction = async (
   database: D1Database,
   source: string,
   attachments: SourceAttachmentContent[],
+  taskRoles: TaskRoleDescription[],
   dependencies: AutomationDependencies,
 ): Promise<MailExtraction | null | undefined> => {
   const connection = await drizzleOrganizationDatabase(database).select().from(connections)
@@ -256,6 +260,7 @@ const aiExtraction = async (
       model: credential.model,
       source,
       attachments,
+      taskRoles,
       markdown: env.AI,
     });
   } catch {
@@ -278,12 +283,18 @@ const extractMailboxTestPackage = async (
   const key = await organizationKeyFor(env, organizationId);
   const credential = JSON.parse(await decrypt(JSON.parse(connection.credential), key, `organization-connection:${organizationId}:ai`)) as AiCredential;
   if (!credential.apiKey || !credential.model) throw new Error('先に OpenAI 互換 API を設定してください。');
+  const taskRoles = await drizzleOrganizationDatabase(database).select({
+    id: operationalTaskRoles.id,
+    displayName: operationalTaskRoles.displayName,
+    description: operationalTaskRoles.description,
+  }).from(operationalTaskRoles).all();
   return dependencies.ai.extract({
     apiKey: credential.apiKey,
     baseUrl: credential.baseUrl || LEGACY_AI_BASE_URL,
     model: credential.model,
     source,
     attachments,
+    taskRoles,
     markdown: env.AI,
   });
 };
@@ -291,12 +302,20 @@ const extractMailboxTestPackage = async (
 /** Produces the exact bounded OpenAI-compatible payload for review before sending. */
 const previewMailboxTestAiRequest = async (
   env: Bindings,
-  input: { source: string; attachments: SourceAttachmentContent[] },
-): Promise<AiEventDetailsRequest> => buildAiEventDetailsRequest({
-  source: input.source,
-  attachments: input.attachments,
-  markdown: env.AI,
-});
+  input: { database: D1Database; source: string; attachments: SourceAttachmentContent[] },
+): Promise<AiEventDetailsRequest> => {
+  const taskRoles = await drizzleOrganizationDatabase(input.database).select({
+    id: operationalTaskRoles.id,
+    displayName: operationalTaskRoles.displayName,
+    description: operationalTaskRoles.description,
+  }).from(operationalTaskRoles).all();
+  return buildAiEventDetailsRequest({
+    source: input.source,
+    attachments: input.attachments,
+    taskRoles,
+    markdown: env.AI,
+  });
+};
 
 const mailboxMessage = async (google: GoogleAutomationPort, accessToken: string, messageId: string): Promise<GmailMessage> =>
   google.request<GmailMessage>(accessToken, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}?format=full`);
@@ -473,9 +492,10 @@ const processOrganizationMessage = async (
     id: automationRules.id,
     priority: automationRules.priority,
     selectionPolicy: automationRules.selectionPolicy,
+    taskRoleIds: automationRules.taskRoleIds,
   }).from(automationRules).where(eq(automationRules.status, 'active')).orderBy(automationRules.priority).all();
   const rule = selectActiveRule(activeRules.flatMap((row) => {
-    try { return [{ id: row.id, priority: row.priority, selectionPolicy: JSON.parse(row.selectionPolicy) as Record<string, unknown> }]; }
+    try { return [{ id: row.id, priority: row.priority, selectionPolicy: JSON.parse(row.selectionPolicy) as Record<string, unknown>, taskRoleIds: JSON.parse(row.taskRoleIds) as string[] }]; }
     catch { return []; }
   }), { sender: senderOf(message.payload), subject, body, ...(message.labelIds === undefined ? {} : { labels: message.labelIds }) });
   if (!rule) {
@@ -504,7 +524,14 @@ const processOrganizationMessage = async (
       .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
   }
-  const extraction = await aiExtraction(env, organizationId, database, `${subject}\n${body}`, attachmentContents, dependencies);
+  const organizationRoles = await db.select({
+    id: operationalTaskRoles.id,
+    displayName: operationalTaskRoles.displayName,
+    description: operationalTaskRoles.description,
+  }).from(operationalTaskRoles).all();
+  const allowedRoleIds = new Set(rule.taskRoleIds ?? []);
+  const allowedTaskRoles = organizationRoles.filter((role) => allowedRoleIds.has(role.id));
+  const extraction = await aiExtraction(env, organizationId, database, `${subject}\n${body}`, attachmentContents, allowedTaskRoles, dependencies);
   if (extraction === null) {
     await db.insert(automationExceptions).values({
       id: crypto.randomUUID(),
@@ -517,6 +544,15 @@ const processOrganizationMessage = async (
     await db.update(sourceMessages).set({ state: 'exception', processedAt: now() })
       .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
+  }
+  if (extraction?.warnings.length) {
+    await db.insert(automationWarnings).values(extraction.warnings.map((warning) => ({
+      id: crypto.randomUUID(),
+      sourceMessageId,
+      code: warning.code,
+      message: warning.message,
+      createdAt: now(),
+    }))).run();
   }
   const fallbackCandidate = extractEventCandidate(subject, body);
   const candidates = extraction?.events.map((event) => ({ title: event.title, startsAt: event.startsAt, endsAt: event.endsAt })) ?? (fallbackCandidate ? [fallbackCandidate] : []);
@@ -744,7 +780,7 @@ export const createAutomation = (
         createMailboxTestCalendarEventsWithGoogle(env, input.organizationId, input.database, { messageId: input.messageId, events: input.events }, dependencies),
       extractPackage: (input: { organizationId: string; database: D1Database; source: string; attachments: SourceAttachmentContent[] }): Promise<MailExtraction | null> =>
         extractMailboxTestPackage(env, input.organizationId, input.database, input.source, input.attachments, dependencies),
-      previewAiRequest: (input: { source: string; attachments: SourceAttachmentContent[] }): Promise<AiEventDetailsRequest> =>
+      previewAiRequest: (input: { database: D1Database; source: string; attachments: SourceAttachmentContent[] }): Promise<AiEventDetailsRequest> =>
         previewMailboxTestAiRequest(env, input),
     },
   };

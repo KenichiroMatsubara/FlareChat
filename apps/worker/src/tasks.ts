@@ -2,15 +2,26 @@ import { and, asc, eq } from 'drizzle-orm';
 
 import type { TaskDetails } from './event-details';
 import type { OrganizationDatabase } from './storage/database';
-import { taskRoleAssignments, tasks } from './storage/organization-schema';
+import { operationalTaskRoles, taskRoleAssignments, tasks } from './storage/organization-schema';
 
-export type OperationalTaskRole = 'organizer' | 'treasurer';
+export const UNASSIGNED_TASK_ROLE = {
+  id: 'unassigned',
+  displayName: '未割り当て',
+  description: '定義済みの担当に当てはまらない、または担当が決まっていないタスク',
+} as const;
+
+export interface OperationalTaskRole {
+  id: string;
+  displayName: string;
+  description: string;
+}
 
 export interface TaskView {
   id: string;
   title: string;
   deadline: string;
-  assigneeRole: OperationalTaskRole;
+  assigneeRoleId: string;
+  assigneeRoleName: string;
   assigneeIdentityId: string | null;
   assigneeName: string;
   sourceMessageSubject: string;
@@ -23,17 +34,54 @@ export interface TaskView {
 const timestamp = (): string => new Date().toISOString();
 
 export const createTaskWorkflow = (database: OrganizationDatabase) => ({
-  async assignRole(input: { role: OperationalTaskRole; identityId: string; displayName: string }): Promise<void> {
+  async listRoles(): Promise<OperationalTaskRole[]> {
+    return database.select({
+      id: operationalTaskRoles.id,
+      displayName: operationalTaskRoles.displayName,
+      description: operationalTaskRoles.description,
+    }).from(operationalTaskRoles).orderBy(asc(operationalTaskRoles.displayName)).all();
+  },
+
+  async createRole(input: { displayName: string; description: string }): Promise<OperationalTaskRole> {
+    const id = crypto.randomUUID();
+    const now = timestamp();
+    const role = { id, displayName: input.displayName, description: input.description };
+    await database.insert(operationalTaskRoles).values({ ...role, createdAt: now, updatedAt: now }).run();
+    return role;
+  },
+
+  async updateRole(id: string, input: { displayName?: string; description?: string }): Promise<OperationalTaskRole | null> {
+    if (input.displayName === undefined && input.description === undefined) return null;
+    return await database.update(operationalTaskRoles).set({ ...input, updatedAt: timestamp() })
+      .where(eq(operationalTaskRoles.id, id)).returning({
+        id: operationalTaskRoles.id,
+        displayName: operationalTaskRoles.displayName,
+        description: operationalTaskRoles.description,
+      }).get();
+  },
+
+  async deleteRole(id: string): Promise<boolean> {
+    const deleted = await database.delete(operationalTaskRoles).where(eq(operationalTaskRoles.id, id))
+      .returning({ id: operationalTaskRoles.id }).get();
+    return Boolean(deleted);
+  },
+
+  async assignRole(input: { roleId: string; identityId: string; displayName: string }): Promise<void> {
     const now = timestamp();
     await database.insert(taskRoleAssignments).values({ ...input, assignedAt: now, updatedAt: now })
-      .onConflictDoUpdate({ target: taskRoleAssignments.role, set: { identityId: input.identityId, displayName: input.displayName, updatedAt: now } }).run();
+      .onConflictDoUpdate({ target: taskRoleAssignments.roleId, set: { identityId: input.identityId, displayName: input.displayName, updatedAt: now } }).run();
   },
 
   async createFromSourceMessage(input: { organizationId: string; sourceMessageId: string; sourceMessageSubject: string; extractedTasks: TaskDetails[] }): Promise<void> {
-    const assignments = await database.select().from(taskRoleAssignments).all();
-    const assigneeByRole = new Map(assignments.map((assignment) => [assignment.role, assignment]));
+    const [roles, assignments] = await Promise.all([
+      database.select().from(operationalTaskRoles).all(),
+      database.select().from(taskRoleAssignments).all(),
+    ]);
+    const roleById = new Map(roles.map((role) => [role.id, role]));
+    const assigneeByRole = new Map(assignments.map((assignment) => [assignment.roleId, assignment]));
     for (const extracted of input.extractedTasks) {
-      const assignment = assigneeByRole.get(extracted.assigneeRole);
+      const role = roleById.get(extracted.assigneeRoleId) ?? UNASSIGNED_TASK_ROLE;
+      const assignment = role.id === UNASSIGNED_TASK_ROLE.id ? undefined : assigneeByRole.get(role.id);
       const now = timestamp();
       await database.insert(tasks).values({
         id: crypto.randomUUID(),
@@ -42,7 +90,8 @@ export const createTaskWorkflow = (database: OrganizationDatabase) => ({
         sourceMessageSubject: input.sourceMessageSubject,
         title: extracted.title,
         deadline: extracted.deadline,
-        assigneeRole: extracted.assigneeRole,
+        assigneeRoleId: role.id,
+        assigneeRoleName: role.displayName,
         assigneeIdentityId: assignment?.identityId ?? null,
         assigneeName: assignment?.displayName ?? '未割り当て',
         description: extracted.description,
@@ -52,8 +101,8 @@ export const createTaskWorkflow = (database: OrganizationDatabase) => ({
     }
   },
 
-  async list(input: { assigneeIdentityId?: string; event?: string } = {}): Promise<TaskView[]> {
-    const conditions = [input.assigneeIdentityId ? eq(tasks.assigneeIdentityId, input.assigneeIdentityId) : undefined,
+  async list(input: { assigneeIdentityId?: string; unassigned?: boolean; event?: string } = {}): Promise<TaskView[]> {
+    const conditions = [input.unassigned ? eq(tasks.assigneeRoleId, UNASSIGNED_TASK_ROLE.id) : input.assigneeIdentityId ? eq(tasks.assigneeIdentityId, input.assigneeIdentityId) : undefined,
       input.event ? eq(tasks.sourceMessageSubject, input.event) : undefined].filter((value): value is NonNullable<typeof value> => Boolean(value));
     const rows = await database.select().from(tasks).where(conditions.length ? and(...conditions) : undefined)
       .orderBy(asc(tasks.completed), asc(tasks.deadline), asc(tasks.createdAt)).all();

@@ -297,6 +297,19 @@ svg { flex: none; }
 .ai-request { max-height: 420px; margin: 0; padding: 14px; overflow: auto; color: #2d4034; background: #f4f8f4; border: 1px solid #dce9de; border-radius: 9px; font-size: 11px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .task-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }.task-filters label { display: grid; gap: 6px; color: #435247; font-size: 11px; font-weight: 600; }.task-filters select { min-width: 180px; padding: 10px 11px; color: #26372b; background: white; border: 1px solid #d7ded7; border-radius: 8px; }.tasks-table-wrap { overflow-x: auto; background: white; border: 1px solid #dfe5de; border-radius: 14px; box-shadow: 0 3px 14px rgba(24,45,31,.04); }.tasks-table { width: 100%; min-width: 850px; border-collapse: collapse; font-size: 12px; }.tasks-table th { padding: 13px 14px; color: #5f6e63; background: #f4f7f3; font-size: 10px; text-align: left; }.tasks-table td { padding: 13px 14px; border-top: 1px solid #edf0eb; vertical-align: top; }.tasks-table td small { display: block; margin-top: 4px; color: #718073; line-height: 1.5; }.tasks-table textarea { width: 180px; min-height: 48px; resize: vertical; padding: 7px; border: 1px solid #d7ded7; border-radius: 6px; }.tasks-table tr.overdue td:nth-child(2) { color: #ad493e; font-weight: 700; }.tasks-table tr.near-deadline td:nth-child(2) { color: #95661d; font-weight: 700; }.tasks-table tr.completed { opacity: .55; }.tasks-table tr.completed strong { text-decoration: line-through; }
 .task-role-assignments { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; padding: 16px; background: #f1f6f1; border: 1px solid #dce9de; border-radius: 10px; }.task-role-assignments strong { width: 100%; font-size: 12px; }.task-role-assignments label { display: grid; gap: 6px; color: #435247; font-size: 11px; font-weight: 600; }.task-role-assignments select { min-width: 180px; padding: 9px 10px; border: 1px solid #d7ded7; border-radius: 7px; }
+.task-role-management { display: grid; grid-template-columns: minmax(240px, .7fr) minmax(0, 1.3fr); gap: 14px; }
+.task-role-management form, .task-role-list article { display: grid; gap: 10px; padding: 16px; background: #f7faf6; border: 1px solid #dce6db; border-radius: 12px; }
+.task-role-management label, .task-role-management details { display: grid; gap: 6px; color: #435247; font-size: 11px; font-weight: 600; }
+.task-role-management input, .task-role-management textarea, .task-role-management select { width: 100%; padding: 9px 10px; color: #26372b; background: white; border: 1px solid #d7ded7; border-radius: 7px; }
+.task-role-management textarea { min-height: 64px; resize: vertical; }
+.task-role-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+.task-role-list article > p { min-height: 2.8em; margin: 0; color: #667269; font-size: 11px; line-height: 1.45; }
+.task-role-list summary { cursor: pointer; }
+.rule-builder fieldset { display: flex; flex-wrap: wrap; gap: 10px; padding: 14px; border: 1px solid #dce6db; border-radius: 10px; }
+.rule-builder fieldset legend { padding: 0 6px; color: #435247; font-size: 11px; font-weight: 700; }
+.rule-builder fieldset label { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 2px 8px; min-width: 190px; }
+.rule-builder fieldset label input { grid-row: 1 / 3; width: auto; }
+.rule-builder fieldset label small { color: #718073; font-weight: 400; }
 .mail-test-actions { display: flex; flex-wrap: wrap; gap: 9px; }
 .mail-test-actions .dashboard-warning { flex: 1 0 100%; }
 .mail-summary { margin: 0; padding: 14px 16px; border-left: 3px solid #81a98d; border-radius: 0 8px 8px 0; background: #f3f8f3; color: #314337; line-height: 1.75; white-space: pre-wrap; }
@@ -337,6 +350,7 @@ svg { flex: none; }
 @media (max-width: 560px) {
   .ai-request-heading { flex-direction: column; }
   .ai-request-heading .secondary { width: 100%; }
+  .task-role-management { grid-template-columns: minmax(0, 1fr); }
   .line-webhook-url { align-items: stretch; flex-direction: column; }
   .line-webhook-url .secondary { width: 100%; }
   .action-panel .primary, .settings-card-actions, .settings-card-actions .primary, .rule-builder .primary, .test-card .primary, .test-card .secondary { width: 100%; justify-self: stretch; }

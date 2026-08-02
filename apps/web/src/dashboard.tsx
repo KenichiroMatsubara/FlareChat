@@ -2,7 +2,7 @@ import { CheckSquare, CircleAlert, LogOut, Mail, Menu, Play, Settings, ShieldChe
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
-import type { AutomationStatus, AutomationSummary, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationRecipient, OrganizationRecipientInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, RecipientLineDestinationInput, TaskRoleAssignment } from './api';
+import type { AutomationStatus, AutomationSummary, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OperationalTaskRole, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationRecipient, OrganizationRecipientInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, RecipientLineDestinationInput, TaskRoleAssignment } from './api';
 import { AutomationPage, ConnectionsPage, MailboxTestPage, MembersPage, RulesPage, TasksPage } from './dashboard-pages';
 
 export type Page = 'automation' | 'connections' | 'rules' | 'members' | 'mail-test' | 'tasks';
@@ -83,9 +83,13 @@ export interface DashboardProps {
   onCreateRule: (input: OrganizationRuleInput) => Promise<void>;
   organizationTasks: OrganizationTask[];
   onUpdateTask: (taskId: string, input: { completed?: boolean; remarks?: string }) => void;
+  taskRoles: OperationalTaskRole[];
   taskRoleAssignments: TaskRoleAssignment[];
   taskMembers: Array<{ identityId: string; displayName: string }>;
-  onAssignTaskRole: (role: 'organizer' | 'treasurer', identityId: string) => void;
+  onCreateTaskRole: (input: { displayName: string; description: string }) => Promise<void>;
+  onUpdateTaskRole: (roleId: string, input: { displayName?: string; description?: string }) => Promise<void>;
+  onDeleteTaskRole: (roleId: string) => Promise<void>;
+  onAssignTaskRole: (roleId: string, identityId: string) => void;
   organizationRecipients: OrganizationRecipient[];
   lineDestinations: OrganizationLineDestination[];
   memberBusy: boolean;

@@ -58,6 +58,7 @@ describe('canonical D1 schemas', () => {
       '0003_release_safe_line_destination_index.sql',
       '0004_manual_line_destination_source.sql',
       '0005_optional_recipient_email.sql',
+      '0006_operational_task_roles.sql',
     ]);
   });
 

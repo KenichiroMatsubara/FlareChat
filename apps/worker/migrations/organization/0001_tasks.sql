@@ -3,8 +3,7 @@ CREATE TABLE `task_role_assignments` (
 	`identity_id` text NOT NULL,
 	`display_name` text NOT NULL,
 	`assigned_at` text NOT NULL,
-	`updated_at` text NOT NULL,
-	CONSTRAINT "task_role_assignments_role_check" CHECK("task_role_assignments"."role" in ('organizer', 'treasurer'))
+	`updated_at` text NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE `tasks` (
@@ -24,7 +23,6 @@ CREATE TABLE `tasks` (
 	`created_at` text NOT NULL,
 	`updated_at` text NOT NULL,
 	FOREIGN KEY (`source_message_id`) REFERENCES `source_messages`(`id`) ON UPDATE no action ON DELETE no action,
-	CONSTRAINT "tasks_assignee_role_check" CHECK("tasks"."assignee_role" in ('organizer', 'treasurer')),
 	CONSTRAINT "tasks_completed_check" CHECK("tasks"."completed" in (0, 1))
 );
 --> statement-breakpoint

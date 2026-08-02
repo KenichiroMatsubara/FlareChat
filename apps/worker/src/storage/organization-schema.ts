@@ -41,6 +41,7 @@ export const rules = sqliteTable('rules', {
   lineListId: text('line_list_id').references(() => lists.id),
   selectionPolicy: text('selection_policy').notNull().default('{}'),
   routingPolicy: text('routing_policy').notNull().default('{}'),
+  taskRoleIds: text('task_role_ids').notNull().default('[]'),
   priority: integer('priority').notNull().default(0),
   scheduleMinutes: integer('schedule_minutes').notNull().default(5),
   requireAttendance: integer('require_attendance', { mode: 'boolean' }).notNull().default(false),
@@ -59,6 +60,7 @@ export const ruleRevisions = sqliteTable('rule_revisions', {
   revision: integer('revision').notNull(),
   selectionPolicy: text('selection_policy').notNull(),
   routingPolicy: text('routing_policy').notNull(),
+  taskRoleIds: text('task_role_ids').notNull().default('[]'),
   createdAt: text('created_at').notNull(),
 }, (table) => [
   uniqueIndex('rule_revisions_rule_revision_idx').on(table.ruleId, table.revision),
@@ -193,16 +195,33 @@ export const deliveries = sqliteTable('deliveries', {
   createdAt: text('created_at').notNull(),
 });
 
-/** An Organization-local projection of the active member assigned an operational Task role. */
+export const automationWarnings = sqliteTable('automation_warnings', {
+  id: text('id').primaryKey(),
+  sourceMessageId: text('source_message_id').notNull().references(() => sourceMessages.id),
+  code: text('code').notNull(),
+  message: text('message').notNull(),
+  createdAt: text('created_at').notNull(),
+}, (table) => [
+  index('automation_warnings_source_idx').on(table.sourceMessageId, table.createdAt),
+]);
+
+/** An Organization-defined responsibility used to route extracted Tasks. */
+export const operationalTaskRoles = sqliteTable('operational_task_roles', {
+  id: text('id').primaryKey(),
+  displayName: text('display_name').notNull(),
+  description: text('description').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+/** An Organization-local projection of the active member assigned an Operational Task Role. */
 export const taskRoleAssignments = sqliteTable('task_role_assignments', {
-  role: text('role', { enum: ['organizer', 'treasurer'] }).primaryKey(),
+  roleId: text('role_id').primaryKey().references(() => operationalTaskRoles.id, { onDelete: 'cascade' }),
   identityId: text('identity_id').notNull(),
   displayName: text('display_name').notNull(),
   assignedAt: text('assigned_at').notNull(),
   updatedAt: text('updated_at').notNull(),
-}, (table) => [
-  check('task_role_assignments_role_check', sql`${table.role} in ('organizer', 'treasurer')`),
-]);
+});
 
 export const tasks = sqliteTable('tasks', {
   id: text('id').primaryKey(),
@@ -211,7 +230,8 @@ export const tasks = sqliteTable('tasks', {
   sourceMessageSubject: text('source_message_subject').notNull(),
   title: text('title').notNull(),
   deadline: text('deadline').notNull(),
-  assigneeRole: text('assignee_role', { enum: ['organizer', 'treasurer'] }).notNull(),
+  assigneeRoleId: text('assignee_role_id').notNull(),
+  assigneeRoleName: text('assignee_role_name').notNull(),
   assigneeIdentityId: text('assignee_identity_id'),
   assigneeName: text('assignee_name').notNull().default('未割り当て'),
   description: text('description').notNull(),
@@ -221,9 +241,8 @@ export const tasks = sqliteTable('tasks', {
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
-  check('tasks_assignee_role_check', sql`${table.assigneeRole} in ('organizer', 'treasurer')`),
   check('tasks_completed_check', sql`${table.completed} in (0, 1)`),
-  uniqueIndex('tasks_source_role_deadline_title_idx').on(table.sourceMessageId, table.assigneeRole, table.deadline, table.title),
+  uniqueIndex('tasks_source_role_deadline_title_idx').on(table.sourceMessageId, table.assigneeRoleId, table.deadline, table.title),
   index('tasks_order_idx').on(table.completed, table.deadline),
   index('tasks_assignee_idx').on(table.assigneeIdentityId),
 ]);

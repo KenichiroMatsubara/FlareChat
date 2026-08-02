@@ -88,14 +88,73 @@ describe('Source Message event extraction', () => {
 });
 
 describe('Organization Automation Inbox scheduling', () => {
+  it('keeps events and tasks when one extracted role is unknown and raises an Automation Warning', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    const createdRole = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/task-roles',
+      { displayName: '参加登録担当', description: '出欠と申込期限を扱う' },
+    ), fixture.environment);
+    expect(createdRole.status).toBe(201);
+    const role = (await createdRole.json() as { data: { id: string } }).data;
+    const rule = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/rules', {
+      name: 'Role-aware extraction', state: 'active', priority: 10, taskRoleIds: [role.id],
+    }), fixture.environment);
+    expect(rule.status).toBe(201);
+
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/history')) return new Response(JSON.stringify({
+        historyId: 'history-after-warning',
+        history: [{ messagesAdded: [{ message: { id: 'gmail-message-warning' } }] }],
+      }), { status: 200 });
+      if (url.includes('/messages/gmail-message-warning')) return sourceMessageResponse();
+      if (url.includes('ai.example.com')) return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+        summary: '例会と二つの期限の案内です。',
+        events: [{
+          title: '例会', startsAt: '2026-08-03T19:00:00+09:00', endsAt: '2026-08-03T21:30:00+09:00',
+          timeZone: 'Asia/Tokyo', location: '', description: '例会です',
+        }],
+        tasks: [
+          { title: '出席登録を確認する', deadline: '2026-07-31', assigneeRoleId: role.id, description: '登録状況を確認する' },
+          { title: '資料を確認する', deadline: '2026-08-01', assigneeRoleId: 'removed-role', description: '資料を確認する' },
+        ],
+      }) } }] }), { status: 200 });
+      return new Response(JSON.stringify({ id: 'calendar-event-warning' }), { status: 200 });
+    }));
+
+    await runEnabledAutomations(fixture.environment);
+
+    const tasks = await app.fetch(fixture.request('/api/organizations/organization-1/tasks'), fixture.environment);
+    await expect(tasks.json()).resolves.toMatchObject({ data: [
+      { assigneeRoleId: role.id, assigneeRoleName: '参加登録担当' },
+      { assigneeRoleId: 'unassigned', assigneeRoleName: '未割り当て' },
+    ] });
+    const unassignedTasks = await app.fetch(fixture.request('/api/organizations/organization-1/tasks?assignee=unassigned'), fixture.environment);
+    await expect(unassignedTasks.json()).resolves.toMatchObject({ data: [
+      { title: '資料を確認する', assigneeRoleId: 'unassigned' },
+    ] });
+    const warnings = await app.fetch(fixture.request('/api/organizations/organization-1/automation-warnings'), fixture.environment);
+    expect(warnings.status).toBe(200);
+    await expect(warnings.json()).resolves.toMatchObject({ data: [{ code: 'task_role_unmatched' }] });
+    const dashboard = await app.fetch(fixture.request('/api/organizations/organization-1/dashboard'), fixture.environment);
+    await expect(dashboard.json()).resolves.toMatchObject({ data: { upcomingEvents: 1 } });
+  });
+
   it('creates one named Task from a Source Message and does not duplicate it when the inbox run is retried', async () => {
     fixture = await createAutomationTestApp({ ai: true });
+    const createdRole = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/task-roles', {
+      displayName: '参加登録担当', description: '出欠と申込期限を扱う',
+    }), fixture.environment);
+    const roleId = (await createdRole.json() as { data: { id: string } }).data.id;
     const assignment = await app.fetch(fixture.jsonRequest(
-      '/api/organizations/organization-1/task-roles/organizer',
+      `/api/organizations/organization-1/task-roles/${roleId}/assignment`,
       { identityId: 'identity-1' },
       'PUT',
     ), fixture.environment);
     expect(assignment.status).toBe(200);
+    const rule = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/rules', {
+      name: 'Task extraction', state: 'active', priority: 10, taskRoleIds: [roleId],
+    }), fixture.environment);
+    expect(rule.status).toBe(201);
 
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.includes('/history')) return new Response(JSON.stringify({
@@ -116,7 +175,7 @@ describe('Organization Automation Inbox scheduling', () => {
           tasks: [{
             title: '出席を取りまとめる',
             deadline: '2026-07-31',
-            assigneeRole: 'organizer',
+            assigneeRoleId: roleId,
             description: '出席登録を確認する',
           }],
         }) } }],
@@ -531,6 +590,14 @@ describe('Manual mailbox test', () => {
 
   it('previews an event whose date and time exist only in an XLSX attachment', async () => {
     fixture = await createAutomationTestApp({ ai: true });
+    const registrationRoleResponse = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/task-roles', {
+      displayName: '参加登録担当', description: '出欠と申込期限を扱う',
+    }), fixture.environment);
+    const paymentRoleResponse = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/task-roles', {
+      displayName: '支払担当', description: '支払期限を扱う',
+    }), fixture.environment);
+    const registrationRoleId = (await registrationRoleResponse.json() as { data: { id: string } }).data.id;
+    const paymentRoleId = (await paymentRoleResponse.json() as { data: { id: string } }).data.id;
     const markdown = { toMarkdown: vi.fn().mockResolvedValue({
       format: 'markdown',
       name: '式典案内.xlsx',
@@ -594,8 +661,8 @@ describe('Manual mailbox test', () => {
               { title: 'テスト懇親会', startsAt: '2026-08-18T17:00:00+09:00', endsAt: '2026-08-18T19:00:00+09:00', timeZone: 'Asia/Tokyo', location: '名古屋イノベーションセンター 1階', description: '式典後の懇親会' },
             ],
             tasks: [
-              { title: '出席登録を完了する', deadline: '2026-08-10', assigneeRole: 'organizer', description: '登録フォームを送信する' },
-              { title: '参加費を振り込む', deadline: '2026-08-12', assigneeRole: 'treasurer', description: '指定口座へ振込する' },
+              { title: '出席登録を完了する', deadline: '2026-08-10', assigneeRoleId: registrationRoleId, description: '登録フォームを送信する' },
+              { title: '参加費を振り込む', deadline: '2026-08-12', assigneeRoleId: paymentRoleId, description: '指定口座へ振込する' },
             ],
           }) } }],
         }), { status: 200 });
@@ -632,7 +699,7 @@ describe('Manual mailbox test', () => {
       { method: 'POST' },
     ), fixture.environment);
     const preview = await previewResponse.json() as {
-      data: { summary: string; events: EventDetails[]; tasks: Array<{ assigneeRole: string }>; confirmationToken: string };
+      data: { summary: string; events: EventDetails[]; tasks: Array<{ assigneeRoleId: string }>; confirmationToken: string };
     };
     const calendarResponse = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/mail-tests/calendar',
@@ -644,7 +711,7 @@ describe('Manual mailbox test', () => {
       data: {
         summary: '8月18日に会議と懇親会を開催します。8月10日までの出席登録と8月12日までの参加費振込が必要です。',
         events: [{ title: 'AI ファイル解析テスト会議', startsAt: '2026-08-18T14:30:00+09:00' }, { title: 'テスト懇親会' }],
-        tasks: [{ assigneeRole: 'organizer' }, { assigneeRole: 'treasurer' }],
+        tasks: [{ assigneeRoleId: registrationRoleId }, { assigneeRoleId: paymentRoleId }],
       },
     });
     expect(aiRequest.messages?.[1]?.content).toContain('FILE-PROBE-001');
