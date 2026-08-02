@@ -59,7 +59,7 @@
     "binding": "AI"
   },
   "triggers": {
-    "crons": ["* * * * *"]
+    "crons": ["*/30 * * * *"]
   },
   "env": {
     "local": {

@@ -588,6 +588,7 @@ describe('Manual mailbox test', () => {
         }
         return new Response(JSON.stringify({
           choices: [{ message: { content: JSON.stringify({
+            summary: '8月18日に会議と懇親会を開催します。8月10日までの出席登録と8月12日までの参加費振込が必要です。',
             events: [
               { title: 'AI ファイル解析テスト会議', startsAt: '2026-08-18T14:30:00+09:00', endsAt: '2026-08-18T16:00:00+09:00', timeZone: 'Asia/Tokyo', location: '名古屋イノベーションセンター 3階 会議室A', description: '添付XLSXから抽出' },
               { title: 'テスト懇親会', startsAt: '2026-08-18T17:00:00+09:00', endsAt: '2026-08-18T19:00:00+09:00', timeZone: 'Asia/Tokyo', location: '名古屋イノベーションセンター 1階', description: '式典後の懇親会' },
@@ -631,7 +632,7 @@ describe('Manual mailbox test', () => {
       { method: 'POST' },
     ), fixture.environment);
     const preview = await previewResponse.json() as {
-      data: { events: EventDetails[]; tasks: Array<{ assigneeRole: string }>; confirmationToken: string };
+      data: { summary: string; events: EventDetails[]; tasks: Array<{ assigneeRole: string }>; confirmationToken: string };
     };
     const calendarResponse = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/mail-tests/calendar',
@@ -641,6 +642,7 @@ describe('Manual mailbox test', () => {
     expect(previewResponse.status).toBe(200);
     expect(preview).toMatchObject({
       data: {
+        summary: '8月18日に会議と懇親会を開催します。8月10日までの出席登録と8月12日までの参加費振込が必要です。',
         events: [{ title: 'AI ファイル解析テスト会議', startsAt: '2026-08-18T14:30:00+09:00' }, { title: 'テスト懇親会' }],
         tasks: [{ assigneeRole: 'organizer' }, { assigneeRole: 'treasurer' }],
       },

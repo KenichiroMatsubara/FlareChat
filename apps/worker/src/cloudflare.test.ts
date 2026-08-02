@@ -21,6 +21,7 @@ describe('Cloudflare control plane', () => {
     const config = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8')) as {
       keep_vars?: boolean;
       secrets?: { required?: string[] };
+      triggers?: { crons?: string[] };
       unsafe?: { metadata?: { keep_bindings?: string[] } };
       vars?: Record<string, string>;
     };
@@ -32,6 +33,7 @@ describe('Cloudflare control plane', () => {
       CLOUDFLARE_WORKER_NAME: 'flarechat',
     });
     expect(config.keep_vars).toBe(true);
+    expect(config.triggers?.crons).toEqual(['*/30 * * * *']);
     expect(config.unsafe?.metadata?.keep_bindings).toEqual(expect.arrayContaining([
       'd1',
       'plain_text',

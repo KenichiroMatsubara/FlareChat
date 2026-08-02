@@ -299,6 +299,7 @@ svg { flex: none; }
 .task-role-assignments { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; padding: 16px; background: #f1f6f1; border: 1px solid #dce9de; border-radius: 10px; }.task-role-assignments strong { width: 100%; font-size: 12px; }.task-role-assignments label { display: grid; gap: 6px; color: #435247; font-size: 11px; font-weight: 600; }.task-role-assignments select { min-width: 180px; padding: 9px 10px; border: 1px solid #d7ded7; border-radius: 7px; }
 .mail-test-actions { display: flex; flex-wrap: wrap; gap: 9px; }
 .mail-test-actions .dashboard-warning { flex: 1 0 100%; }
+.mail-summary { margin: 0; padding: 14px 16px; border-left: 3px solid #81a98d; border-radius: 0 8px 8px 0; background: #f3f8f3; color: #314337; line-height: 1.75; white-space: pre-wrap; }
 .api-configuration-prompt { align-items: flex-start; flex-direction: column; }
 .api-configuration-prompt a { color: #356c4b; font-weight: 700; text-underline-offset: 3px; }
 .api-configuration-prompt a:hover { color: #245b3a; }

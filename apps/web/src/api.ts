@@ -100,6 +100,7 @@ export interface MailboxTestMatch {
 }
 
 export interface MailboxTestPreview extends MailboxTestMatch {
+  summary: string;
   events: Array<{
     title: string;
     startsAt: string;

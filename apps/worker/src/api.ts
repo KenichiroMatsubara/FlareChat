@@ -131,7 +131,8 @@ const isTaskDetails = (value: unknown): value is TaskDetails => {
 const isMailExtraction = (value: unknown): value is MailExtraction => {
   if (!value || typeof value !== 'object') return false;
   const extraction = value as Partial<MailExtraction>;
-  return Array.isArray(extraction.events) && extraction.events.length > 0 && extraction.events.every(isEventDetails)
+  return typeof extraction.summary === 'string' && Boolean(extraction.summary.trim()) && extraction.summary.length <= 2_000
+    && Array.isArray(extraction.events) && extraction.events.length > 0 && extraction.events.every(isEventDetails)
     && Array.isArray(extraction.tasks) && extraction.tasks.every(isTaskDetails);
 };
 

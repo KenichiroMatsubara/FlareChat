@@ -31,7 +31,7 @@ describe('OpenAI-compatible Event Details validation', () => {
     const source = 'A'.repeat(20_010);
     const result = await extractAiEventDetails({ baseUrl: 'https://ai.example.com/v1', apiKey: 'api-key', model: 'test-model', source, fetch: fetchMock });
 
-    expect(result).toMatchObject({ events: [{ title: '例会' }], tasks: [] });
+    expect(result).toMatchObject({ summary: '月例会', events: [{ title: '例会' }], tasks: [] });
     expect(fetchMock).toHaveBeenCalledWith('https://ai.example.com/v1/chat/completions', expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ Authorization: 'Bearer api-key' }) }));
     const body = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string) as {
       model: string;
@@ -48,9 +48,11 @@ describe('OpenAI-compatible Event Details validation', () => {
     };
     expect(body.model).toBe('test-model');
     expect(body.messages[1]?.content).toContain(source);
-    expect(body.response_format.json_schema.schema.required).toEqual(['events', 'tasks']);
+    expect(body.response_format.json_schema.schema.required).toEqual(['summary', 'events', 'tasks']);
     expect(body.response_format.json_schema.schema.additionalProperties).toBe(false);
+    expect(body.response_format.json_schema.schema.properties.summary).toMatchObject({ type: 'string' });
     expect(body.response_format.json_schema.schema.properties.events).toMatchObject({ type: 'array' });
+    expect(body.messages[0]?.content).toContain('concise Japanese plain-text summary');
     expect(body.messages[0]?.content).toContain('ceremony and its banquet');
   });
 
@@ -195,6 +197,7 @@ describe('OpenAI-compatible Event Details validation', () => {
 
   it('keeps separately scheduled programs apart and creates one deadline task per kind', () => {
     expect(validatedMailExtraction(JSON.stringify({
+      summary: '30周年記念式典と祝宴の案内です。出席登録と参加費振込が必要です。',
       events: [
         { title: '30周年記念式典', startsAt: '2026-05-30T13:00:00+09:00', endsAt: '2026-05-30T16:00:00+09:00', timeZone: 'Asia/Tokyo', location: 'ホテル名古屋ガーデンパレス', description: '記念式典' },
         { title: '30周年記念祝宴', startsAt: '2026-05-30T17:30:00+09:00', endsAt: '2026-05-30T19:30:00+09:00', timeZone: 'Asia/Tokyo', location: 'スノーピークカフェ', description: '祝宴' },
@@ -204,6 +207,7 @@ describe('OpenAI-compatible Event Details validation', () => {
         { title: '参加費を振り込む', deadline: '2026-05-15', assigneeRole: 'treasurer', description: '指定口座へ振込する' },
       ],
     }))).toMatchObject({
+      summary: '30周年記念式典と祝宴の案内です。出席登録と参加費振込が必要です。',
       events: [{ title: '30周年記念式典' }, { title: '30周年記念祝宴' }],
       tasks: [{ assigneeRole: 'organizer' }, { assigneeRole: 'treasurer' }],
     });

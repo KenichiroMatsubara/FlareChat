@@ -314,6 +314,33 @@ describe('mailbox test prerequisites', () => {
     expect(html).not.toContain('APIを設定する');
   });
 
+  it('shows the email summary returned with the AI extraction', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/mailbox-test']}>
+        <Dashboard
+          {...dashboardProps()}
+          page="mail-test"
+          automation={{
+            email: 'owner@example.com', displayName: 'Owner', enabled: true, status: 'active',
+            lastSyncedAt: null, lastError: null, created: 0, skipped: 0, exceptions: 0,
+          }}
+          mailTestPreview={{
+            id: 'message-1', subject: '例会のお知らせ', sender: 'sender@example.com',
+            summary: '8月3日の例会案内です。7月31日までに出席登録が必要です。',
+            events: [{
+              title: '例会', startsAt: '2026-08-03T19:00:00+09:00', endsAt: '2026-08-03T21:00:00+09:00',
+              timeZone: 'Asia/Tokyo', location: '会館', description: '月例会',
+            }],
+            tasks: [], confirmationToken: 'token', expiresAt: '2026-08-03T00:00:00.000Z',
+          }}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('メールの要約');
+    expect(html).toContain('8月3日の例会案内です。7月31日までに出席登録が必要です。');
+  });
+
   it('configures an OpenAI-compatible endpoint without a fixed provider or model', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter initialEntries={['/organizations/org-1/connections']}>
