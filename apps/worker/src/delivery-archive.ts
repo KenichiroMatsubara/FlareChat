@@ -7,6 +7,7 @@ import { deliveries, deliveryArchives } from './storage/organization-schema';
 interface ArchivedDelivery {
   id: string;
   eventId: string | null;
+  sourceMessageId: string | null;
   channel: string;
   destination: string;
   outcome: string;

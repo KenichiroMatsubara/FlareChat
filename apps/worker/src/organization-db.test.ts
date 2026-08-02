@@ -125,6 +125,7 @@ describe('Organization database resolver', () => {
       { name: '0004_manual_line_destination_source.sql' },
       { name: '0005_optional_recipient_email.sql' },
       { name: '0006_operational_task_roles.sql' },
+      { name: '0007_source_message_deliveries.sql' },
     ]);
   });
 

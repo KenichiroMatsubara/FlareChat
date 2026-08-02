@@ -4,6 +4,7 @@ import { decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptograp
 import { fromBase64Url } from './encoding';
 import { buildAiEventDetailsRequest, type AiEventDetailsRequest, type EventDetails, type MailExtraction, type TaskRoleDescription } from './event-details';
 import { createTaskWorkflow } from './tasks';
+import { deliverLineBatch, deliverSourceMessageEmail } from './delivery';
 import type { SourceAttachmentContent } from './drive-attachments';
 import type { GoogleTokenSet } from './google';
 import { productionAutomationDependencies } from './automation/providers';
@@ -21,6 +22,7 @@ import {
   events,
   exceptions as automationExceptions,
   googleConnections,
+  listItems,
   operationalTaskRoles,
   rules as automationRules,
   sourceMessages,
@@ -89,6 +91,8 @@ export interface ActiveRule {
   priority: number;
   selectionPolicy: Record<string, unknown>;
   taskRoleIds?: string[];
+  recipientListId?: string | null;
+  lineListId?: string | null;
 }
 
 export interface RuleSource {
@@ -236,6 +240,75 @@ interface AiCredential {
   model?: string;
   baseUrl?: string;
 }
+
+interface LineCredential {
+  channelAccessToken?: string;
+}
+
+const lineAccessToken = async (
+  env: Bindings,
+  organizationId: string,
+  database: D1Database,
+): Promise<string | null> => {
+  const connection = await drizzleOrganizationDatabase(database).select().from(connections)
+    .where(and(eq(connections.kind, 'line'), eq(connections.status, 'active'))).limit(1).get();
+  if (!connection) return null;
+  try {
+    const key = await organizationKeyFor(env, organizationId);
+    const credential = JSON.parse(await decrypt(
+      JSON.parse(connection.credential),
+      key,
+      `organization-connection:${organizationId}:line`,
+    )) as LineCredential;
+    return credential.channelAccessToken?.trim() || null;
+  } catch {
+    return null;
+  }
+};
+
+/** Resolves one Rule's configured readers and delivers one Source Message-level notice to each destination. */
+const deliverSourceMessageNotice = async (input: {
+  dependencies: AutomationDependencies;
+  env: Bindings;
+  database: D1Database;
+  organizationId: string;
+  googleAccessToken: string;
+  sourceMessageId: string;
+  rule: ActiveRule;
+  subject: string;
+  body: string;
+}): Promise<void> => {
+  const db = drizzleOrganizationDatabase(input.database);
+  if (input.rule.recipientListId) {
+    const recipients = await db.select({ destination: listItems.value }).from(listItems).where(and(
+      eq(listItems.listId, input.rule.recipientListId),
+      eq(listItems.enabled, true),
+    )).all();
+    await Promise.all(recipients.map(({ destination }) => deliverSourceMessageEmail({
+      database: input.database,
+      google: input.dependencies.google,
+      accessToken: input.googleAccessToken,
+      sourceMessageId: input.sourceMessageId,
+      destination,
+      subject: input.subject,
+      body: input.body,
+    })));
+  }
+  if (!input.rule.lineListId) return;
+  const accessToken = await lineAccessToken(input.env, input.organizationId, input.database);
+  if (!accessToken) return;
+  const destinations = await db.select({ destinationId: listItems.value }).from(listItems).where(and(
+    eq(listItems.listId, input.rule.lineListId),
+    eq(listItems.enabled, true),
+  )).all();
+  await Promise.all(destinations.map(({ destinationId }) => deliverLineBatch({
+    database: input.database,
+    accessToken,
+    sourceMessageId: input.sourceMessageId,
+    destinationId,
+    messages: [input.body],
+  })));
+};
 
 /** Uses the Organization-scoped OpenAI-compatible connection when it is configured. */
 const aiExtraction = async (
@@ -474,6 +547,23 @@ const processOrganizationMessage = async (
     state: 'processing',
   }).run();
   const body = decodedBody(message.payload) || (message.snippet ?? '');
+  const activeRules = await db.select({
+    id: automationRules.id,
+    priority: automationRules.priority,
+    selectionPolicy: automationRules.selectionPolicy,
+    taskRoleIds: automationRules.taskRoleIds,
+    recipientListId: automationRules.recipientListId,
+    lineListId: automationRules.lineListId,
+  }).from(automationRules).where(eq(automationRules.status, 'active')).orderBy(automationRules.priority).all();
+  const rule = selectActiveRule(activeRules.flatMap((row) => {
+    try { return [{ id: row.id, priority: row.priority, selectionPolicy: JSON.parse(row.selectionPolicy) as Record<string, unknown>, taskRoleIds: JSON.parse(row.taskRoleIds) as string[], recipientListId: row.recipientListId, lineListId: row.lineListId }]; }
+    catch { return []; }
+  }), { sender: senderOf(message.payload), subject, body, ...(message.labelIds === undefined ? {} : { labels: message.labelIds }) });
+  if (!rule) {
+    await db.update(sourceMessages).set({ state: 'skipped', processedAt: now() })
+      .where(eq(sourceMessages.id, sourceMessageId)).run();
+    return;
+  }
   const attachmentIntake = validateAttachmentIntake(sourceAttachmentSizes(message.payload));
   if (!attachmentIntake.accepted) {
     await db.insert(automationExceptions).values({
@@ -484,22 +574,18 @@ const processOrganizationMessage = async (
       state: 'open',
       createdAt: now(),
     }).run();
+    await deliverSourceMessageNotice({
+      dependencies,
+      env,
+      database,
+      organizationId,
+      googleAccessToken: accessToken,
+      sourceMessageId,
+      rule,
+      subject: `Intake Notice: ${subject}`,
+      body: `差出人: ${senderOf(message.payload)}\r\n件名: ${subject}`,
+    });
     await db.update(sourceMessages).set({ state: 'exception', processedAt: now() })
-      .where(eq(sourceMessages.id, sourceMessageId)).run();
-    return;
-  }
-  const activeRules = await db.select({
-    id: automationRules.id,
-    priority: automationRules.priority,
-    selectionPolicy: automationRules.selectionPolicy,
-    taskRoleIds: automationRules.taskRoleIds,
-  }).from(automationRules).where(eq(automationRules.status, 'active')).orderBy(automationRules.priority).all();
-  const rule = selectActiveRule(activeRules.flatMap((row) => {
-    try { return [{ id: row.id, priority: row.priority, selectionPolicy: JSON.parse(row.selectionPolicy) as Record<string, unknown>, taskRoleIds: JSON.parse(row.taskRoleIds) as string[] }]; }
-    catch { return []; }
-  }), { sender: senderOf(message.payload), subject, body, ...(message.labelIds === undefined ? {} : { labels: message.labelIds }) });
-  if (!rule) {
-    await db.update(sourceMessages).set({ state: 'skipped', processedAt: now() })
       .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
   }
@@ -520,6 +606,17 @@ const processOrganizationMessage = async (
       state: 'open',
       createdAt: now(),
     }).run();
+    await deliverSourceMessageNotice({
+      dependencies,
+      env,
+      database,
+      organizationId,
+      googleAccessToken: accessToken,
+      sourceMessageId,
+      rule,
+      subject: `Intake Notice: ${subject}`,
+      body: `差出人: ${senderOf(message.payload)}\r\n件名: ${subject}`,
+    });
     await db.update(sourceMessages).set({ state: 'exception', processedAt: now() })
       .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
@@ -554,6 +651,17 @@ const processOrganizationMessage = async (
       createdAt: now(),
     }))).run();
   }
+  if (extraction) await deliverSourceMessageNotice({
+    dependencies,
+    env,
+    database,
+    organizationId,
+    googleAccessToken: accessToken,
+    sourceMessageId,
+    rule,
+    subject: `Message Summary: ${subject}`,
+    body: extraction.summary,
+  });
   const fallbackCandidate = extractEventCandidate(subject, body);
   const candidates = extraction?.events.map((event) => ({ title: event.title, startsAt: event.startsAt, endsAt: event.endsAt })) ?? (fallbackCandidate ? [fallbackCandidate] : []);
   if (!candidates.length) {

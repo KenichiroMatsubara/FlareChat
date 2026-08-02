@@ -188,12 +188,15 @@ export const googleConnections = sqliteTable('google_connections', {
 export const deliveries = sqliteTable('deliveries', {
   id: text('id').primaryKey(),
   eventId: text('event_id').references(() => events.id),
+  sourceMessageId: text('source_message_id').references(() => sourceMessages.id),
   channel: text('channel').notNull(),
   destination: text('destination').notNull(),
   outcome: text('outcome').notNull(),
   externalId: text('external_id'),
   createdAt: text('created_at').notNull(),
-});
+}, (table) => [
+  index('deliveries_source_message_idx').on(table.sourceMessageId, table.createdAt),
+]);
 
 export const automationWarnings = sqliteTable('automation_warnings', {
   id: text('id').primaryKey(),

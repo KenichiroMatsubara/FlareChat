@@ -57,7 +57,7 @@ describe('Schema Lifecycle', () => {
 
     expect(receipt).toMatchObject({
       kind: 'organization',
-      currentMigration: '0006_operational_task_roles.sql',
+      currentMigration: '0007_source_message_deliveries.sql',
       appliedMigrations: [
         '0001_tasks.sql',
         '0002_line_destination_roster.sql',
@@ -65,6 +65,7 @@ describe('Schema Lifecycle', () => {
         '0004_manual_line_destination_source.sql',
         '0005_optional_recipient_email.sql',
         '0006_operational_task_roles.sql',
+        '0007_source_message_deliveries.sql',
       ],
     });
     expect(database.rows<{ display_name: string }>(
@@ -100,7 +101,7 @@ describe('Schema Lifecycle', () => {
       kind: 'organization',
       database: database.binding,
     })).resolves.toMatchObject({
-      currentMigration: '0006_operational_task_roles.sql',
+      currentMigration: '0007_source_message_deliveries.sql',
     });
   });
 
@@ -131,7 +132,7 @@ describe('Schema Lifecycle', () => {
     await expect(schemaLifecycle.ensureCurrent({
       kind: 'organization',
       database: database.binding,
-    })).resolves.toMatchObject({ currentMigration: '0006_operational_task_roles.sql' });
+    })).resolves.toMatchObject({ currentMigration: '0007_source_message_deliveries.sql' });
   });
 
   it('migrates existing assignments and Tasks into Organization-owned role records without losing snapshots', async () => {
@@ -148,6 +149,24 @@ describe('Schema Lifecycle', () => {
     expect(database.rows<{ assignee_role_id: string; assignee_role_name: string; assignee_name: string }>('SELECT assignee_role_id, assignee_role_name, assignee_name FROM tasks')).toEqual([
       { assignee_role_id: 'legacy-registration', assignee_role_name: 'legacy-registration', assignee_name: 'Owner' },
     ]);
+    expect(database.rows('PRAGMA foreign_key_check')).toEqual([]);
+  });
+
+  it('keeps existing Event Delivery Records intact when Source Message references are added', async () => {
+    const database = databaseBeforeOperationalTaskRoles();
+    database.execute("INSERT INTO source_messages (id, gmail_message_id, gmail_history_id, sender, subject, received_at, state) VALUES ('source-1', 'gmail-1', 'history-1', 'sender@example.com', '年次行事', '2026-08-01', 'processed')");
+    database.execute("INSERT INTO events (id, organization_id, source_message_id, title, starts_at, ends_at, status, created_at, updated_at) VALUES ('event-1', 'organization-1', 'source-1', '年次行事', '2026-09-01T10:00:00+09:00', '2026-09-01T12:00:00+09:00', 'scheduled', '2026-08-01', '2026-08-01')");
+    database.execute("INSERT INTO deliveries (id, event_id, channel, destination, outcome, external_id, created_at) VALUES ('delivery-1', 'event-1', 'calendar', 'reader@example.com', 'succeeded', 'google-event-1', '2026-08-01')");
+
+    await schemaLifecycle.ensureCurrent({ kind: 'organization', database: database.binding });
+
+    expect(database.rows<{ id: string; event_id: string | null; source_message_id: string | null }>(
+      'SELECT id, event_id, source_message_id FROM deliveries',
+    )).toEqual([{
+      id: 'delivery-1',
+      event_id: 'event-1',
+      source_message_id: null,
+    }]);
     expect(database.rows('PRAGMA foreign_key_check')).toEqual([]);
   });
 
@@ -176,8 +195,8 @@ describe('Schema Lifecycle', () => {
     ]);
 
     expect(receipts).toEqual([
-      expect.objectContaining({ currentMigration: '0006_operational_task_roles.sql' }),
-      expect.objectContaining({ currentMigration: '0006_operational_task_roles.sql' }),
+      expect.objectContaining({ currentMigration: '0007_source_message_deliveries.sql' }),
+      expect.objectContaining({ currentMigration: '0007_source_message_deliveries.sql' }),
     ]);
   });
 });

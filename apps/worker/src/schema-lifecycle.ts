@@ -5,6 +5,7 @@ import organizationReleaseSafeLineDestinationIndexMigration from '../migrations/
 import organizationManualLineDestinationSourceMigration from '../migrations/organization/0004_manual_line_destination_source.sql';
 import organizationOptionalRecipientEmailMigration from '../migrations/organization/0005_optional_recipient_email.sql';
 import organizationOperationalTaskRolesMigration from '../migrations/organization/0006_operational_task_roles.sql';
+import organizationSourceMessageDeliveriesMigration from '../migrations/organization/0007_source_message_deliveries.sql';
 
 type SchemaKind = 'organization';
 
@@ -32,6 +33,10 @@ const ORGANIZATION_MIGRATIONS: readonly SchemaMigration[] = [
   {
     name: '0006_operational_task_roles.sql',
     sql: organizationOperationalTaskRolesMigration,
+  },
+  {
+    name: '0007_source_message_deliveries.sql',
+    sql: organizationSourceMessageDeliveriesMigration,
   },
 ];
 const LEGACY_MIGRATION_CHECKSUMS = new Map<string, ReadonlySet<string>>([

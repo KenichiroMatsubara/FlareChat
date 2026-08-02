@@ -135,12 +135,12 @@ export const validatedMailExtraction = (
     const events = value.events.map((event) => validatedEventDetails(JSON.stringify(event)));
     const allowedRoleIds = new Set(taskRoles.map((role) => role.id));
     const tasks = value.tasks.map((task) => validatedTaskDetails(task, allowedRoleIds));
-    if (!events.length || events.some((event) => !event) || tasks.some((task) => !task)) return null;
+    if (events.some((event) => !event) || tasks.some((task) => !task)) return null;
     const validatedEvents = events as EventDetails[];
     const summary = typeof value.summary === 'string' && value.summary.trim()
       ? value.summary.trim()
-      : validatedEvents.map((event) => event.description.trim()).filter(Boolean).join(' ') || validatedEvents[0]!.title;
-    if (summary.length > 2_000) return null;
+      : validatedEvents.map((event) => event.description.trim()).filter(Boolean).join(' ') || validatedEvents[0]?.title;
+    if (!summary || summary.length > 2_000) return null;
     return {
       summary,
       events: validatedEvents,

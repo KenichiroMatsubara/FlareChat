@@ -1563,6 +1563,7 @@ app.get('/api/organizations/:organizationId/audit/deliveries', async (context) =
     return json(context, rows.map((row) => ({
       id: row.id,
       eventId: row.eventId,
+      sourceMessageId: row.sourceMessageId,
       channel: row.channel,
       destination: row.channel === 'line'
         ? displayLineDestinationId(row.destination)

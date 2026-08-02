@@ -304,6 +304,127 @@ describe('Organization Automation Inbox scheduling', () => {
     });
   });
 
+  it('delivers a Message Summary for a matched Source Message with no Event Candidate', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    fixture.organization.execute(
+      "INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('recipients-1', 'organization-1', 'recipient', 'Readers', '2026-08-01', '2026-08-01')",
+    );
+    fixture.organization.execute(
+      "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('reader-1', 'recipients-1', 'reader@example.com', 'Reader', 1)",
+    );
+    fixture.organization.execute("UPDATE rules SET recipient_list_id = 'recipients-1' WHERE id = 'rule-1'");
+    const upstreamRequests: Array<{ url: string; body: string | undefined }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      upstreamRequests.push({ url, body: typeof init?.body === 'string' ? init.body : undefined });
+      if (url.includes('/history')) return new Response(JSON.stringify({
+        historyId: 'history-after-summary',
+        history: [{ messagesAdded: [{ message: { id: 'gmail-message-summary' } }] }],
+      }), { status: 200 });
+      if (url.includes('/messages/gmail-message-summary')) return sourceMessageResponse();
+      if (url.includes('ai.example.com')) return new Response(JSON.stringify({
+        choices: [{ message: { content: JSON.stringify({
+          summary: '次年度の活動方針を共有するお知らせです。',
+          events: [],
+          tasks: [],
+        }) } }],
+      }), { status: 200 });
+      if (url.includes('/messages/send')) return new Response(JSON.stringify({ id: 'gmail-summary-delivery-1' }), { status: 200 });
+      return new Response(JSON.stringify({ error: { message: `unexpected request: ${url}` } }), { status: 500 });
+    }));
+
+    await expect(runOrganizationAutomation(
+      fixture.environment,
+      'organization-1',
+      fixture.organization.binding,
+    )).resolves.toEqual({ scanned: 1, created: 0, skipped: 1, exceptions: 0 });
+
+    const emailRequests = upstreamRequests.filter(({ url }) => url.includes('/messages/send'));
+    expect(emailRequests).toHaveLength(1);
+    const raw = (JSON.parse(emailRequests[0]!.body ?? '{}') as { raw?: string }).raw ?? '';
+    const paddedRaw = `${raw.replaceAll('-', '+').replaceAll('_', '/')}${'='.repeat((4 - raw.length % 4) % 4)}`;
+    expect(new TextDecoder().decode(Uint8Array.from(atob(paddedRaw), (character) => character.charCodeAt(0))))
+      .toContain('次年度の活動方針を共有するお知らせです。');
+    expect(upstreamRequests.filter(({ url }) => url.includes('ai.example.com'))).toHaveLength(1);
+
+    const audit = await app.fetch(
+      fixture.request('/api/organizations/organization-1/audit/deliveries'),
+      fixture.environment,
+    );
+    await expect(audit.json()).resolves.toMatchObject({
+      data: [{
+        sourceMessageId: expect.any(String),
+        eventId: null,
+        channel: 'email',
+        destination: 'reader@example.com',
+        outcome: 'succeeded',
+        externalId: 'gmail-summary-delivery-1',
+      }],
+    });
+  });
+
+  it('delivers exactly one Message Summary when one Source Message produces multiple Scheduled Events', async () => {
+    fixture = await createAutomationTestApp({ ai: true, lineSecret: 'line-secret' });
+    fixture.organization.execute(
+      "INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('line-readers-1', 'organization-1', 'line', 'LINE Readers', '2026-08-01', '2026-08-01')",
+    );
+    fixture.organization.execute(
+      "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('line-reader-1', 'line-readers-1', 'Usummary-reader-1', 'LINE Reader', 1)",
+    );
+    fixture.organization.execute("UPDATE rules SET line_list_id = 'line-readers-1' WHERE id = 'rule-1'");
+    const upstreamRequests: Array<{ url: string; body: string | undefined }> = [];
+    let calendarIndex = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      upstreamRequests.push({ url, body: typeof init?.body === 'string' ? init.body : undefined });
+      if (url.includes('/history')) return new Response(JSON.stringify({
+        historyId: 'history-after-multiple-events',
+        history: [{ messagesAdded: [{ message: { id: 'gmail-message-multiple-events' } }] }],
+      }), { status: 200 });
+      if (url.includes('/messages/gmail-message-multiple-events')) return sourceMessageResponse();
+      if (url.includes('ai.example.com')) return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+        summary: '会議と懇親会を同日に開催します。',
+        events: [
+          { title: '会議', startsAt: '2026-08-03T19:00:00+09:00', endsAt: '2026-08-03T20:00:00+09:00', timeZone: 'Asia/Tokyo', location: '', description: '会議' },
+          { title: '懇親会', startsAt: '2026-08-03T20:00:00+09:00', endsAt: '2026-08-03T21:30:00+09:00', timeZone: 'Asia/Tokyo', location: '', description: '懇親会' },
+        ],
+        tasks: [],
+      }) } }] }), { status: 200 });
+      if (url.includes('api.line.me')) return new Response('', { status: 200, headers: { 'x-line-request-id': 'line-summary-delivery-1' } });
+      if (url.includes('/calendar/v3/calendars/primary/events')) {
+        calendarIndex += 1;
+        return new Response(JSON.stringify({ id: `calendar-event-${calendarIndex}` }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ error: { message: `unexpected request: ${url}` } }), { status: 500 });
+    }));
+
+    await expect(runOrganizationAutomation(
+      fixture.environment,
+      'organization-1',
+      fixture.organization.binding,
+    )).resolves.toEqual({ scanned: 1, created: 2, skipped: 0, exceptions: 0 });
+
+    const lineRequests = upstreamRequests.filter(({ url }) => url.includes('api.line.me'));
+    expect(lineRequests).toHaveLength(1);
+    expect(JSON.parse(lineRequests[0]!.body ?? '{}')).toEqual({
+      to: 'Usummary-reader-1',
+      messages: [{ type: 'text', text: '会議と懇親会を同日に開催します。' }],
+    });
+    expect(upstreamRequests.filter(({ url }) => url.includes('ai.example.com'))).toHaveLength(1);
+
+    const audit = await app.fetch(
+      fixture.request('/api/organizations/organization-1/audit/deliveries'),
+      fixture.environment,
+    );
+    await expect(audit.json()).resolves.toMatchObject({
+      data: [{
+        sourceMessageId: expect.any(String),
+        eventId: null,
+        channel: 'line',
+        outcome: 'succeeded',
+        externalId: 'line-summary-delivery-1',
+      }],
+    });
+  });
+
   it('creates an Automation Exception and no Scheduled Event for unsafe AI output', async () => {
     fixture = await createAutomationTestApp({ ai: true });
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
@@ -334,6 +455,72 @@ describe('Organization Automation Inbox scheduling', () => {
     });
     await expect(exceptions.json()).resolves.toMatchObject({
       data: [{ state: 'open' }],
+    });
+  });
+
+  it('delivers an Intake Notice containing only sender and subject when intake fails before extraction', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    fixture.organization.execute(
+      "INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('intake-readers-1', 'organization-1', 'recipient', 'Intake Readers', '2026-08-01', '2026-08-01')",
+    );
+    fixture.organization.execute(
+      "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('intake-reader-1', 'intake-readers-1', 'intake-reader@example.com', 'Reader', 1)",
+    );
+    fixture.organization.execute("UPDATE rules SET recipient_list_id = 'intake-readers-1' WHERE id = 'rule-1'");
+    const upstreamRequests: Array<{ url: string; body: string | undefined }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      upstreamRequests.push({ url, body: typeof init?.body === 'string' ? init.body : undefined });
+      if (url.includes('/history')) return new Response(JSON.stringify({
+        historyId: 'history-after-intake-failure',
+        history: [{ messagesAdded: [{ message: { id: 'gmail-message-intake-failure' } }] }],
+      }), { status: 200 });
+      if (url.includes('/messages/gmail-message-intake-failure')) return new Response(JSON.stringify({
+        payload: {
+          headers: [
+            { name: 'Subject', value: '容量超過のお知らせ' },
+            { name: 'From', value: 'sender@example.com' },
+          ],
+          body: { data: gmailBody('読者へ送ってはいけない本文です。') },
+          parts: [{
+            filename: 'secret.pdf',
+            mimeType: 'application/pdf',
+            body: { attachmentId: 'oversized', size: 20 * 1024 * 1024 + 1 },
+          }],
+        },
+      }), { status: 200 });
+      if (url.includes('/messages/send')) return new Response(JSON.stringify({ id: 'gmail-intake-delivery-1' }), { status: 200 });
+      return new Response(JSON.stringify({ error: { message: `unexpected request: ${url}` } }), { status: 500 });
+    }));
+
+    await expect(runOrganizationAutomation(
+      fixture.environment,
+      'organization-1',
+      fixture.organization.binding,
+    )).resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 1 });
+
+    const emailRequests = upstreamRequests.filter(({ url }) => url.includes('/messages/send'));
+    expect(emailRequests).toHaveLength(1);
+    const raw = (JSON.parse(emailRequests[0]!.body ?? '{}') as { raw?: string }).raw ?? '';
+    const paddedRaw = `${raw.replaceAll('-', '+').replaceAll('_', '/')}${'='.repeat((4 - raw.length % 4) % 4)}`;
+    const message = new TextDecoder().decode(Uint8Array.from(atob(paddedRaw), (character) => character.charCodeAt(0)));
+    expect(message.split('\r\n\r\n')[1]).toBe('差出人: sender@example.com\r\n件名: 容量超過のお知らせ');
+    expect(message).not.toContain('読者へ送ってはいけない本文です。');
+    expect(message).not.toContain('secret.pdf');
+    expect(upstreamRequests.some(({ url }) => url.includes('ai.example.com'))).toBe(false);
+
+    const audit = await app.fetch(
+      fixture.request('/api/organizations/organization-1/audit/deliveries'),
+      fixture.environment,
+    );
+    await expect(audit.json()).resolves.toMatchObject({
+      data: [{
+        sourceMessageId: expect.any(String),
+        eventId: null,
+        channel: 'email',
+        destination: 'intake-reader@example.com',
+        outcome: 'succeeded',
+        externalId: 'gmail-intake-delivery-1',
+      }],
     });
   });
 
