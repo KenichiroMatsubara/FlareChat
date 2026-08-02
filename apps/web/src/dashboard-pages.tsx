@@ -85,7 +85,7 @@ export const MembersPage = (props: DashboardProps) => {
     event.preventDefault();
     await props.onCreateRecipient({
       name: name.trim(),
-      email: email.trim(),
+      ...(email.trim() ? { email: email.trim() } : {}),
       tags: tags.split(',').map((tag) => tag.trim()).filter(Boolean),
       ...(selectedLineDestinationId ? { lineDestinationId: selectedLineDestinationId } : {}),
     });
@@ -101,7 +101,7 @@ export const MembersPage = (props: DashboardProps) => {
     setEditTags(recipient.tags.join(', '));
     setEditState(recipient.state);
     const manual = recipient.lineDestinations.find((destination) => destination.source === 'manual');
-    setEditManualDestinationId(manual?.destinationId ?? '');
+    setEditManualDestinationId('');
     setEditManualKind(manual?.kind ?? 'user');
   };
   const saveManualLineDestination = async (recipientId: string): Promise<void> => {
@@ -160,7 +160,7 @@ export const MembersPage = (props: DashboardProps) => {
       <form className="member-create-form" onSubmit={(event) => void createRecipient(event)}>
         <label className="member-line-select">LINEアカウント<select value={selectedLineDestinationId} onChange={(event) => selectLineDestination(event.target.value)}><option value="">LINEなしで登録</option>{unassignedDestinations.map((destination) => <option key={destination.id} value={destination.id}>{destination.displayName || '表示名未取得'} · {destinationKindLabel(destination.kind)} · {destination.destinationId}</option>)}</select></label>
         <label>氏名<input ref={nameInputRef} value={name} onChange={(event) => setName(event.target.value)} placeholder="例: 山田 太郎" required /></label>
-        <label>メールアドレス<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="member@example.com" required /></label>
+        <label>メールアドレス（任意）<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="後から設定できます" /></label>
         <label>分類タグ<input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="例: 会員, 2026年度" /></label>
         <button className="primary" disabled={props.memberBusy}><UserPlus size={16} />{props.memberBusy ? '登録中…' : 'メンバーに追加'}</button>
       </form>
@@ -192,7 +192,7 @@ export const MembersPage = (props: DashboardProps) => {
                 </div>)}
               </div>}
               <div className="member-edit-line-manual">
-                <label>LINE IDを手動で設定<input value={editManualDestinationId} onChange={(event) => setEditManualDestinationId(event.target.value)} placeholder="例: U4af498062xxxxxxxxxxxxxxxxxxxxxx" /></label>
+                <label>LINE IDを変更<input value={editManualDestinationId} onChange={(event) => setEditManualDestinationId(event.target.value)} placeholder="変更時のみ完全なIDを入力" /></label>
                 <label>種別<select value={editManualKind} onChange={(event) => setEditManualKind(event.target.value as 'user' | 'group' | 'room')}><option value="user">個人</option><option value="group">グループ</option><option value="room">ルーム</option></select></label>
                 <button type="button" className="secondary" onClick={() => void saveManualLineDestination(recipient.id)} disabled={props.memberBusy || !editManualDestinationId.trim()}>設定</button>
               </div>
@@ -205,12 +205,12 @@ export const MembersPage = (props: DashboardProps) => {
               <div className="member-tags">{recipient.tags.length ? recipient.tags.map((tag) => <span key={tag}>{tag}</span>) : <small>タグなし</small>}</div>
             </div>
             <div className="member-line-details">
-              {recipient.lineDestinations.length ? recipient.lineDestinations.map((destination) => <div key={destination.id}><span className="line-badge"><MessageCircle size={13} />LINE {destinationKindLabel(destination.kind)}{destination.source === 'manual' ? '・手動' : ''}</span><strong>{destination.displayName || recipient.name}</strong><code>{destination.destinationId}</code><button type="button" className="member-copy" aria-label={`${destination.destinationId}をコピー`} onClick={() => void navigator.clipboard.writeText(destination.destinationId)}><Copy size={14} /></button></div>) : <div className="member-line-empty"><MessageCircle size={15} /><span>LINE未連携</span></div>}
+              {recipient.lineDestinations.length ? recipient.lineDestinations.map((destination) => <div key={destination.id}><span className="line-badge"><MessageCircle size={13} />LINE {destinationKindLabel(destination.kind)}{destination.source === 'manual' ? '・手動' : ''}</span><strong>{destination.displayName || recipient.name}</strong><code title="LINE IDは先頭5文字のみ表示しています">{destination.destinationId}</code></div>) : <div className="member-line-empty"><MessageCircle size={15} /><span>LINE未連携</span></div>}
             </div>
             {props.canManage && <button type="button" className="member-edit-button" onClick={() => beginEdit(recipient)}><Pencil size={15} />編集</button>}
           </>}
         </article>)}
-        {visibleRecipients.length === 0 && <div className="member-empty"><UsersRound size={28} /><h3>{props.organizationRecipients.length ? '条件に一致するメンバーがいません' : 'メンバーはまだ登録されていません'}</h3><p>{props.organizationRecipients.length ? '検索条件を変更してください。' : 'LINEアカウントを選ぶか、氏名とメールアドレスを直接入力して追加できます。'}</p></div>}
+        {visibleRecipients.length === 0 && <div className="member-empty"><UsersRound size={28} /><h3>{props.organizationRecipients.length ? '条件に一致するメンバーがいません' : 'メンバーはまだ登録されていません'}</h3><p>{props.organizationRecipients.length ? '検索条件を変更してください。' : 'LINEアカウントと氏名だけで追加できます。メールアドレスやタグは後から編集できます。'}</p></div>}
       </div>
     </section>
   </section>;

@@ -85,7 +85,7 @@ describe('member roster', () => {
             updatedAt: '2026-07-30T00:00:00.000Z',
             lineDestinations: [{
               id: 'line-1',
-              destinationId: 'U1234567890',
+              destinationId: 'U1234…',
               displayName: 'やまだ',
               kind: 'user',
               status: 'discovered',
@@ -94,7 +94,7 @@ describe('member roster', () => {
           }]}
           lineDestinations={[{
             id: 'line-2',
-            destinationId: 'U0987654321',
+            destinationId: 'U0987…',
             displayName: '鈴木 花子',
             kind: 'user',
             status: 'discovered',
@@ -109,7 +109,10 @@ describe('member roster', () => {
     expect(html).toContain('メンバー管理');
     expect(html).toContain('鈴木 花子');
     expect(html).toContain('taro@example.com');
-    expect(html).toContain('U1234567890');
+    expect(html).toContain('U1234…');
+    expect(html).not.toContain('U1234567890');
+    expect(html).toContain('メールアドレス（任意）');
+    expect(html).toContain('後から設定できます');
     expect(html).toContain('LINEからメンバーを追加');
     expect(html).toContain('LINE IDを手動で登録');
     expect(html).toContain('本メンバーに登録');
@@ -132,7 +135,7 @@ describe('member roster', () => {
           lineDestinations={[
             {
               id: 'line-webhook',
-              destinationId: 'Uwebhook00000000000000000000000000',
+              destinationId: 'Uwebh…',
               displayName: '受信 太郎',
               kind: 'user',
               status: 'discovered',
@@ -142,7 +145,7 @@ describe('member roster', () => {
             },
             {
               id: 'line-manual-pending',
-              destinationId: 'Upending000000000000000000000000000',
+              destinationId: 'Upend…',
               displayName: '',
               kind: 'group',
               status: 'discovered',
@@ -157,7 +160,8 @@ describe('member roster', () => {
 
     expect(html).toContain('個人・Webhook検出');
     expect(html).toContain('グループ・手動登録');
-    expect(html).toContain('Upending000000000000000000000000000');
+    expect(html).toContain('Upend…');
+    expect(html).not.toContain('Upending000000000000000000000000000');
     expect(html).not.toContain('pending-line-empty');
   });
 
@@ -184,7 +188,7 @@ describe('member roster', () => {
             updatedAt: '2026-07-30T00:00:00.000Z',
             lineDestinations: [{
               id: 'line-3',
-              destinationId: 'Umanual00000000000000000000000000',
+              destinationId: 'Umanu…',
               displayName: '',
               kind: 'user',
               status: 'discovered',
@@ -197,7 +201,8 @@ describe('member roster', () => {
     );
 
     expect(html).toContain('手動 花子');
-    expect(html).toContain('Umanual00000000000000000000000000');
+    expect(html).toContain('Umanu…');
+    expect(html).not.toContain('Umanual00000000000000000000000000');
     expect(html).toContain('LINE 個人・手動');
   });
 

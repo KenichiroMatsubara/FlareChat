@@ -82,7 +82,7 @@ describe('Fleet Migration', () => {
     } as unknown as Bindings);
 
     expect(receipt).toMatchObject({
-      targetMigration: '0004_manual_line_destination_source.sql',
+      targetMigration: '0005_optional_recipient_email.sql',
       migratedDatabases: 2,
     });
     expect(active.rows<{ display_name: string }>(
@@ -141,10 +141,11 @@ describe('Fleet Migration', () => {
     } as unknown as Bindings);
 
     expect(receipt).toMatchObject({
-      targetMigration: '0004_manual_line_destination_source.sql',
+      targetMigration: '0005_optional_recipient_email.sql',
       migratedDatabases: 1,
     });
     expect(applied.has('0004_manual_line_destination_source.sql')).toBe(true);
+    expect(applied.has('0005_optional_recipient_email.sql')).toBe(true);
   });
 
   it('includes an allocated database that is still in Organization provisioning', async () => {

@@ -36,7 +36,7 @@ describe('Database Access', () => {
     });
 
     expect(ready.schema.currentMigration).toBe(
-      '0004_manual_line_destination_source.sql',
+      '0005_optional_recipient_email.sql',
     );
     await expect(ready.raw.prepare(
       'SELECT display_name FROM line_destinations',
