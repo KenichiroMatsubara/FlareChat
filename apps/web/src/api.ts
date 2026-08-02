@@ -104,8 +104,11 @@ export interface OrganizationAgentRule {
   organizationId: string;
   name: string;
   state: 'active' | 'suspended' | 'archived';
+  executionMode: 'read_only' | 'approval' | 'unattended';
   promptId: string;
   selectionPolicy: Record<string, unknown>;
+  permittedRecipientListIds: string[];
+  permittedLineListIds: string[];
   priority: number;
   revision: number;
   createdAt: string;
@@ -134,6 +137,15 @@ export interface AgentRunTranscript {
   messages: Array<{ role: string; content: string }>;
   finalOutput: string;
   error: string | null;
+}
+
+export interface ProposedAction {
+  id: string;
+  runId: string;
+  tool: 'send_line_message' | 'create_scheduled_event';
+  arguments: Record<string, unknown>;
+  status: 'pending' | 'approved' | 'rejected' | 'expired' | 'failed';
+  expiresAt: string;
 }
 
 export interface OrganizationTypedList {
@@ -337,8 +349,11 @@ export const api = {
   createOrganizationPrompt: (organizationId: string, input: { name: string; instructions: string }): Promise<OrganizationPrompt> => request(`/api/organizations/${encodeURIComponent(organizationId)}/prompts`, { method: 'POST', body: JSON.stringify(input) }),
   updateOrganizationPrompt: (organizationId: string, promptId: string, input: { name?: string; instructions?: string }): Promise<Partial<OrganizationPrompt> & { id: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/prompts/${encodeURIComponent(promptId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   removeOrganizationPrompt: (organizationId: string, promptId: string): Promise<{ id: string; removed: boolean }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/prompts/${encodeURIComponent(promptId)}`, { method: 'DELETE' }),
-  createOrganizationAgentRule: (organizationId: string, input: { name: string; promptId: string; state: 'active' | 'suspended'; selectionPolicy: Record<string, unknown>; priority?: number }): Promise<OrganizationAgentRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-rules`, { method: 'POST', body: JSON.stringify(input) }),
-  updateOrganizationAgentRule: (organizationId: string, agentRuleId: string, input: { state?: 'active' | 'suspended' | 'archived'; promptId?: string; selectionPolicy?: Record<string, unknown> }): Promise<OrganizationAgentRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-rules/${encodeURIComponent(agentRuleId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  createOrganizationAgentRule: (organizationId: string, input: { name: string; promptId: string; state: 'active' | 'suspended'; executionMode?: 'read_only' | 'approval' | 'unattended'; selectionPolicy: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[]; priority?: number }): Promise<OrganizationAgentRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-rules`, { method: 'POST', body: JSON.stringify(input) }),
+  updateOrganizationAgentRule: (organizationId: string, agentRuleId: string, input: { state?: 'active' | 'suspended' | 'archived'; executionMode?: 'read_only' | 'approval' | 'unattended'; promptId?: string; selectionPolicy?: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[] }): Promise<OrganizationAgentRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-rules/${encodeURIComponent(agentRuleId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  agentProposedActions: (organizationId: string, runId: string): Promise<ProposedAction[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-runs/${encodeURIComponent(runId)}/proposed-actions`),
+  decideProposedAction: (organizationId: string, actionId: string, decision: 'approve' | 'reject'): Promise<ProposedAction> => request(`/api/organizations/${encodeURIComponent(organizationId)}/proposed-actions/${encodeURIComponent(actionId)}/${decision}`, { method: 'POST', body: '{}' }),
+  decideProposedActionBatch: (organizationId: string, runId: string, decision: 'approve' | 'reject'): Promise<ProposedAction[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-runs/${encodeURIComponent(runId)}/proposed-actions/${decision}`, { method: 'POST', body: '{}' }),
   organizationConnections: (organizationId: string): Promise<OrganizationConnections> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections`),
   saveOrganizationLineConnection: (organizationId: string, input: {
     channelAccessToken?: string | undefined;

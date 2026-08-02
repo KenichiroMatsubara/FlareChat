@@ -4,12 +4,13 @@ import { decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptograp
 import { fromBase64Url } from './encoding';
 import { buildAiEventDetailsRequest, type AiEventDetailsRequest, type EventDetails, type MailExtraction, type TaskRoleDescription } from './event-details';
 import { createTaskWorkflow } from './tasks';
-import { deliverLineBatch, deliverSourceMessageEmail } from './delivery';
+import { deliverLineBatch, deliverSourceMessageEmail, recordDeliveryAttempt } from './delivery';
 import type { SourceAttachmentContent } from './drive-attachments';
 import type { GoogleTokenSet } from './google';
 import { productionAutomationDependencies } from './automation/providers';
 import type { AutomationDependencies, GoogleAutomationPort } from './automation/providers';
-import { AGENT_TRANSCRIPT_RETENTION_DAYS, AgentRunFailure, runReadOnlyAgent, writeAgentRunTranscript } from './agent-runs';
+import { AGENT_TRANSCRIPT_RETENTION_DAYS, AgentRunFailure, expireProposedActions, runAgent, writeAgentRunTranscript } from './agent-runs';
+import type { AgentExecutionMode, AgentWritePort } from './agent-runs';
 import { createDatabaseAccess } from './database-access';
 import type { Bindings } from './types';
 import { validateAttachmentIntake } from '@mail/domain';
@@ -18,6 +19,8 @@ import { controlDatabase as drizzleControlDatabase, organizationDatabase as driz
 import { organizationKeys, organizations } from './storage/control-schema';
 import {
   agentRules,
+  agentRulePermittedLineLists,
+  agentRulePermittedRecipientLists,
   agentRuns,
   connections,
   deliveries,
@@ -108,6 +111,9 @@ interface ActiveAgentRule {
   promptId: string;
   revision: number;
   selectionPolicy: Record<string, unknown>;
+  executionMode: AgentExecutionMode;
+  permittedRecipientListIds: string[];
+  permittedLineListIds: string[];
 }
 
 export interface RuleSource {
@@ -376,6 +382,70 @@ const agentConnection = async (
   return { apiKey: credential.apiKey, baseUrl: credential.baseUrl || LEGACY_AI_BASE_URL, model: credential.model };
 };
 
+const createAgentWritePort = (input: {
+  dependencies: AutomationDependencies;
+  env: Bindings;
+  database: D1Database;
+  organizationId: string;
+  sourceMessageId: string;
+  agentRuleId: string;
+  googleAccessToken: string;
+}): AgentWritePort => ({
+  sendLine: async ({ destination, message }) => {
+    const accessToken = await lineAccessToken(input.env, input.organizationId, input.database);
+    if (!accessToken) return recordDeliveryAttempt(input.database, { sourceMessageId: input.sourceMessageId, destination, channel: 'line', outcome: 'failed', externalId: null });
+    return (await deliverLineBatch({ database: input.database, accessToken, sourceMessageId: input.sourceMessageId, destinationId: destination, messages: [message] }))[0];
+  },
+  createScheduledEvent: async (arguments_) => {
+    const database = drizzleOrganizationDatabase(input.database);
+    const eventId = crypto.randomUUID();
+    let googleEventId: string | null = null;
+    let outcome: 'succeeded' | 'failed' = 'failed';
+    try {
+      const created = await input.dependencies.google.request<CalendarEvent>(input.googleAccessToken, 'https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+        method: 'POST',
+        body: JSON.stringify({
+          summary: arguments_.title,
+          description: arguments_.description ?? '',
+          location: arguments_.location ?? '',
+          start: { dateTime: arguments_.startsAt },
+          end: { dateTime: arguments_.endsAt },
+          attendees: [{ email: arguments_.destination }],
+        }),
+      });
+      if (!created.id) throw new Error('Google Calendar did not return an event ID.');
+      googleEventId = created.id;
+      outcome = 'succeeded';
+    } catch {
+      outcome = 'failed';
+    }
+    await database.insert(events).values({
+      id: eventId, organizationId: input.organizationId, ruleId: null, agentRuleId: input.agentRuleId,
+      sourceMessageId: input.sourceMessageId, googleEventId, title: arguments_.title,
+      startsAt: arguments_.startsAt, endsAt: arguments_.endsAt, location: arguments_.location ?? '',
+      description: arguments_.description ?? '', status: outcome === 'succeeded' ? 'scheduled' : 'exception',
+      createdAt: now(), updatedAt: now(),
+    }).run();
+    const delivery = await recordDeliveryAttempt(input.database, { eventId, sourceMessageId: input.sourceMessageId, destination: arguments_.destination, channel: 'calendar', outcome, externalId: googleEventId });
+    return delivery;
+  },
+});
+
+export const agentWritePortForApproval = async (input: {
+  env: Bindings;
+  database: D1Database;
+  organizationId: string;
+  sourceMessageId: string;
+  agentRuleId: string;
+}): Promise<AgentWritePort> => {
+  const inbox = await drizzleOrganizationDatabase(input.database).select().from(googleConnections).where(and(
+    eq(googleConnections.kind, 'automation_inbox'), eq(googleConnections.status, 'active'),
+  )).limit(1).get();
+  if (!inbox) throw new Error('Automation Inbox is not available.');
+  const googleAccessToken = await accessTokenForInbox(input.env, input.organizationId, input.database, inbox, productionDependencies);
+  return createAgentWritePort({ ...input, dependencies: productionDependencies, googleAccessToken });
+};
+
 const runMatchingAgentRules = async (input: {
   dependencies: AutomationDependencies;
   env: Bindings;
@@ -386,6 +456,7 @@ const runMatchingAgentRules = async (input: {
   subject: string;
   body: string;
   attachments: ConvertedAttachment[];
+  googleAccessToken: string;
   rules: ActiveAgentRule[];
 }): Promise<boolean> => {
   if (!input.rules.length) return false;
@@ -403,7 +474,7 @@ const runMatchingAgentRules = async (input: {
     const runId = crypto.randomUUID();
     const startedAt = now();
     const source = { id: input.sourceMessageId, sender: input.sender, subject: input.subject, body: input.body, attachments: input.attachments };
-    let runResult: Awaited<ReturnType<typeof runReadOnlyAgent>> | null = null;
+    let runResult: Awaited<ReturnType<typeof runAgent>> | null = null;
     let runError: string | null = null;
     let promptRevision = 0;
     try {
@@ -412,12 +483,29 @@ const runMatchingAgentRules = async (input: {
       if (!prompt) throw new Error('Agent Rule Prompt was not found.');
       promptRevision = prompt.revision;
       if (!connection) throw new Error(connectionError ?? 'Agent Rule AI Connection failed.');
-      runResult = await runReadOnlyAgent({
-        database,
+      const [recipientRows, lineRows] = await Promise.all([
+        rule.permittedRecipientListIds.length ? database.select({ destination: listItems.value }).from(listItems).where(and(inArray(listItems.listId, rule.permittedRecipientListIds), eq(listItems.enabled, true))).all() : [],
+        rule.permittedLineListIds.length ? database.select({ destination: listItems.value }).from(listItems).where(and(inArray(listItems.listId, rule.permittedLineListIds), eq(listItems.enabled, true))).all() : [],
+      ]);
+      const permittedRecipientDestinations = [...new Set(recipientRows.map(({ destination }) => destination))];
+      const permittedLineDestinations = [...new Set(lineRows.map(({ destination }) => destination))];
+      const writes = createAgentWritePort({
+        dependencies: input.dependencies, env: input.env, database: input.database,
+        organizationId: input.organizationId, sourceMessageId: input.sourceMessageId,
+        agentRuleId: rule.id, googleAccessToken: input.googleAccessToken,
+      });
+      runResult = await runAgent({
+        database: input.database,
+        runId,
+        agentRuleId: rule.id,
         model: input.dependencies.agent,
         connection,
         prompt: prompt.instructions,
         source,
+        executionMode: rule.executionMode,
+        permittedRecipientDestinations,
+        permittedLineDestinations,
+        writes,
       });
     } catch (error) {
       if (error instanceof AgentRunFailure) runResult = error.result;
@@ -689,7 +777,7 @@ const processOrganizationMessage = async (
       selectionPolicy: automationRules.selectionPolicy,
       taskRoleIds: automationRules.taskRoleIds,
     }).from(automationRules).where(eq(automationRules.status, 'active')).orderBy(automationRules.priority).all(),
-    db.select({ id: agentRules.id, priority: agentRules.priority, promptId: agentRules.promptId, revision: agentRules.currentRevision, selectionPolicy: agentRules.selectionPolicy })
+    db.select({ id: agentRules.id, priority: agentRules.priority, promptId: agentRules.promptId, revision: agentRules.currentRevision, selectionPolicy: agentRules.selectionPolicy, executionMode: agentRules.executionMode })
       .from(agentRules).where(eq(agentRules.status, 'active')).orderBy(agentRules.priority).all(),
   ]);
   const activeRuleIds = activeRules.map(({ id }) => id);
@@ -698,6 +786,11 @@ const processOrganizationMessage = async (
       .where(inArray(rulePermittedRecipientLists.ruleId, activeRuleIds)).all(),
     db.select().from(rulePermittedLineLists)
       .where(inArray(rulePermittedLineLists.ruleId, activeRuleIds)).all(),
+  ]) : [[], []];
+  const activeAgentRuleIds = activeAgentRuleRows.map(({ id }) => id);
+  const [agentRecipientLists, agentLineLists] = activeAgentRuleIds.length ? await Promise.all([
+    db.select().from(agentRulePermittedRecipientLists).where(inArray(agentRulePermittedRecipientLists.agentRuleId, activeAgentRuleIds)).all(),
+    db.select().from(agentRulePermittedLineLists).where(inArray(agentRulePermittedLineLists.agentRuleId, activeAgentRuleIds)).all(),
   ]) : [[], []];
   const source = { sender: senderOf(message.payload), subject, body, ...(message.labelIds === undefined ? {} : { labels: message.labelIds }) };
   const rule = selectActiveRule(activeRules.flatMap((row) => {
@@ -713,7 +806,12 @@ const processOrganizationMessage = async (
   }), source);
   const matchingAgentRules = activeAgentRuleRows.flatMap((row): ActiveAgentRule[] => {
     try {
-      const candidate = { id: row.id, priority: row.priority, promptId: row.promptId, revision: row.revision, selectionPolicy: JSON.parse(row.selectionPolicy) as Record<string, unknown> };
+      const candidate = {
+        id: row.id, priority: row.priority, promptId: row.promptId, revision: row.revision,
+        selectionPolicy: JSON.parse(row.selectionPolicy) as Record<string, unknown>, executionMode: row.executionMode,
+        permittedRecipientListIds: agentRecipientLists.flatMap((reference) => reference.agentRuleId === row.id ? [reference.listId] : []),
+        permittedLineListIds: agentLineLists.flatMap((reference) => reference.agentRuleId === row.id ? [reference.listId] : []),
+      };
       return ruleMatches(candidate, source) ? [candidate] : [];
     } catch {
       return [];
@@ -809,6 +907,7 @@ const processOrganizationMessage = async (
     subject,
     body,
     attachments: sharedConvertedAttachments ?? [],
+    googleAccessToken: accessToken,
     rules: matchingAgentRules,
   });
   if (!rule) {
@@ -1012,6 +1111,7 @@ const runOrganizationAutomationWithGoogle = async (
     eq(googleConnections.enabled, true),
   )).limit(1).get();
   if (!inbox) throw new Error('有効な Automation Inbox が見つかりません。');
+  await expireProposedActions(database);
   const before = await automationCounts(database);
   await runOrganizationInbox(dependencies, env, organizationId, database, inbox);
   const after = await automationCounts(database);
@@ -1040,6 +1140,7 @@ const runEnabledAutomationsWithDependencies = async (env: Bindings, dependencies
       databaseId: organization.databaseId,
     });
     const orgDb = drizzleOrganizationDatabase(database.raw);
+    await expireProposedActions(database.raw);
     const inboxes = await orgDb.select().from(googleConnections).where(and(
       eq(googleConnections.kind, 'automation_inbox'),
       eq(googleConnections.status, 'active'),

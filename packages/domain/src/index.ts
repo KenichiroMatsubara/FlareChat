@@ -2,6 +2,7 @@ export type OrganizationStatus = 'provisioning' | 'active' | 'suspended' | 'fail
 export type ListKind = 'source' | 'recipient' | 'line';
 export type RuleStatus = 'draft' | 'active' | 'suspended' | 'archived';
 export type AgentRuleStatus = 'active' | 'suspended' | 'archived';
+export type AgentExecutionMode = 'read_only' | 'approval' | 'unattended';
 export type EventStatus = 'draft' | 'scheduled' | 'cancelled' | 'exception';
 export type AttendanceStatus = 'unanswered' | 'attending' | 'not_attending';
 
@@ -62,8 +63,11 @@ export interface AgentRule {
   organizationId: string;
   name: string;
   status: AgentRuleStatus;
+  executionMode: AgentExecutionMode;
   promptId: string;
   selectionPolicy: Record<string, unknown>;
+  permittedRecipientListIds: string[];
+  permittedLineListIds: string[];
   priority: number;
   revision: number;
   createdAt: string;

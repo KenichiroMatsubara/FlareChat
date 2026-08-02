@@ -1,10 +1,10 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
 import { and, asc, count, desc, eq, gt, gte, inArray, isNull, max, ne } from 'drizzle-orm';
 
 import { canUpdateAttendance, discoveredLineDestinations, displayLineDestinationId, displayRecipientIdentifier, verifyLineWebhookSignature } from '@mail/domain';
 
-import { createAutomation, LEGACY_AI_BASE_URL } from './automation';
+import { agentWritePortForApproval, createAutomation, LEGACY_AI_BASE_URL } from './automation';
 import { decrypt, encrypt } from './cryptography';
 import { randomToken } from './encoding';
 import { readRecoveryReceipt, restoreDeliveryRecordFromReceipt } from './recovery-receipts';
@@ -17,13 +17,15 @@ import { typedListRoutes } from './routes/typed-lists';
 import type { Bindings, ConnectionRow, SessionRow } from './types';
 import type { CipherEnvelope } from './cryptography';
 import { openAiChatCompletionsUrl, type EventDetails, type MailExtraction, type TaskDetails } from './event-details';
-import { readAgentRunTranscript } from './agent-runs';
+import { approveProposedAction, expireProposedActions, proposedActionsForRun, readAgentRunTranscript, rejectProposedAction } from './agent-runs';
 import { createTaskWorkflow } from './tasks';
 import { controlDatabase as drizzleControlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
 import { createOrganizationStore } from './storage/organization-store';
 import { identities, members, organizations, recoveryRequests } from './storage/control-schema';
 import {
   agentRuleRevisions,
+  agentRulePermittedLineLists,
+  agentRulePermittedRecipientLists,
   agentRules,
   agentRuns,
   attendance,
@@ -49,6 +51,7 @@ import {
   operationalTaskRoles,
   promptRevisions,
   prompts,
+  proposedActions,
   taskRoleAssignments,
 } from './storage/organization-schema';
 
@@ -626,11 +629,14 @@ app.delete('/api/organizations/:organizationId/prompts/:promptId', async (contex
   }
 });
 
-const agentRuleView = (row: typeof agentRules.$inferSelect) => ({
+const agentRuleView = (row: typeof agentRules.$inferSelect, permittedRecipientListIds: string[] = [], permittedLineListIds: string[] = []) => ({
   id: row.id,
   organizationId: row.organizationId,
   name: row.name,
   state: row.status,
+  executionMode: row.executionMode,
+  permittedRecipientListIds,
+  permittedLineListIds,
   promptId: row.promptId,
   selectionPolicy: JSON.parse(row.selectionPolicy) as Record<string, unknown>,
   priority: row.priority,
@@ -645,7 +651,17 @@ app.get('/api/organizations/:organizationId/agent-rules', async (context) => {
     if (!access.database) throw new Error('Organization database is not available.');
     const rows = await drizzleOrganizationDatabase(access.database).select().from(agentRules)
       .orderBy(desc(agentRules.priority), asc(agentRules.name)).all();
-    return json(context, rows.map(agentRuleView));
+    const database = drizzleOrganizationDatabase(access.database);
+    const ids = rows.map(({ id }) => id);
+    const [recipientReferences, lineReferences] = ids.length ? await Promise.all([
+      database.select().from(agentRulePermittedRecipientLists).where(inArray(agentRulePermittedRecipientLists.agentRuleId, ids)).all(),
+      database.select().from(agentRulePermittedLineLists).where(inArray(agentRulePermittedLineLists.agentRuleId, ids)).all(),
+    ]) : [[], []];
+    return json(context, rows.map((row) => agentRuleView(
+      row,
+      recipientReferences.flatMap((reference) => reference.agentRuleId === row.id ? [reference.listId] : []),
+      lineReferences.flatMap((reference) => reference.agentRuleId === row.id ? [reference.listId] : []),
+    )));
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Agent Rules could not be loaded.', 403);
   }
@@ -656,13 +672,17 @@ app.post('/api/organizations/:organizationId/agent-rules', async (context) => {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
     if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Agent Rules can only be changed by an Owner or Admin.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
-    const input = await context.req.json<{ name?: string; promptId?: string; state?: string; selectionPolicy?: Record<string, unknown>; priority?: number }>();
+    const input = await context.req.json<{ name?: string; promptId?: string; state?: string; executionMode?: string; selectionPolicy?: Record<string, unknown>; permittedRecipientListIds?: unknown; permittedLineListIds?: unknown; priority?: number }>();
     const name = input.name?.trim() ?? '';
     const promptId = input.promptId?.trim() ?? '';
     const state = input.state ?? 'active';
     if (!name || name.length > 100) return failure(context, 'An Agent Rule name of at most 100 characters is required.');
     if (!promptId) return failure(context, 'An Agent Rule Prompt is required.');
     if (!['active', 'suspended', 'archived'].includes(state)) return failure(context, 'Unsupported Agent Rule State.');
+    const executionMode = input.executionMode ?? 'approval';
+    if (!['read_only', 'approval', 'unattended'].includes(executionMode)) return failure(context, 'Unsupported Agent Rule Execution Mode.');
+    if (input.permittedRecipientListIds !== undefined && (!Array.isArray(input.permittedRecipientListIds) || input.permittedRecipientListIds.some((id) => typeof id !== 'string' || !id.trim()))) return failure(context, 'Permitted Calendar Recipient List IDs must be an array of stable identifiers.');
+    if (input.permittedLineListIds !== undefined && (!Array.isArray(input.permittedLineListIds) || input.permittedLineListIds.some((id) => typeof id !== 'string' || !id.trim()))) return failure(context, 'Permitted LINE Destination List IDs must be an array of stable identifiers.');
     const database = drizzleOrganizationDatabase(access.database);
     const prompt = await database.select({ id: prompts.id }).from(prompts).where(and(
       eq(prompts.id, promptId),
@@ -673,11 +693,22 @@ app.post('/api/organizations/:organizationId/agent-rules', async (context) => {
     const timestamp = now();
     const selectionPolicy = JSON.stringify(input.selectionPolicy ?? {});
     const priority = Number.isInteger(input.priority) ? input.priority! : 0;
+    const permittedRecipientListIds = [...new Set((input.permittedRecipientListIds ?? []) as string[])];
+    const permittedLineListIds = [...new Set((input.permittedLineListIds ?? []) as string[])];
+    const permittedListIds = [...permittedRecipientListIds, ...permittedLineListIds];
+    if (permittedListIds.length) {
+      const permittedLists = await database.select({ id: organizationLists.id, kind: organizationLists.kind }).from(organizationLists).where(inArray(organizationLists.id, permittedListIds)).all();
+      const listKinds = new Map(permittedLists.map((list) => [list.id, list.kind]));
+      if (permittedRecipientListIds.some((listId) => listKinds.get(listId) !== 'recipient')) return failure(context, 'Every permitted Calendar Recipient List must belong to the Organization and have recipient kind.', 409);
+      if (permittedLineListIds.some((listId) => listKinds.get(listId) !== 'line')) return failure(context, 'Every permitted LINE Destination List must belong to the Organization and have line kind.', 409);
+    }
     await database.batch([
-      database.insert(agentRules).values({ id, organizationId: access.organization.id, name, status: state as 'active' | 'suspended' | 'archived', promptId, selectionPolicy, priority, currentRevision: 1, createdAt: timestamp, updatedAt: timestamp }),
-      database.insert(agentRuleRevisions).values({ id: crypto.randomUUID(), agentRuleId: id, revision: 1, promptId, selectionPolicy, createdAt: timestamp }),
+      database.insert(agentRules).values({ id, organizationId: access.organization.id, name, status: state as 'active' | 'suspended' | 'archived', executionMode: executionMode as 'read_only' | 'approval' | 'unattended', promptId, selectionPolicy, priority, currentRevision: 1, createdAt: timestamp, updatedAt: timestamp }),
+      database.insert(agentRuleRevisions).values({ id: crypto.randomUUID(), agentRuleId: id, revision: 1, promptId, selectionPolicy, executionMode: executionMode as 'read_only' | 'approval' | 'unattended', permittedRecipientListIds: JSON.stringify(permittedRecipientListIds), permittedLineListIds: JSON.stringify(permittedLineListIds), createdAt: timestamp }),
+      ...permittedRecipientListIds.map((listId) => database.insert(agentRulePermittedRecipientLists).values({ agentRuleId: id, listId })),
+      ...permittedLineListIds.map((listId) => database.insert(agentRulePermittedLineLists).values({ agentRuleId: id, listId })),
     ]);
-    return json(context, agentRuleView({ id, organizationId: access.organization.id, name, status: state as 'active' | 'suspended' | 'archived', promptId, selectionPolicy, priority, currentRevision: 1, createdAt: timestamp, updatedAt: timestamp }), 201);
+    return json(context, agentRuleView({ id, organizationId: access.organization.id, name, status: state as 'active' | 'suspended' | 'archived', executionMode: executionMode as 'read_only' | 'approval' | 'unattended', promptId, selectionPolicy, priority, currentRevision: 1, createdAt: timestamp, updatedAt: timestamp }, permittedRecipientListIds, permittedLineListIds), 201);
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Agent Rule could not be created.', 409);
   }
@@ -688,8 +719,11 @@ app.patch('/api/organizations/:organizationId/agent-rules/:agentRuleId', async (
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
     if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Agent Rules can only be changed by an Owner or Admin.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
-    const input = await context.req.json<{ name?: string; promptId?: string; state?: string; selectionPolicy?: Record<string, unknown>; priority?: number }>();
+    const input = await context.req.json<{ name?: string; promptId?: string; state?: string; executionMode?: string; selectionPolicy?: Record<string, unknown>; permittedRecipientListIds?: unknown; permittedLineListIds?: unknown; priority?: number }>();
     if (input.state !== undefined && !['active', 'suspended', 'archived'].includes(input.state)) return failure(context, 'Unsupported Agent Rule State.');
+    if (input.executionMode !== undefined && !['read_only', 'approval', 'unattended'].includes(input.executionMode)) return failure(context, 'Unsupported Agent Rule Execution Mode.');
+    if (input.permittedRecipientListIds !== undefined && (!Array.isArray(input.permittedRecipientListIds) || input.permittedRecipientListIds.some((listId) => typeof listId !== 'string' || !listId.trim()))) return failure(context, 'Permitted Calendar Recipient List IDs must be an array of stable identifiers.');
+    if (input.permittedLineListIds !== undefined && (!Array.isArray(input.permittedLineListIds) || input.permittedLineListIds.some((listId) => typeof listId !== 'string' || !listId.trim()))) return failure(context, 'Permitted LINE Destination List IDs must be an array of stable identifiers.');
     const name = input.name?.trim();
     const promptId = input.promptId?.trim();
     if (name !== undefined && (!name || name.length > 100)) return failure(context, 'An Agent Rule name of at most 100 characters is required.');
@@ -702,25 +736,54 @@ app.patch('/api/organizations/:organizationId/agent-rules/:agentRuleId', async (
       const prompt = await database.select({ id: prompts.id }).from(prompts).where(and(eq(prompts.id, promptId), eq(prompts.organizationId, access.organization.id))).get();
       if (!prompt) return failure(context, 'Agent Rule Prompt was not found.', 409);
     }
-    const configurationChanged = promptId !== undefined || input.selectionPolicy !== undefined;
+    const permittedRecipientListIds = input.permittedRecipientListIds === undefined ? undefined : [...new Set(input.permittedRecipientListIds as string[])];
+    const permittedLineListIds = input.permittedLineListIds === undefined ? undefined : [...new Set(input.permittedLineListIds as string[])];
+    const permittedListIds = [...(permittedRecipientListIds ?? []), ...(permittedLineListIds ?? [])];
+    if (permittedListIds.length) {
+      const permittedLists = await database.select({ id: organizationLists.id, kind: organizationLists.kind }).from(organizationLists).where(inArray(organizationLists.id, permittedListIds)).all();
+      const listKinds = new Map(permittedLists.map((list) => [list.id, list.kind]));
+      if (permittedRecipientListIds?.some((listId) => listKinds.get(listId) !== 'recipient')) return failure(context, 'Every permitted Calendar Recipient List must belong to the Organization and have recipient kind.', 409);
+      if (permittedLineListIds?.some((listId) => listKinds.get(listId) !== 'line')) return failure(context, 'Every permitted LINE Destination List must belong to the Organization and have line kind.', 409);
+    }
+    const configurationChanged = promptId !== undefined || input.selectionPolicy !== undefined || input.executionMode !== undefined || permittedRecipientListIds !== undefined || permittedLineListIds !== undefined;
     const revision = configurationChanged ? existing.currentRevision + 1 : existing.currentRevision;
     const timestamp = now();
     const nextPromptId = promptId ?? existing.promptId;
     const nextSelectionPolicy = input.selectionPolicy === undefined ? existing.selectionPolicy : JSON.stringify(input.selectionPolicy);
+    const [currentRecipientReferences, currentLineReferences] = await Promise.all([
+      database.select({ listId: agentRulePermittedRecipientLists.listId }).from(agentRulePermittedRecipientLists).where(eq(agentRulePermittedRecipientLists.agentRuleId, id)).all(),
+      database.select({ listId: agentRulePermittedLineLists.listId }).from(agentRulePermittedLineLists).where(eq(agentRulePermittedLineLists.agentRuleId, id)).all(),
+    ]);
+    const nextRecipientListIds = permittedRecipientListIds ?? currentRecipientReferences.map(({ listId }) => listId);
+    const nextLineListIds = permittedLineListIds ?? currentLineReferences.map(({ listId }) => listId);
+    const nextExecutionMode = (input.executionMode ?? existing.executionMode) as 'read_only' | 'approval' | 'unattended';
     await database.batch([
       database.update(agentRules).set({
         ...(name === undefined ? {} : { name }),
         ...(input.state === undefined ? {} : { status: input.state as 'active' | 'suspended' | 'archived' }),
+        ...(input.executionMode === undefined ? {} : { executionMode: input.executionMode as 'read_only' | 'approval' | 'unattended' }),
         ...(input.priority === undefined || !Number.isInteger(input.priority) ? {} : { priority: input.priority }),
         promptId: nextPromptId,
         selectionPolicy: nextSelectionPolicy,
         currentRevision: revision,
         updatedAt: timestamp,
       }).where(eq(agentRules.id, id)),
-      ...(configurationChanged ? [database.insert(agentRuleRevisions).values({ id: crypto.randomUUID(), agentRuleId: id, revision, promptId: nextPromptId, selectionPolicy: nextSelectionPolicy, createdAt: timestamp })] : []),
+      ...(configurationChanged ? [database.insert(agentRuleRevisions).values({ id: crypto.randomUUID(), agentRuleId: id, revision, promptId: nextPromptId, selectionPolicy: nextSelectionPolicy, executionMode: nextExecutionMode, permittedRecipientListIds: JSON.stringify(nextRecipientListIds), permittedLineListIds: JSON.stringify(nextLineListIds), createdAt: timestamp })] : []),
+    ]);
+    if (permittedRecipientListIds !== undefined) await database.batch([
+      database.delete(agentRulePermittedRecipientLists).where(eq(agentRulePermittedRecipientLists.agentRuleId, id)),
+      ...permittedRecipientListIds.map((listId) => database.insert(agentRulePermittedRecipientLists).values({ agentRuleId: id, listId })),
+    ]);
+    if (permittedLineListIds !== undefined) await database.batch([
+      database.delete(agentRulePermittedLineLists).where(eq(agentRulePermittedLineLists.agentRuleId, id)),
+      ...permittedLineListIds.map((listId) => database.insert(agentRulePermittedLineLists).values({ agentRuleId: id, listId })),
     ]);
     const updated = await database.select().from(agentRules).where(eq(agentRules.id, id)).get();
-    return json(context, agentRuleView(updated!));
+    const [recipientReferences, lineReferences] = await Promise.all([
+      database.select({ listId: agentRulePermittedRecipientLists.listId }).from(agentRulePermittedRecipientLists).where(eq(agentRulePermittedRecipientLists.agentRuleId, id)).all(),
+      database.select({ listId: agentRulePermittedLineLists.listId }).from(agentRulePermittedLineLists).where(eq(agentRulePermittedLineLists.agentRuleId, id)).all(),
+    ]);
+    return json(context, agentRuleView(updated!, recipientReferences.map(({ listId }) => listId), lineReferences.map(({ listId }) => listId)));
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Agent Rule could not be updated.', 409);
   }
@@ -769,6 +832,66 @@ app.get('/api/organizations/:organizationId/agent-runs/:runId/transcript', async
     return json(context, transcript);
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Run Transcript could not be loaded.', 403);
+  }
+});
+
+app.get('/api/organizations/:organizationId/agent-runs/:runId/proposed-actions', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const runId = context.req.param('runId');
+    const run = await drizzleOrganizationDatabase(access.database).select({ id: agentRuns.id }).from(agentRuns).where(eq(agentRuns.id, runId)).get();
+    if (!run) return failure(context, 'Agent Rule run was not found.', 404);
+    await expireProposedActions(access.database);
+    return json(context, await proposedActionsForRun(access.database, runId));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Proposed Actions could not be loaded.', 403);
+  }
+});
+
+const proposedActionDecision = async (context: Context<{ Bindings: Bindings }>, decision: 'approve' | 'reject') => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId') ?? '');
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Proposed Actions can only be decided by an Owner, Admin, or Operator.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const actionId = context.req.param('actionId') ?? '';
+    const action = await drizzleOrganizationDatabase(access.database).select().from(proposedActions).where(eq(proposedActions.id, actionId)).get();
+    if (!action) return failure(context, 'Proposed Action was not found.', 404);
+    if (decision === 'reject') return json(context, await rejectProposedAction(access.database, actionId, access.session.identity_id));
+    const run = await drizzleOrganizationDatabase(access.database).select({ sourceMessageId: agentRuns.sourceMessageId }).from(agentRuns).where(eq(agentRuns.id, action.agentRunId)).get();
+    if (!run) return failure(context, 'Agent Rule run was not found.', 404);
+    const writes = await agentWritePortForApproval({ env: context.env, database: access.database, organizationId: access.organization.id, sourceMessageId: run.sourceMessageId, agentRuleId: action.agentRuleId });
+    return json(context, await approveProposedAction({ database: access.database, actionId, actorIdentityId: access.session.identity_id, writes }));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Proposed Action could not be decided.', 409);
+  }
+};
+
+app.post('/api/organizations/:organizationId/proposed-actions/:actionId/approve', (context) => proposedActionDecision(context, 'approve'));
+app.post('/api/organizations/:organizationId/proposed-actions/:actionId/reject', (context) => proposedActionDecision(context, 'reject'));
+
+app.post('/api/organizations/:organizationId/agent-runs/:runId/proposed-actions/:decision', async (context) => {
+  try {
+    const decision = context.req.param('decision');
+    if (decision !== 'approve' && decision !== 'reject') return failure(context, 'Unsupported Proposed Action decision.');
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Proposed Actions can only be decided by an Owner, Admin, or Operator.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const runId = context.req.param('runId');
+    const run = await drizzleOrganizationDatabase(access.database).select({ sourceMessageId: agentRuns.sourceMessageId, agentRuleId: agentRuns.agentRuleId }).from(agentRuns).where(eq(agentRuns.id, runId)).get();
+    if (!run) return failure(context, 'Agent Rule run was not found.', 404);
+    await expireProposedActions(access.database);
+    const pending = (await proposedActionsForRun(access.database, runId)).filter((action) => action.status === 'pending');
+    const writes = decision === 'approve' ? await agentWritePortForApproval({ env: context.env, database: access.database, organizationId: access.organization.id, sourceMessageId: run.sourceMessageId, agentRuleId: run.agentRuleId }) : null;
+    const decided = [];
+    for (const action of pending) {
+      decided.push(decision === 'approve'
+        ? await approveProposedAction({ database: access.database, actionId: action.id, actorIdentityId: access.session.identity_id, writes: writes! })
+        : await rejectProposedAction(access.database, action.id, access.session.identity_id));
+    }
+    return json(context, decided);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Proposed Action batch could not be decided.', 409);
   }
 });
 

@@ -5,7 +5,7 @@ import { isRouteErrorResponse, NavLink, Outlet, useLoaderData, useNavigate, useR
 import type { AppState } from '@mail/domain';
 
 import { api } from './api';
-import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationAgentRule, OrganizationConnections, OrganizationDashboard, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationRecipient, OrganizationRecipientInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, RecipientLineDestinationInput, TaskRoleConfiguration } from './api';
+import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationAgentRule, OrganizationConnections, OrganizationDashboard, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationRecipient, OrganizationRecipientInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, ProposedAction, RecipientLineDestinationInput, TaskRoleConfiguration } from './api';
 import { defaultOrganizationName, setupPhaseLabel, SignedOutEntry } from './entry';
 import { Dashboard } from './dashboard';
 
@@ -173,12 +173,15 @@ interface OrganizationContextValue extends OrganizationRouteData {
   createRule: (input: OrganizationRuleInput) => Promise<void>;
   updateRule: (ruleId: string, input: Pick<OrganizationRuleInput, 'permittedRecipientListIds' | 'permittedLineListIds'>) => Promise<void>;
   agentTranscript: AgentRunTranscript | null;
+  proposedActions: ProposedAction[];
   createPrompt: (input: { name: string; instructions: string }) => Promise<void>;
   updatePrompt: (promptId: string, input: { name?: string; instructions?: string }) => Promise<void>;
   deletePrompt: (promptId: string) => Promise<void>;
-  createAgentRule: (input: { name: string; promptId: string; state: 'active' | 'suspended'; selectionPolicy: Record<string, unknown>; priority?: number }) => Promise<void>;
-  updateAgentRule: (agentRuleId: string, input: { state?: 'active' | 'suspended' | 'archived' }) => Promise<void>;
+  createAgentRule: (input: { name: string; promptId: string; state: 'active' | 'suspended'; executionMode?: 'read_only' | 'approval' | 'unattended'; selectionPolicy: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[]; priority?: number }) => Promise<void>;
+  updateAgentRule: (agentRuleId: string, input: { state?: 'active' | 'suspended' | 'archived'; executionMode?: 'read_only' | 'approval' | 'unattended'; permittedRecipientListIds?: string[]; permittedLineListIds?: string[] }) => Promise<void>;
   loadAgentTranscript: (runId: string) => void;
+  decideProposedAction: (actionId: string, decision: 'approve' | 'reject') => void;
+  decideProposedActionBatch: (runId: string, decision: 'approve' | 'reject') => void;
   updateTask: (taskId: string, input: { completed?: boolean; remarks?: string }) => void;
   createTaskRole: (input: { displayName: string; description: string }) => Promise<void>;
   updateTaskRole: (roleId: string, input: { displayName?: string; description?: string }) => Promise<void>;
@@ -253,6 +256,7 @@ export const OrganizationLayout = () => {
   const [mailTestBusy, setMailTestBusy] = useState(false);
   const [mailTestCreatedEventIds, setMailTestCreatedEventIds] = useState<string[]>([]);
   const [agentTranscript, setAgentTranscript] = useState<AgentRunTranscript | null>(null);
+  const [proposedActions, setProposedActions] = useState<ProposedAction[]>([]);
 
   useEffect(() => {
     setData(initial);
@@ -316,16 +320,27 @@ export const OrganizationLayout = () => {
     await api.removeOrganizationPrompt(data.organization.organizationId, promptId);
     setData((current) => ({ ...current, prompts: current.prompts.filter((prompt) => prompt.id !== promptId) }));
   }, setRuleBusy);
-  const createAgentRule = async (input: { name: string; promptId: string; state: 'active' | 'suspended'; selectionPolicy: Record<string, unknown>; priority?: number }): Promise<void> => withError(async () => {
+  const createAgentRule = async (input: { name: string; promptId: string; state: 'active' | 'suspended'; executionMode?: 'read_only' | 'approval' | 'unattended'; selectionPolicy: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[]; priority?: number }): Promise<void> => withError(async () => {
     const rule = await api.createOrganizationAgentRule(data.organization.organizationId, input);
     setData((current) => ({ ...current, agentRules: [...current.agentRules, rule] }));
   }, setRuleBusy);
-  const updateAgentRule = async (agentRuleId: string, input: { state?: 'active' | 'suspended' | 'archived' }): Promise<void> => withError(async () => {
+  const updateAgentRule = async (agentRuleId: string, input: { state?: 'active' | 'suspended' | 'archived'; executionMode?: 'read_only' | 'approval' | 'unattended'; permittedRecipientListIds?: string[]; permittedLineListIds?: string[] }): Promise<void> => withError(async () => {
     const updated = await api.updateOrganizationAgentRule(data.organization.organizationId, agentRuleId, input);
     setData((current) => ({ ...current, agentRules: current.agentRules.map((rule) => rule.id === agentRuleId ? updated : rule) }));
   }, setRuleBusy);
   const loadAgentTranscript = (runId: string) => void withError(async () => {
-    setAgentTranscript(await api.agentRunTranscript(data.organization.organizationId, runId));
+    const [transcript, actions] = await Promise.all([api.agentRunTranscript(data.organization.organizationId, runId), api.agentProposedActions(data.organization.organizationId, runId)]);
+    setAgentTranscript(transcript);
+    setProposedActions(actions);
+  }, setRuleBusy);
+  const decideProposedAction = (actionId: string, decision: 'approve' | 'reject') => void withError(async () => {
+    const decided = await api.decideProposedAction(data.organization.organizationId, actionId, decision);
+    setProposedActions((current) => current.map((action) => action.id === actionId ? { ...action, ...decided } : action));
+  }, setRuleBusy);
+  const decideProposedActionBatch = (runId: string, decision: 'approve' | 'reject') => void withError(async () => {
+    const decided = await api.decideProposedActionBatch(data.organization.organizationId, runId, decision);
+    const byId = new Map(decided.map((action) => [action.id, action]));
+    setProposedActions((current) => current.map((action) => byId.get(action.id) ?? action));
   }, setRuleBusy);
   const updateTask = (taskId: string, input: { completed?: boolean; remarks?: string }) => void withError(async () => {
     const task = await api.updateOrganizationTask(data.organization.organizationId, taskId, input);
@@ -392,7 +407,7 @@ export const OrganizationLayout = () => {
   const refreshRecipients = () => void withError(reloadRecipients, setMemberBusy);
   const logout = () => void withError(async () => { await api.logout(); navigate('/', { replace: true }); }, setBusy);
   const reauthenticate = () => void withError(async () => { window.location.assign((await api.reauthorizeAutomationInbox(data.organization.organizationId)).authorizationUrl); }, setBusy);
-  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateRule, agentTranscript, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, createRecipient, updateRecipient, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshRecipients, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, aiTestBusy, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, lineSettingsBusy, aiSettingsBusy, ruleBusy, memberBusy, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
+  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateRule, agentTranscript, proposedActions, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, decideProposedAction, decideProposedActionBatch, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, createRecipient, updateRecipient, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshRecipients, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, aiTestBusy, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, lineSettingsBusy, aiSettingsBusy, ruleBusy, memberBusy, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
   return <OrganizationContext.Provider value={value}><Outlet /></OrganizationContext.Provider>;
 };
 
@@ -454,12 +469,15 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     agentRules={value.agentRules}
     agentRuns={value.agentRuns}
     agentTranscript={value.agentTranscript}
+    proposedActions={value.proposedActions}
     onCreatePrompt={value.createPrompt}
     onUpdatePrompt={value.updatePrompt}
     onDeletePrompt={value.deletePrompt}
     onCreateAgentRule={value.createAgentRule}
     onUpdateAgentRule={value.updateAgentRule}
     onLoadAgentTranscript={value.loadAgentTranscript}
+    onDecideProposedAction={value.decideProposedAction}
+    onDecideProposedActionBatch={value.decideProposedActionBatch}
     organizationTasks={value.tasks}
     onUpdateTask={value.updateTask}
     taskRoles={value.taskRoles.roles}

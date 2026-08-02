@@ -90,6 +90,121 @@ describe('Source Message event extraction', () => {
 });
 
 describe('Organization Automation Inbox scheduling', () => {
+  it('executes an unattended Agent Rule LINE write once and records a failed delivery without retry work', async () => {
+    fixture = await createAutomationTestApp({ ai: true, lineSecret: 'line-secret' });
+    fixture.organization.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");
+    const lineList = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', { kind: 'line', name: 'Writers' }), fixture.environment);
+    const lineListId = (await lineList.json() as { data: { id: string } }).data.id;
+    await app.fetch(fixture.jsonRequest(`/api/organizations/organization-1/lists/${lineListId}/items`, { value: 'line-user-1', label: 'Writer' }), fixture.environment);
+    const prompt = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/prompts', { name: 'Writer', instructions: 'Notify.' }), fixture.environment);
+    const promptId = (await prompt.json() as { data: { id: string } }).data.id;
+    await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/agent-rules', {
+      name: 'Writer', promptId, executionMode: 'unattended', selectionPolicy: {}, permittedLineListIds: [lineListId],
+    }), fixture.environment);
+    let turn = 0;
+    const complete = vi.fn(async () => turn++ === 0
+      ? { model: 'test-model', content: '', toolCalls: [{ id: 'line-call', name: 'send_line_message' as const, arguments: '{"destination":"line-user-1","message":"Practice moved."}' }], totalTokens: 10 }
+      : { model: 'test-model', content: 'done', toolCalls: [], totalTokens: 5 });
+    const linePush = vi.fn().mockResolvedValue(new Response('', { status: 429 }));
+    vi.stubGlobal('fetch', linePush);
+    const automation = createAutomation(fixture.environment, {
+      google: { request: async <T>(_token: string, url: string): Promise<T> => {
+        if (url.includes('/history')) return { historyId: 'history-write', history: [{ messagesAdded: [{ message: { id: 'gmail-write' } }] }] } as T;
+        if (url.includes('/messages/gmail-write')) return { id: 'gmail-write', payload: { headers: [{ name: 'Subject', value: 'Notice' }, { name: 'From', value: 'member@example.com' }], body: { data: gmailBody('Moved.') } } } as T;
+        throw new Error(`Unexpected Google request: ${url}`);
+      } },
+      agent: { complete },
+    });
+
+    await expect(automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding }))
+      .resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 0 });
+    expect(linePush).toHaveBeenCalledTimes(1);
+    expect(fixture.organization.rows<{ destination: string; outcome: string }>('SELECT destination, outcome FROM deliveries')).toEqual([{ destination: 'line-user-1', outcome: 'failed' }]);
+    expect(fixture.organization.rows('SELECT * FROM jobs')).toHaveLength(0);
+    const run = fixture.organization.row<{ id: string }>('SELECT id FROM agent_runs')!;
+    const transcript = await app.fetch(fixture.request(`/api/organizations/organization-1/agent-runs/${run.id}/transcript`), fixture.environment);
+    const transcriptText = await transcript.text();
+    expect(transcriptText).toContain('line-user-1');
+    expect(transcriptText).toContain('failed');
+    await expect(automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding }))
+      .resolves.toEqual({ scanned: 0, created: 0, skipped: 0, exceptions: 0 });
+    expect(linePush).toHaveBeenCalledTimes(1);
+  });
+
+  it('completes an approval-mode run before executing the exact Proposed Action through the member interface', async () => {
+    fixture = await createAutomationTestApp({ ai: true, lineSecret: 'line-secret' });
+    fixture.organization.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");
+    const lineList = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', { kind: 'line', name: 'Writers' }), fixture.environment);
+    const lineListId = (await lineList.json() as { data: { id: string } }).data.id;
+    await app.fetch(fixture.jsonRequest(`/api/organizations/organization-1/lists/${lineListId}/items`, { value: 'line-user-1', label: 'Writer' }), fixture.environment);
+    const prompt = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/prompts', { name: 'Approver', instructions: 'Propose.' }), fixture.environment);
+    const promptId = (await prompt.json() as { data: { id: string } }).data.id;
+    await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/agent-rules', {
+      name: 'Approver', promptId, selectionPolicy: {}, permittedLineListIds: [lineListId],
+    }), fixture.environment);
+    let turn = 0;
+    const complete = vi.fn(async () => turn++ === 0
+      ? { model: 'test-model', content: '', toolCalls: [{ id: 'proposal-call', name: 'send_line_message' as const, arguments: '{"destination":"line-user-1","message":"Exact approved text"}' }], totalTokens: 10 }
+      : { model: 'test-model', content: 'Proposal recorded.', toolCalls: [], totalTokens: 5 });
+    const linePush = vi.fn().mockResolvedValue(new Response('', { status: 200, headers: { 'x-line-request-id': 'line-approved' } }));
+    vi.stubGlobal('fetch', linePush);
+    const automation = createAutomation(fixture.environment, {
+      google: { request: async <T>(_token: string, url: string): Promise<T> => {
+        if (url.includes('/history')) return { historyId: 'history-approval', history: [{ messagesAdded: [{ message: { id: 'gmail-approval' } }] }] } as T;
+        if (url.includes('/messages/gmail-approval')) return { id: 'gmail-approval', payload: { headers: [{ name: 'Subject', value: 'Notice' }, { name: 'From', value: 'member@example.com' }], body: { data: gmailBody('Review.') } } } as T;
+        throw new Error(`Unexpected Google request: ${url}`);
+      } }, agent: { complete },
+    });
+
+    await automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding });
+    expect(linePush).not.toHaveBeenCalled();
+    const run = fixture.organization.row<{ id: string }>('SELECT id FROM agent_runs')!;
+    const proposalsResponse = await app.fetch(fixture.request(`/api/organizations/organization-1/agent-runs/${run.id}/proposed-actions`), fixture.environment);
+    const proposals = await proposalsResponse.json() as { data: Array<{ id: string; arguments: { destination: string; message: string }; status: string }> };
+    expect(proposals.data).toMatchObject([{ arguments: { destination: 'line-user-1', message: 'Exact approved text' }, status: 'pending' }]);
+
+    const approved = await app.fetch(fixture.jsonRequest(`/api/organizations/organization-1/proposed-actions/${proposals.data[0]!.id}/approve`, {}), fixture.environment);
+
+    expect(approved.status).toBe(200);
+    expect(linePush).toHaveBeenCalledTimes(1);
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(fixture.organization.rows<{ destination: string; outcome: string }>('SELECT destination, outcome FROM deliveries')).toEqual([{ destination: 'line-user-1', outcome: 'succeeded' }]);
+  });
+
+  it('creates a Scheduled Event only for a permitted recipient destination in unattended mode', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    fixture.organization.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");
+    const recipientList = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', { kind: 'recipient', name: 'Guests' }), fixture.environment);
+    const recipientListId = (await recipientList.json() as { data: { id: string } }).data.id;
+    await app.fetch(fixture.jsonRequest(`/api/organizations/organization-1/lists/${recipientListId}/items`, { value: 'guest@example.com', label: 'Guest' }), fixture.environment);
+    const prompt = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/prompts', { name: 'Scheduler', instructions: 'Schedule.' }), fixture.environment);
+    const promptId = (await prompt.json() as { data: { id: string } }).data.id;
+    const agentRule = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/agent-rules', {
+      name: 'Scheduler', promptId, executionMode: 'unattended', selectionPolicy: {}, permittedRecipientListIds: [recipientListId],
+    }), fixture.environment);
+    const agentRuleId = (await agentRule.json() as { data: { id: string } }).data.id;
+    let turn = 0;
+    let calendarBody: Record<string, unknown> | undefined;
+    const automation = createAutomation(fixture.environment, {
+      google: { request: async <T>(_token: string, url: string, init?: RequestInit): Promise<T> => {
+        if (url.includes('/history')) return { historyId: 'history-event-write', history: [{ messagesAdded: [{ message: { id: 'gmail-event-write' } }] }] } as T;
+        if (url.includes('/messages/gmail-event-write')) return { id: 'gmail-event-write', payload: { headers: [{ name: 'Subject', value: 'Practice' }, { name: 'From', value: 'member@example.com' }], body: { data: gmailBody('Schedule.') } } } as T;
+        if (url.includes('/calendar/')) { calendarBody = JSON.parse(init?.body as string) as Record<string, unknown>; return { id: 'google-agent-event' } as T; }
+        throw new Error(`Unexpected Google request: ${url}`);
+      } },
+      agent: { complete: async () => turn++ === 0 ? {
+        model: 'test-model', content: '', totalTokens: 10,
+        toolCalls: [{ id: 'event-call', name: 'create_scheduled_event' as const, arguments: '{"destination":"guest@example.com","title":"Practice","startsAt":"2026-08-10T09:00:00+09:00","endsAt":"2026-08-10T10:00:00+09:00"}' }],
+      } : { model: 'test-model', content: 'done', toolCalls: [], totalTokens: 5 } },
+    });
+
+    await expect(automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding }))
+      .resolves.toEqual({ scanned: 1, created: 1, skipped: 0, exceptions: 0 });
+    expect(calendarBody).toMatchObject({ summary: 'Practice', attendees: [{ email: 'guest@example.com' }] });
+    expect(fixture.organization.rows<{ agent_rule_id: string; title: string; status: string }>('SELECT agent_rule_id, title, status FROM events')).toEqual([{ agent_rule_id: agentRuleId, title: 'Practice', status: 'scheduled' }]);
+    expect(fixture.organization.rows<{ destination: string; outcome: string }>('SELECT destination, outcome FROM deliveries')).toEqual([{ destination: 'guest@example.com', outcome: 'succeeded' }]);
+  });
+
   it('runs each matching read-only Agent Rule once with only Organization query tools', async () => {
     fixture = await createAutomationTestApp({ ai: true });
     fixture.organization.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");

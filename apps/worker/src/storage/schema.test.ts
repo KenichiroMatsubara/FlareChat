@@ -65,6 +65,7 @@ describe('canonical D1 schemas', () => {
       '0010_agent_rules.sql',
       '0011_agent_runs.sql',
       '0012_event_agent_owners.sql',
+      '0013_agent_rule_writes.sql',
     ]);
   });
 
