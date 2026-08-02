@@ -58,8 +58,10 @@ export interface DashboardProps {
   onAiApiKeyChange: (value: string) => void;
   onAiModelChange: (value: string) => void;
   onAiBaseUrlChange: (value: string) => void;
-  settingsBusy: boolean;
-  onSaveConnections: () => void;
+  lineSettingsBusy: boolean;
+  aiSettingsBusy: boolean;
+  onSaveLineConnection: () => void;
+  onSaveAiConnection: () => void;
   aiTestPrompt: string;
   aiTestResult: string;
   aiTestBusy: boolean;

@@ -233,16 +233,49 @@ export const TasksPage = (props: DashboardProps) => {
 };
 
 export const ConnectionsPage = (props: DashboardProps) => {
+  const [webhookCopied, setWebhookCopied] = useState(false);
   const settingsReady = Boolean(props.organization && props.canManage);
   const hasAiApi = Boolean(props.connections?.ai.apiKeyConfigured);
+  const hasLineAccessToken = Boolean(props.connections?.line.channelAccessTokenConfigured);
+  const hasLineSecret = Boolean(props.connections?.line.channelSecretConfigured);
+  const lineChanged = Boolean(props.lineChannelAccessToken || props.lineChannelSecret);
+  const lineReady = Boolean(
+    (props.lineChannelAccessToken || hasLineAccessToken)
+    && (props.lineChannelSecret || hasLineSecret),
+  );
+  const aiChanged = Boolean(
+    props.aiApiKey
+    || props.aiModel !== (props.connections?.ai.model ?? '')
+    || props.aiBaseUrl !== (props.connections?.ai.baseUrl ?? ''),
+  );
+  const aiReady = Boolean(props.aiBaseUrl.trim() && props.aiModel.trim() && (props.aiApiKey || hasAiApi));
+  const webhookUrl = props.connections?.line.webhookUrl ?? '';
+  const copyWebhookUrl = (): void => {
+    if (!webhookUrl) return;
+    void navigator.clipboard.writeText(webhookUrl).then(() => setWebhookCopied(true));
+  };
   return <section className="page-layout settings-page">
     <div className="page-title"><p>CONNECTIONS</p><h1>接続設定</h1><span>OpenAI 互換 API と LINE の資格情報はここで管理します。</span></div>
     {!settingsReady ? <section className="empty-page"><Settings size={30} /><h2>設定を読み込めません</h2><p>Googleでログインし直した後、このページを再読み込みしてください。</p></section> : <>
       <div className="settings-grid">
-        <section className="settings-card"><div className="settings-card-title"><Settings size={19} /><div><h2>OpenAI 互換 API</h2><p>メールの予定抽出に使う AI です。</p></div></div><p className="api-guide">利用するサービスの OpenAI 互換 API の Base URL、model、API キーを入力してください。</p><label>Base URL<input value={props.aiBaseUrl} onChange={(event) => props.onAiBaseUrlChange(event.target.value)} placeholder="https://api.openai.com/v1" autoCapitalize="none" spellCheck={false} /></label><label>model<input value={props.aiModel} onChange={(event) => props.onAiModelChange(event.target.value)} placeholder="例: gpt-4.1-mini" autoCapitalize="none" spellCheck={false} /></label><label>API キー<SecretInput label="OpenAI 互換 API キー" value={props.aiApiKey} onChange={props.onAiApiKeyChange} placeholder={hasAiApi ? '登録済み（変更時のみ入力）' : 'API キー'} /></label><p className="connection-state">{hasAiApi ? '接続設定済み' : '未設定'}</p></section>
-        <section className="settings-card"><div className="settings-card-title"><Mail size={19} /><div><h2>LINE Messaging API</h2><p>LINE通知を使う場合だけ設定します。</p></div></div><label>チャネルアクセストークン<SecretInput label="LINEチャネルアクセストークン" value={props.lineChannelAccessToken} onChange={props.onLineChannelAccessTokenChange} placeholder={props.connections?.line.channelAccessTokenConfigured ? '登録済み（変更時のみ入力）' : 'チャネルアクセストークン'} /></label><label>チャネルシークレット<SecretInput label="LINEチャネルシークレット" value={props.lineChannelSecret} onChange={props.onLineChannelSecretChange} placeholder={props.connections?.line.channelSecretConfigured ? '登録済み（変更時のみ入力）' : 'チャネルシークレット'} /></label></section>
+        <section className="settings-card"><div className="settings-card-title"><Settings size={19} /><div><h2>OpenAI 互換 API</h2><p>メールの予定抽出に使う AI です。</p></div></div><p className="api-guide">利用するサービスの OpenAI 互換 API の Base URL、model、API キーを入力してください。</p><label>Base URL<input value={props.aiBaseUrl} onChange={(event) => props.onAiBaseUrlChange(event.target.value)} placeholder="https://api.openai.com/v1" autoCapitalize="none" spellCheck={false} /></label><label>model<input value={props.aiModel} onChange={(event) => props.onAiModelChange(event.target.value)} placeholder="例: gpt-4.1-mini" autoCapitalize="none" spellCheck={false} /></label><label>API キー<SecretInput label="OpenAI 互換 API キー" value={props.aiApiKey} onChange={props.onAiApiKeyChange} placeholder={hasAiApi ? '登録済み（変更時のみ入力）' : 'API キー'} /></label><div className="settings-card-actions"><p className="connection-state">{hasAiApi ? '接続設定済み' : '未設定'}</p><button className="primary" onClick={props.onSaveAiConnection} disabled={props.aiSettingsBusy || !aiChanged || !aiReady}><Save size={17} />{props.aiSettingsBusy ? '保存中…' : 'AI設定を保存'}</button></div></section>
+        <section className="settings-card">
+          <div className="settings-card-title"><Mail size={19} /><div><h2>LINE Messaging API</h2><p>LINE通知とWebhookによる宛先検出に使います。</p></div></div>
+          <label>チャネルアクセストークン<SecretInput label="LINEチャネルアクセストークン" value={props.lineChannelAccessToken} onChange={props.onLineChannelAccessTokenChange} placeholder={hasLineAccessToken ? '登録済み（変更時のみ入力）' : 'チャネルアクセストークン'} /></label>
+          <label>チャネルシークレット<SecretInput label="LINEチャネルシークレット" value={props.lineChannelSecret} onChange={props.onLineChannelSecretChange} placeholder={hasLineSecret ? '登録済み（変更時のみ入力）' : 'チャネルシークレット'} /></label>
+          <div className="line-webhook-settings">
+            <label>Webhook URL<div className="line-webhook-url"><input value={webhookUrl} readOnly aria-label="LINE Webhook URL" /><button type="button" className="secondary" onClick={copyWebhookUrl} disabled={!webhookUrl} aria-label="Webhook URLをコピー">{webhookCopied ? <CheckCircle2 size={15} /> : <Copy size={15} />}{webhookCopied ? 'コピーしました' : 'コピー'}</button></div></label>
+            <ol>
+              <li><a href="https://developers.line.biz/console/" target="_blank" rel="noreferrer">LINE Developers</a>で対象チャネルの「Messaging API設定」を開く</li>
+              <li>上のURLを「Webhook URL」に貼り付けて検証する</li>
+              <li>「Webhookの利用をオン」にする</li>
+            </ol>
+            <p className="line-webhook-result">受信したLINE IDは<Link to="../members">メンバー画面</Link>の「保留中のLINE連絡先」に表示されます。</p>
+            {webhookUrl && !webhookUrl.startsWith('https://') && <p className="dashboard-warning">localhostはLINEから受信できません。本番の公開HTTPS URLを設定してください。</p>}
+          </div>
+          <div className="settings-card-actions"><p className="connection-state">{hasLineAccessToken && hasLineSecret ? '接続設定済み' : '未設定'}</p><button className="primary" onClick={props.onSaveLineConnection} disabled={props.lineSettingsBusy || !lineChanged || !lineReady}><Save size={17} />{props.lineSettingsBusy ? '保存中…' : 'LINE設定を保存'}</button></div>
+        </section>
       </div>
-      <div className="settings-actions"><button className="primary" onClick={props.onSaveConnections} disabled={props.settingsBusy || !props.aiBaseUrl.trim() || !props.aiModel.trim() || (!props.aiApiKey && !hasAiApi)}><Save size={17} />{props.settingsBusy ? '保存中…' : '接続設定を保存'}</button></div>
       <section className="test-card"><div><p>AI CONNECTION TEST</p><h2>OpenAI 互換 API をテスト</h2><span>保存済みの接続設定を使って、任意の質問を送信します。</span></div><textarea value={props.aiTestPrompt} onChange={(event) => props.onAiTestPromptChange(event.target.value)} maxLength={10_000} aria-label="APIへの質問" /><button className="secondary" onClick={props.onTestAi} disabled={props.aiTestBusy || !hasAiApi}>{props.aiTestBusy ? '問い合わせ中…' : 'API に質問する'}</button>{props.aiTestResult && <pre>{props.aiTestResult}</pre>}</section>
     </>}
   </section>;

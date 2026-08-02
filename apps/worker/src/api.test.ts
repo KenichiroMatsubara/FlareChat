@@ -15,6 +15,17 @@ import {
 
 let fixture: TestApp | undefined;
 
+const backgroundExecution = () => {
+  const tasks: Promise<unknown>[] = [];
+  return {
+    context: {
+      waitUntil: (task: Promise<unknown>) => { tasks.push(task); },
+      passThroughOnException: () => undefined,
+    } as unknown as ExecutionContext,
+    settle: async (): Promise<void> => { await Promise.all(tasks); },
+  };
+};
+
 afterEach(() => {
   vi.unstubAllGlobals();
   fixture?.close();
@@ -94,18 +105,14 @@ describe('Organization access', () => {
   });
 });
 
-describe('OpenAI-compatible connection', () => {
-  it('stores an arbitrary HTTPS Base URL and model and uses them for the connection test', async () => {
+describe('Organization connections', () => {
+  it('stores a LINE Connection without requiring an AI Connection', async () => {
     fixture = await createAutomationTestApp();
     const saved = await app.fetch(fixture.jsonRequest(
-      '/api/organizations/organization-1/connections',
+      '/api/organizations/organization-1/connections/line',
       {
-        line: {},
-        ai: {
-          baseUrl: 'https://gateway.example.com/openai/v1/',
-          model: 'organization-model',
-          apiKey: 'organization-api-key',
-        },
+        channelAccessToken: 'line-token',
+        channelSecret: 'line-secret',
       },
       'PUT',
     ), fixture.environment);
@@ -113,11 +120,47 @@ describe('OpenAI-compatible connection', () => {
     expect(saved.status).toBe(200);
     await expect(saved.json()).resolves.toMatchObject({
       data: {
-        ai: {
-          apiKeyConfigured: true,
-          baseUrl: 'https://gateway.example.com/openai/v1',
-          model: 'organization-model',
+        channelAccessTokenConfigured: true,
+        channelSecretConfigured: true,
+        webhookUrl: 'https://app.example.com/api/public/organizations/organization-1/line/webhook',
+      },
+    });
+
+    const connections = await app.fetch(fixture.request(
+      '/api/organizations/organization-1/connections',
+    ), fixture.environment);
+    await expect(connections.json()).resolves.toMatchObject({
+      data: {
+        line: {
+          channelAccessTokenConfigured: true,
+          channelSecretConfigured: true,
+          webhookUrl: 'https://app.example.com/api/public/organizations/organization-1/line/webhook',
         },
+        ai: { apiKeyConfigured: false },
+      },
+    });
+  });
+});
+
+describe('OpenAI-compatible connection', () => {
+  it('stores an arbitrary HTTPS Base URL and model and uses them for the connection test', async () => {
+    fixture = await createAutomationTestApp();
+    const saved = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/connections/ai',
+      {
+        baseUrl: 'https://gateway.example.com/openai/v1/',
+        model: 'organization-model',
+        apiKey: 'organization-api-key',
+      },
+      'PUT',
+    ), fixture.environment);
+
+    expect(saved.status).toBe(200);
+    await expect(saved.json()).resolves.toMatchObject({
+      data: {
+        apiKeyConfigured: true,
+        baseUrl: 'https://gateway.example.com/openai/v1',
+        model: 'organization-model',
       },
     });
 
@@ -146,14 +189,11 @@ describe('OpenAI-compatible connection', () => {
   it('rejects an insecure Base URL before storing credentials', async () => {
     fixture = await createAutomationTestApp();
     const response = await app.fetch(fixture.jsonRequest(
-      '/api/organizations/organization-1/connections',
+      '/api/organizations/organization-1/connections/ai',
       {
-        line: {},
-        ai: {
-          baseUrl: 'http://ai.example.com/v1',
-          model: 'organization-model',
-          apiKey: 'organization-api-key',
-        },
+        baseUrl: 'http://ai.example.com/v1',
+        model: 'organization-model',
+        apiKey: 'organization-api-key',
       },
       'PUT',
     ), fixture.environment);
@@ -431,6 +471,39 @@ describe('Public attendance and operational outcomes', () => {
 });
 
 describe('LINE destinations', () => {
+  it('acknowledges a valid webhook without waiting for LINE profile lookup', async () => {
+    fixture = await createAutomationTestApp({ lineSecret: 'line-secret' });
+    const payload = JSON.stringify({ events: [{ source: { type: 'user', userId: 'U1234567890' } }] });
+    const hmacKey = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode('line-secret'),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign'],
+    );
+    const signature = Buffer.from(
+      await crypto.subtle.sign('HMAC', hmacKey, new TextEncoder().encode(payload)),
+    ).toString('base64');
+    let releaseProfile!: (response: Response) => void;
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise<Response>((resolve) => { releaseProfile = resolve; })));
+    const background = backgroundExecution();
+    const responsePromise = Promise.resolve(app.fetch(new Request(
+      'https://app.example.com/api/public/organizations/organization-1/line/webhook',
+      { method: 'POST', headers: { 'x-line-signature': signature }, body: payload },
+    ), fixture.environment, background.context));
+    const outcome = await Promise.race([
+      responsePromise.then(() => 'acknowledged'),
+      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 100)),
+    ]);
+
+    releaseProfile(new Response(JSON.stringify({ displayName: '山田 太郎' }), { status: 200 }));
+    const response = await responsePromise;
+    await background.settle();
+
+    expect(outcome).toBe('acknowledged');
+    expect(response.status).toBe(200);
+  });
+
   it('captures a LINE display name and assigns the discovered ID to a Recipient Profile', async () => {
     fixture = await createAutomationTestApp({ lineSecret: 'line-secret' });
     const profileFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
@@ -449,15 +522,27 @@ describe('LINE destinations', () => {
       await crypto.subtle.sign('HMAC', hmacKey, new TextEncoder().encode(payload)),
     ).toString('base64');
 
+    const background = backgroundExecution();
     const webhook = await app.fetch(new Request(
       'https://app.example.com/api/public/organizations/organization-1/line/webhook',
       { method: 'POST', headers: { 'x-line-signature': signature }, body: payload },
-    ), fixture.environment);
+    ), fixture.environment, background.context);
+    await background.settle();
     const destinations = await app.fetch(
       fixture.request('/api/organizations/organization-1/line-destinations'),
       fixture.environment,
     );
-    const destinationsBody = await destinations.json() as { data: Array<{ id: string }> };
+    const destinationsBody = await destinations.json() as { data: Array<{
+      id: string;
+      destinationId: string;
+      source: string;
+      recipientProfileId: string | null;
+    }> };
+    expect(destinationsBody.data[0]).toMatchObject({
+      destinationId: 'U1234567890',
+      source: 'webhook',
+      recipientProfileId: null,
+    });
     const recipient = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/recipients',
       {
@@ -505,10 +590,12 @@ describe('LINE destinations', () => {
     const signature = Buffer.from(
       await crypto.subtle.sign('HMAC', hmacKey, new TextEncoder().encode(payload)),
     ).toString('base64');
+    const background = backgroundExecution();
     const webhook = await app.fetch(new Request(
       'https://app.example.com/api/public/organizations/organization-1/line/webhook',
       { method: 'POST', headers: { 'x-line-signature': signature }, body: payload },
-    ), fixture.environment);
+    ), fixture.environment, background.context);
+    await background.settle();
     const recipient = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/recipients',
       { name: 'Guest', email: 'guest@example.com' },
@@ -635,10 +722,12 @@ describe('LINE destinations', () => {
     const signature = Buffer.from(
       await crypto.subtle.sign('HMAC', hmacKey, new TextEncoder().encode(payload)),
     ).toString('base64');
+    const background = backgroundExecution();
     await app.fetch(new Request(
       'https://app.example.com/api/public/organizations/organization-1/line/webhook',
       { method: 'POST', headers: { 'x-line-signature': signature }, body: payload },
-    ), fixture.environment);
+    ), fixture.environment, background.context);
+    await background.settle();
     const destinations = await app.fetch(
       fixture.request('/api/organizations/organization-1/line-destinations'),
       fixture.environment,

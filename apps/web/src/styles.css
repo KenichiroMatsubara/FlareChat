@@ -78,7 +78,7 @@ svg { flex: none; }
 .action-panel > div { flex: 1 1 240px; min-width: 0; }
 .action-panel h2, .settings-card h2, .test-card h2, .rule-builder h2, .rules-list h2 { margin: 0; color: #27382c; font-size: clamp(16px, 3.2vw, 17px); }
 .action-panel p, .settings-card p, .test-card span, .rule-builder span { margin: 7px 0 0; color: #718073; font-size: 12px; line-height: 1.6; }
-.action-panel .primary, .settings-actions .primary { flex: none; min-width: 155px; justify-content: center; }
+.action-panel .primary, .settings-card-actions .primary { flex: none; min-width: 155px; justify-content: center; }
 
 .metrics-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr)); gap: clamp(10px, 2vw, 15px); }
 .metrics-row div { padding: clamp(15px, 3vw, 19px) clamp(16px, 3vw, 21px); background: white; border: 1px solid #dfe5de; border-radius: 12px; }
@@ -105,7 +105,15 @@ svg { flex: none; }
 .settings-card p.api-guide { margin: 0; padding: 11px 12px; color: #526158; background: #f1f6f1; border-radius: 8px; line-height: 1.6; }
 .settings-card p.api-guide a { color: #216441; font-weight: 700; text-decoration: underline; }
 .settings-card p.connection-state { width: max-content; margin: 0; padding: 4px 8px; color: #2c6a48; background: #e6f2e9; border-radius: 10px; font-size: 10px; }
-.settings-actions { display: flex; justify-content: flex-end; }
+.settings-card-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: auto; }
+.line-webhook-settings { display: grid; gap: 10px; padding: 13px; border: 1px solid #dce5dc; border-radius: 9px; background: #f7faf7; }
+.line-webhook-url { display: flex; gap: 8px; }
+.line-webhook-url input { min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.line-webhook-url .secondary { flex: none; white-space: nowrap; }
+.line-webhook-settings ol { display: grid; gap: 5px; margin: 0; padding-left: 20px; color: #607064; font-size: 11px; line-height: 1.55; }
+.line-webhook-settings a { color: #216441; font-weight: 700; }
+.settings-card p.line-webhook-result { margin: 0; color: #526158; font-size: 11px; line-height: 1.55; }
+.line-webhook-result a { margin: 0 3px; }
 .dashboard-secret { position: relative; }
 .dashboard-secret input, .settings-card input, .test-card input, .test-card textarea, .settings-card select, .rule-builder input, .rule-builder select { width: 100%; padding: 11px 12px; color: #26372b; background: #fbfcfa; border: 1px solid #d7ded7; border-radius: 8px; outline: none; font-size: 12px; }
 .dashboard-secret input { padding-right: 44px; }
@@ -330,7 +338,10 @@ svg { flex: none; }
 @media (max-width: 560px) {
   .ai-request-heading { flex-direction: column; }
   .ai-request-heading .secondary { width: 100%; }
-  .action-panel .primary, .settings-actions, .settings-actions .primary, .rule-builder .primary, .test-card .primary, .test-card .secondary { width: 100%; justify-self: stretch; }
+  .line-webhook-url { align-items: stretch; flex-direction: column; }
+  .line-webhook-url .secondary { width: 100%; }
+  .action-panel .primary, .settings-card-actions, .settings-card-actions .primary, .rule-builder .primary, .test-card .primary, .test-card .secondary { width: 100%; justify-self: stretch; }
+  .settings-card-actions { align-items: stretch; flex-direction: column; }
   .hero-status, .action-panel { align-items: flex-start; }
   .hero-status > div, .action-panel > div { flex-basis: 100%; }
   .member-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }

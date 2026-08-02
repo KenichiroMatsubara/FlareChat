@@ -46,16 +46,15 @@ const RECIPIENT_LINK_WINDOW_MS = 15 * 60 * 1_000;
 const LINE_DESTINATION_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/u;
 type OrganizationCredential = Record<string, string>;
 
-interface OrganizationConnectionInput {
-  line?: {
-    channelAccessToken?: string;
-    channelSecret?: string;
-  };
-  ai?: {
-    apiKey?: string;
-    model?: string;
-    baseUrl?: string;
-  };
+interface LineConnectionInput {
+  channelAccessToken?: string;
+  channelSecret?: string;
+}
+
+interface AiConnectionInput {
+  apiKey?: string;
+  model?: string;
+  baseUrl?: string;
 }
 
 interface OpenAiCompatibleResponse {
@@ -137,6 +136,8 @@ const isMailExtraction = (value: unknown): value is MailExtraction => {
 };
 
 const connectionContext = (organizationId: string, kind: 'line' | 'ai'): string => `organization-connection:${organizationId}:${kind}`;
+const lineWebhookUrl = (appUrl: string, organizationId: string): string =>
+  `${appUrl.replace(/\/$/u, '')}/api/public/organizations/${encodeURIComponent(organizationId)}/line/webhook`;
 
 const lineDestinationDisplayName = async (
   credential: OrganizationCredential,
@@ -171,6 +172,43 @@ const connectionCredential = async (
 ): Promise<OrganizationCredential> => {
   if (!row) return {};
   return JSON.parse(await decrypt(JSON.parse(row.credential), key, connectionContext(organizationId, kind))) as OrganizationCredential;
+};
+
+const saveConnectionCredential = async (input: {
+  database: D1Database;
+  existing: ConnectionRow | undefined;
+  organizationKey: CryptoKey;
+  organizationId: string;
+  kind: 'line' | 'ai';
+  label: string;
+  credential: OrganizationCredential;
+}): Promise<void> => {
+  const db = drizzleOrganizationDatabase(input.database);
+  const timestamp = now();
+  const envelope = await encrypt(
+    JSON.stringify(input.credential),
+    input.organizationKey,
+    connectionContext(input.organizationId, input.kind),
+  );
+  const storedCredential = JSON.stringify(envelope);
+  if (input.existing) {
+    await db.update(organizationConnections).set({
+      label: input.label,
+      credential: storedCredential,
+      status: 'active',
+      updatedAt: timestamp,
+    }).where(eq(organizationConnections.id, input.existing.id)).run();
+    return;
+  }
+  await db.insert(organizationConnections).values({
+    id: crypto.randomUUID(),
+    kind: input.kind,
+    label: input.label,
+    credential: storedCredential,
+    status: 'active',
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  }).run();
 };
 
 const connectionView = (line: OrganizationCredential, ai: OrganizationCredential) => ({
@@ -212,60 +250,68 @@ app.get('/api/organizations/:organizationId/connections', async (context) => {
       connectionCredential(line ?? null, organizationKey, organizationId, 'line'),
       connectionCredential(ai ?? null, organizationKey, organizationId, 'ai'),
     ]);
-    return json(context, { organizationId, organizationName: access.organization.name, ...connectionView(lineCredential, aiCredential) });
+    const view = connectionView(lineCredential, aiCredential);
+    return json(context, {
+      organizationId,
+      organizationName: access.organization.name,
+      line: { ...view.line, webhookUrl: lineWebhookUrl(context.env.APP_URL, organizationId) },
+      ai: view.ai,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : '接続設定を取得できませんでした。';
     return failure(context, message, message === 'Authentication is required.' ? 401 : 403);
   }
 });
 
-app.put('/api/organizations/:organizationId/connections', async (context) => {
+app.put('/api/organizations/:organizationId/connections/line', async (context) => {
   try {
     const organizationId = context.req.param('organizationId');
     const access = await organizationForRequest(context.req.raw, context.env, organizationId);
-    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, '接続設定を変更できる権限がありません。', 403);
-    if (!access.database) return failure(context, '組織DBに接続できません。接続設定は保存されていません。', 503);
-    const database = access.database;
-    const db = drizzleOrganizationDatabase(database);
-    const input = await context.req.json<OrganizationConnectionInput>();
-    const rows = await db.select().from(organizationConnections)
-      .where(and(inArray(organizationConnections.kind, ['line', 'ai']), eq(organizationConnections.status, 'active'))).all();
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'LINE接続を変更できる権限がありません。', 403);
+    if (!access.database) return failure(context, '組織DBに接続できません。LINE接続は保存されていません。', 503);
+    const db = drizzleOrganizationDatabase(access.database);
+    const input = await context.req.json<LineConnectionInput>();
+    const existing = await db.select().from(organizationConnections)
+      .where(and(eq(organizationConnections.kind, 'line'), eq(organizationConnections.status, 'active'))).limit(1).get();
     const organizationKey = await organizationKeyForRequest(context.env, organizationId);
-    const existingLine = rows.find((row) => row.kind === 'line');
-    const existingAi = rows.find((row) => row.kind === 'ai');
-    const [lineCredential, aiCredential] = await Promise.all([
-      connectionCredential(existingLine ?? null, organizationKey, organizationId, 'line'),
-      connectionCredential(existingAi ?? null, organizationKey, organizationId, 'ai'),
-    ]);
-    const nextLine: OrganizationCredential = { ...lineCredential, ...input.line };
-    const nextAi: OrganizationCredential = { ...aiCredential, ...input.ai };
-    const updatingLine = Boolean(input.line?.channelAccessToken || input.line?.channelSecret);
-    if (updatingLine && (!nextLine.channelAccessToken || !nextLine.channelSecret)) return failure(context, 'LINEのチャネルアクセストークンとチャネルシークレットを両方入力してください。');
-    const aiBaseUrl = normalizedAiBaseUrl(nextAi.baseUrl);
-    const aiModel = nextAi.model?.trim();
-    if (!nextAi.apiKey || !aiModel || !aiBaseUrl) return failure(context, 'OpenAI 互換 API の Base URL、model、API キーを入力してください。');
-    if (aiModel.length > 200) return failure(context, 'model は 200 文字以内で入力してください。');
-    nextAi.provider = 'OpenAI-compatible API';
-    nextAi.model = aiModel;
-    nextAi.baseUrl = aiBaseUrl;
-    const timestamp = now();
-    const lineEnvelope = await encrypt(JSON.stringify(nextLine), organizationKey, connectionContext(organizationId, 'line'));
-    const aiEnvelope = await encrypt(JSON.stringify(nextAi), organizationKey, connectionContext(organizationId, 'ai'));
-    const save = async (existing: typeof organizationConnections.$inferSelect | undefined, kind: 'line' | 'ai', label: string, credential: string): Promise<void> => {
-      if (existing) {
-        await db.update(organizationConnections).set({ label, credential, status: 'active', updatedAt: timestamp })
-          .where(eq(organizationConnections.id, existing.id)).run();
-        return;
-      }
-      await db.insert(organizationConnections).values({ id: crypto.randomUUID(), kind, label, credential, status: 'active', createdAt: timestamp, updatedAt: timestamp }).run();
-    };
-    await Promise.all([
-      save(existingLine, 'line', 'LINE Messaging API', JSON.stringify(lineEnvelope)),
-      save(existingAi, 'ai', 'OpenAI 互換 API', JSON.stringify(aiEnvelope)),
-    ]);
-    return json(context, { organizationId, organizationName: access.organization.name, ...connectionView(nextLine, nextAi) });
+    const current = await connectionCredential(existing ?? null, organizationKey, organizationId, 'line');
+    const next: OrganizationCredential = { ...current, ...input };
+    if (!next.channelAccessToken || !next.channelSecret) return failure(context, 'LINEのチャネルアクセストークンとチャネルシークレットを両方入力してください。');
+    await saveConnectionCredential({ database: access.database, existing, organizationKey, organizationId, kind: 'line', label: 'LINE Messaging API', credential: next });
+    return json(context, {
+      ...connectionView(next, {}).line,
+      webhookUrl: lineWebhookUrl(context.env.APP_URL, organizationId),
+    });
   } catch (error) {
-    const message = error instanceof Error ? error.message : '接続設定を保存できませんでした。';
+    const message = error instanceof Error ? error.message : 'LINE接続を保存できませんでした。';
+    return failure(context, message, message === 'Authentication is required.' ? 401 : 403);
+  }
+});
+
+app.put('/api/organizations/:organizationId/connections/ai', async (context) => {
+  try {
+    const organizationId = context.req.param('organizationId');
+    const access = await organizationForRequest(context.req.raw, context.env, organizationId);
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'AI接続を変更できる権限がありません。', 403);
+    if (!access.database) return failure(context, '組織DBに接続できません。AI接続は保存されていません。', 503);
+    const db = drizzleOrganizationDatabase(access.database);
+    const input = await context.req.json<AiConnectionInput>();
+    const existing = await db.select().from(organizationConnections)
+      .where(and(eq(organizationConnections.kind, 'ai'), eq(organizationConnections.status, 'active'))).limit(1).get();
+    const organizationKey = await organizationKeyForRequest(context.env, organizationId);
+    const current = await connectionCredential(existing ?? null, organizationKey, organizationId, 'ai');
+    const next: OrganizationCredential = { ...current, ...input };
+    const baseUrl = normalizedAiBaseUrl(next.baseUrl);
+    const model = next.model?.trim();
+    if (!next.apiKey || !model || !baseUrl) return failure(context, 'OpenAI 互換 API の Base URL、model、API キーを入力してください。');
+    if (model.length > 200) return failure(context, 'model は 200 文字以内で入力してください。');
+    next.provider = 'OpenAI-compatible API';
+    next.model = model;
+    next.baseUrl = baseUrl;
+    await saveConnectionCredential({ database: access.database, existing, organizationKey, organizationId, kind: 'ai', label: 'OpenAI 互換 API', credential: next });
+    return json(context, connectionView({}, next).ai);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'AI接続を保存できませんでした。';
     return failure(context, message, message === 'Authentication is required.' ? 401 : 403);
   }
 });
@@ -1505,7 +1551,7 @@ app.post('/api/public/organizations/:organizationId/line/webhook', async (contex
     const payload = JSON.parse(rawBody) as LineWebhookPayload;
     const destinations = discoveredLineDestinations(payload);
     const timestamp = now();
-    await Promise.all(destinations.map(async (destination) => {
+    const persistence = Promise.all(destinations.map(async (destination) => {
       const displayName = await lineDestinationDisplayName(credential, destination, payload);
       await organizationDb.insert(lineDestinations).values({
         id: crypto.randomUUID(),
@@ -1525,6 +1571,7 @@ app.post('/api/public/organizations/:organizationId/line/webhook', async (contex
         },
       }).run();
     }));
+    context.executionCtx.waitUntil(persistence);
     return json(context, { discovered: destinations.length });
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'LINE webhook could not be processed.', 400);
