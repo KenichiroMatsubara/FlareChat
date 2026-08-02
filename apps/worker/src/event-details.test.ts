@@ -25,6 +25,27 @@ describe('OpenAI-compatible Event Details validation', () => {
     expect(request.messages[0]?.content).toContain('unassigned');
   });
 
+  it('states the received date as a trusted system fact and authorizes only year completion', async () => {
+    const request = await buildAiEventDetailsRequest({
+      source: '登録締切は4月30日です。',
+      receivedAt: '2026-04-07T09:12:00+09:00',
+    });
+
+    expect(request.messages[0]?.content).toContain('Verified delivery facts (trusted, provided by this system):');
+    expect(request.messages[0]?.content).toContain('{"receivedAt":"2026-04-07T09:12:00+09:00","timeZone":"Asia/Tokyo"}');
+    expect(request.messages[0]?.content).toContain('Completing an omitted year is the only permitted date completion.');
+    expect(request.messages[0]?.content).toContain('When a month or a day is absent, omit the event or task instead');
+    expect(request.messages[1]?.content).not.toContain('receivedAt');
+  });
+
+  it('withholds the year completion rule when no received date is known', async () => {
+    const request = await buildAiEventDetailsRequest({ source: '登録締切は4月30日です。' });
+
+    expect(request.messages[0]?.content).not.toContain('Verified delivery facts');
+    expect(request.messages[0]?.content).not.toContain('receivedAt');
+    expect(request.messages[0]?.content).toContain('Do not complete a date that omits its year');
+  });
+
   it('keeps the extraction and falls back only an unknown task role to unassigned with a warning', () => {
     const extraction = validatedMailExtraction(JSON.stringify({
       summary: '年次行事と二つの期限の案内です。',
@@ -172,7 +193,7 @@ describe('OpenAI-compatible Event Details validation', () => {
     expect(markdown.toMarkdown).toHaveBeenCalledWith(expect.objectContaining({
       name: '式典案内.pdf',
       blob: expect.any(Blob),
-    }));
+    }), { conversionOptions: { pdf: { metadata: false } } });
   });
 
   it('does not call the AI API with an attachment omitted after its conversion fails', async () => {

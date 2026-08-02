@@ -188,6 +188,10 @@ _Avoid_: pending delivery, draft action
 The complete encrypted record of one Agent Rule run—its Prompt revision, model, every tool call with arguments and results, and final output—retained to explain a run that will never be retried.
 _Avoid_: log, agent history
 
+**Verified Delivery Facts**:
+The facts about a Source Message that Mail Automation observed rather than read from it—presently only when it arrived—stated to an extraction separately from the message so that a sender cannot author them. They authorize completing a date that omits its year and nothing else.
+_Avoid_: context, metadata, current date
+
 **Event Details**:
 The structured title, start and end time, time zone, location, and description extracted from a Source Message through an AI Connection and completed with an Automation Rule's defaults.
 _Avoid_: parsed fields, event data

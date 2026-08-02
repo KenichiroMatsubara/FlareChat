@@ -421,7 +421,12 @@ app.post('/api/organizations/:organizationId/mail-tests/:messageId/ai-request', 
     const messageId = context.req.param('messageId');
     if (!/^[A-Za-z0-9_-]{1,200}$/u.test(messageId)) return failure(context, 'Gmail メッセージ ID が不正です。');
     const source = await createAutomation(context.env).mailboxTest.readSource({ organizationId, database: access.database, messageId });
-    const request = await createAutomation(context.env).mailboxTest.previewAiRequest({ database: access.database, source: source.source, attachments: source.attachments });
+    const request = await createAutomation(context.env).mailboxTest.previewAiRequest({
+      database: access.database,
+      source: source.source,
+      attachments: source.attachments,
+      ...(source.receivedAt === undefined ? {} : { receivedAt: source.receivedAt }),
+    });
     return json(context, { id: source.id, subject: source.subject, sender: source.sender, request });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'AI 送信内容の準備に失敗しました。';
@@ -443,6 +448,7 @@ app.post('/api/organizations/:organizationId/mail-tests/:messageId/preview', asy
       database: access.database,
       source: source.source,
       attachments: source.attachments,
+      ...(source.receivedAt === undefined ? {} : { receivedAt: source.receivedAt }),
     });
     if (!extraction) return failure(context, 'メールから安全な予定を抽出できませんでした。日付・開始時刻・終了時刻を確認してください。');
     const confirmation: MailTestConfirmation = { messageId, extraction, expiresAt: expiresIn(MAIL_TEST_WINDOW_MS) };

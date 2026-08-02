@@ -50,6 +50,8 @@ interface GmailMessage {
   labelIds?: string[];
   payload?: GmailPart;
   snippet?: string;
+  /** Gmail's delivery timestamp as epoch milliseconds. */
+  internalDate?: string;
 }
 
 interface GmailMessageList {
@@ -94,6 +96,7 @@ export interface MailboxTestMatch {
 export interface MailboxTestSource extends MailboxTestMatch {
   source: string;
   attachments: SourceAttachmentContent[];
+  receivedAt?: string;
 }
 
 export interface ActiveRule {
@@ -127,11 +130,49 @@ const now = (): string => new Date().toISOString();
 
 const productionDependencies = productionAutomationDependencies;
 
-const decodedBody = (part: GmailPart | undefined): string => {
+const mimeTypeOf = (part: GmailPart): string => (part.mimeType ?? '').toLowerCase();
+
+const decodedPartText = (part: GmailPart): string => {
+  if (!part.body?.data) return '';
+  const text = new TextDecoder().decode(fromBase64Url(part.body.data));
+  return mimeTypeOf(part).startsWith('text/html') ? text.replace(/<[^>]*>/gu, ' ') : text;
+};
+
+/**
+ * Picks one representation of a multipart/alternative body. Both representations
+ * carry the same text, so decoding both would send every sentence to the AI twice.
+ */
+const preferredAlternative = (parts: GmailPart[]): GmailPart[] => {
+  const plain = parts.find((part) => mimeTypeOf(part).startsWith('text/plain'));
+  if (plain) return [plain];
+  const html = parts.find((part) => mimeTypeOf(part).startsWith('text/html'));
+  if (html) return [html];
+  return parts.slice(-1);
+};
+
+const bodyTextParts = (part: GmailPart): string[] => {
+  const children = part.parts ?? [];
+  const selected = mimeTypeOf(part) === 'multipart/alternative' ? preferredAlternative(children) : children;
+  return [decodedPartText(part), ...selected.flatMap(bodyTextParts)];
+};
+
+/** Reads the Source Message body once, whichever representations Gmail supplies. */
+export const decodedBody = (part: GmailPart | undefined): string => {
   if (!part) return '';
-  const own = part.body?.data ? new TextDecoder().decode(fromBase64Url(part.body.data)) : '';
-  const nested = part.parts?.map(decodedBody).join('\n') ?? '';
-  return `${own}\n${nested}`.replace(/<[^>]*>/gu, ' ').replace(/\s+/gu, ' ').trim();
+  return bodyTextParts(part).join('\n').replace(/\s+/gu, ' ').trim();
+};
+
+/**
+ * States when the Source Message arrived, in the time zone this product schedules
+ * in, so the AI can resolve a date that omits its year. Gmail reports epoch
+ * milliseconds; an absent or unparseable value yields no fact at all rather than a
+ * guessed one.
+ */
+export const receivedAtOf = (internalDate: string | undefined): string | undefined => {
+  if (!internalDate || !/^\d+$/u.test(internalDate)) return undefined;
+  const received = new Date(Number(internalDate) + 9 * 60 * 60 * 1_000);
+  if (!Number.isFinite(received.getTime())) return undefined;
+  return `${received.toISOString().slice(0, 19)}+09:00`;
 };
 
 /** Returns declared attachment byte sizes, excluding inline message body parts. */
@@ -344,6 +385,7 @@ const aiExtraction = async (
   attachments: SourceAttachmentContent[],
   convertedAttachments: ConvertedAttachment[] | undefined,
   taskRoles: TaskRoleDescription[],
+  receivedAt: string | undefined,
   dependencies: AutomationDependencies,
 ): Promise<MailExtraction | null | undefined> => {
   const connection = await drizzleOrganizationDatabase(database).select().from(connections)
@@ -360,6 +402,7 @@ const aiExtraction = async (
       source,
       attachments,
       ...(convertedAttachments === undefined ? {} : { convertedAttachments }),
+      ...(receivedAt === undefined ? {} : { receivedAt }),
       taskRoles,
       markdown: env.AI,
     });
@@ -571,6 +614,7 @@ const extractMailboxTestPackage = async (
   database: D1Database,
   source: string,
   attachments: SourceAttachmentContent[],
+  receivedAt: string | undefined,
   dependencies: AutomationDependencies,
 ): Promise<MailExtraction | null> => {
   const connection = await drizzleOrganizationDatabase(database).select().from(connections)
@@ -590,6 +634,7 @@ const extractMailboxTestPackage = async (
     model: credential.model,
     source,
     attachments,
+    ...(receivedAt === undefined ? {} : { receivedAt }),
     taskRoles,
     markdown: env.AI,
   });
@@ -598,7 +643,7 @@ const extractMailboxTestPackage = async (
 /** Produces the exact bounded OpenAI-compatible payload for review before sending. */
 const previewMailboxTestAiRequest = async (
   env: Bindings,
-  input: { database: D1Database; source: string; attachments: SourceAttachmentContent[] },
+  input: { database: D1Database; source: string; attachments: SourceAttachmentContent[]; receivedAt?: string },
 ): Promise<AiEventDetailsRequest> => {
   const taskRoles = await drizzleOrganizationDatabase(input.database).select({
     id: operationalTaskRoles.id,
@@ -608,6 +653,7 @@ const previewMailboxTestAiRequest = async (
   return buildAiEventDetailsRequest({
     source: input.source,
     attachments: input.attachments,
+    ...(input.receivedAt === undefined ? {} : { receivedAt: input.receivedAt }),
     taskRoles,
     markdown: env.AI,
   });
@@ -671,12 +717,14 @@ const readMailboxTestSourceWithGoogle = async (
   const attachments = sourceAttachments(message.payload);
   const intake = validateAttachmentIntake(attachments.map((attachment) => attachment.size));
   if (!intake.accepted) throw new Error('Source Message attachments exceed the configured intake limit.');
+  const receivedAt = receivedAtOf(message.internalDate);
   return {
     id: message.id,
     subject,
     sender: senderOf(message.payload),
     source: `${subject}\n${body}`,
     attachments: await dependencies.attachments.read({ accessToken, gmailMessageId: message.id, attachments }),
+    ...(receivedAt === undefined ? {} : { receivedAt }),
   };
 };
 
@@ -922,7 +970,7 @@ const processOrganizationMessage = async (
   }).from(operationalTaskRoles).all();
   const allowedRoleIds = new Set(rule.taskRoleIds ?? []);
   const allowedTaskRoles = organizationRoles.filter((role) => allowedRoleIds.has(role.id));
-  const extraction = await aiExtraction(env, organizationId, database, `${subject}\n${body}`, attachmentContents, sharedConvertedAttachments, allowedTaskRoles, dependencies);
+  const extraction = await aiExtraction(env, organizationId, database, `${subject}\n${body}`, attachmentContents, sharedConvertedAttachments, allowedTaskRoles, receivedAtOf(message.internalDate), dependencies);
   if (extraction === null) {
     await db.insert(automationExceptions).values({
       id: crypto.randomUUID(),
@@ -1182,9 +1230,9 @@ export const createAutomation = (
         readMailboxTestSourceWithGoogle(env, input.organizationId, input.database, input.messageId, dependencies),
       createCalendarEvents: (input: { organizationId: string; database: D1Database; messageId: string; events: EventDetails[] }): Promise<{ eventIds: string[] }> =>
         createMailboxTestCalendarEventsWithGoogle(env, input.organizationId, input.database, { messageId: input.messageId, events: input.events }, dependencies),
-      extractPackage: (input: { organizationId: string; database: D1Database; source: string; attachments: SourceAttachmentContent[] }): Promise<MailExtraction | null> =>
-        extractMailboxTestPackage(env, input.organizationId, input.database, input.source, input.attachments, dependencies),
-      previewAiRequest: (input: { database: D1Database; source: string; attachments: SourceAttachmentContent[] }): Promise<AiEventDetailsRequest> =>
+      extractPackage: (input: { organizationId: string; database: D1Database; source: string; attachments: SourceAttachmentContent[]; receivedAt?: string }): Promise<MailExtraction | null> =>
+        extractMailboxTestPackage(env, input.organizationId, input.database, input.source, input.attachments, input.receivedAt, dependencies),
+      previewAiRequest: (input: { database: D1Database; source: string; attachments: SourceAttachmentContent[]; receivedAt?: string }): Promise<AiEventDetailsRequest> =>
         previewMailboxTestAiRequest(env, input),
     },
   };

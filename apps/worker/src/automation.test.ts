@@ -6,7 +6,9 @@ import { app } from './api';
 import { extractAiEventDetails, type EventDetails } from './event-details';
 import {
   createAutomation,
+  decodedBody,
   extractEventCandidate,
+  receivedAtOf,
   runEnabledAutomations,
   runOrganizationAutomation,
   selectActiveRule,
@@ -71,6 +73,33 @@ describe('Source Message event extraction', () => {
       subject: '例会',
       body: '',
     })).toBeNull();
+  });
+
+  it('reads a multipart/alternative body once instead of sending both representations', () => {
+    const invitation = '創立30周年記念式典のご案内です。ご出席をお待ちしております。';
+
+    expect(decodedBody({
+      mimeType: 'multipart/alternative',
+      parts: [
+        { mimeType: 'text/plain', body: { data: gmailBody(invitation) } },
+        { mimeType: 'text/html', body: { data: gmailBody(`<html><body><p>${invitation}</p></body></html>`) } },
+      ],
+    })).toBe(invitation);
+  });
+
+  it('falls back to the HTML representation when Gmail supplies no plain text', () => {
+    expect(decodedBody({
+      mimeType: 'multipart/alternative',
+      parts: [
+        { mimeType: 'text/html', body: { data: gmailBody('<p>会場は会館です。</p>') } },
+      ],
+    })).toBe('会場は会館です。');
+  });
+
+  it('states the Gmail delivery time in the time zone this product schedules in', () => {
+    expect(receivedAtOf('1775520720000')).toBe('2026-04-07T09:12:00+09:00');
+    expect(receivedAtOf(undefined)).toBeUndefined();
+    expect(receivedAtOf('not-a-timestamp')).toBeUndefined();
   });
 
   it('counts and retains only attached file parts', () => {
@@ -992,6 +1021,7 @@ describe('Organization Automation Inbox scheduling', () => {
       if (url.includes('/messages/gmail-message-docx')) {
         return new Response(JSON.stringify({
           id: 'gmail-message-docx',
+          internalDate: '1775520720000',
           payload: {
             headers: [
               { name: 'Subject', value: '式典のお知らせ' },
@@ -1042,10 +1072,12 @@ describe('Organization Automation Inbox scheduling', () => {
     await runEnabledAutomations(fixture.environment);
 
     expect(aiRequest.messages?.[1]?.content).toContain('FILE-PROBE-001');
+    expect(aiRequest.messages?.[0]?.content)
+      .toContain('{"receivedAt":"2026-04-07T09:12:00+09:00","timeZone":"Asia/Tokyo"}');
     expect(markdown.toMarkdown).toHaveBeenCalledWith(expect.objectContaining({
       name: '式典案内.docx',
       blob: expect.any(Blob),
-    }));
+    }), { conversionOptions: { pdf: { metadata: false } } });
     expect(aiRequest.messages?.[1]?.content).not.toContain(gmailDocx);
     expect(calendarUrl).toContain('supportsAttachments=true');
     expect(calendarRequest.attachments).toEqual([{
@@ -1343,7 +1375,7 @@ describe('Manual mailbox test', () => {
     expect(markdown.toMarkdown).toHaveBeenCalledWith(expect.objectContaining({
       name: '式典案内.xlsx',
       blob: expect.any(Blob),
-    }));
+    }), { conversionOptions: { pdf: { metadata: false } } });
     expect(calendarResponse.status).toBe(201);
     expect(calendarUrl).toContain('supportsAttachments=true');
     expect(calendarRequests).toHaveLength(2);
