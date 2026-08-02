@@ -1,6 +1,7 @@
 export type OrganizationStatus = 'provisioning' | 'active' | 'suspended' | 'failed';
 export type ListKind = 'source' | 'recipient' | 'line';
 export type RuleStatus = 'draft' | 'active' | 'suspended' | 'archived';
+export type AgentRuleStatus = 'active' | 'suspended' | 'archived';
 export type EventStatus = 'draft' | 'scheduled' | 'cancelled' | 'exception';
 export type AttendanceStatus = 'unanswered' | 'attending' | 'not_attending';
 
@@ -44,6 +45,45 @@ export interface AutomationRule {
   deadlineDaysBefore: number | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface Prompt {
+  id: string;
+  organizationId: string;
+  name: string;
+  instructions: string;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentRule {
+  id: string;
+  organizationId: string;
+  name: string;
+  status: AgentRuleStatus;
+  promptId: string;
+  selectionPolicy: Record<string, unknown>;
+  priority: number;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentRunIndex {
+  id: string;
+  agentRuleId: string;
+  agentRuleRevision: number;
+  promptId: string;
+  promptRevision: number;
+  sourceMessageId: string;
+  model: string;
+  outcome: 'succeeded' | 'failed';
+  toolCallCount: number;
+  tokens: number;
+  startedAt: string;
+  completedAt: string;
+  expiresAt: string;
 }
 
 export interface ScheduledEvent {

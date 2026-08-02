@@ -28,6 +28,7 @@ const dashboardProps = (): DashboardProps => ({
   mailTestPreview: null, mailTestBusy: false, mailTestCreatedEventIds: [], onMailTestSubjectChange: vi.fn(), onSearchMailbox: vi.fn(),
   onPrepareMailbox: vi.fn(), onPreviewMailbox: vi.fn(), onCreateCalendarEvent: vi.fn(), organizationRules: [], ruleBusy: false,
   organizationLists: [], onCreateRule: vi.fn(), onUpdateRule: vi.fn(), organizationTasks: [], onUpdateTask: vi.fn(), taskRoles: [], taskRoleAssignments: [], taskMembers: [], onCreateTaskRole: vi.fn(), onUpdateTaskRole: vi.fn(), onDeleteTaskRole: vi.fn(), onAssignTaskRole: vi.fn(),
+  prompts: [], agentRules: [], agentRuns: [], agentTranscript: null, onCreatePrompt: vi.fn(), onUpdatePrompt: vi.fn(), onDeletePrompt: vi.fn(), onCreateAgentRule: vi.fn(), onUpdateAgentRule: vi.fn(), onLoadAgentTranscript: vi.fn(),
   organizationRecipients: [], lineDestinations: [], memberBusy: false, onCreateRecipient: vi.fn(), onUpdateRecipient: vi.fn(),
   onSetLineDestination: vi.fn(), onUnlinkLineDestination: vi.fn(), onRegisterLineDestination: vi.fn(), onRemoveLineDestination: vi.fn(), onRefreshRecipients: vi.fn(),
 });
@@ -147,6 +148,33 @@ describe('Operational Task Roles', () => {
     expect(html).toContain('許可リストを編集');
     expect(html).toContain('選択中: Members');
     expect(html).toContain('選択中: Member LINE');
+  });
+});
+
+describe('read-only Agent Rules', () => {
+  it('offers Prompt and Agent Rule management and renders a readable Run Transcript', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/rules']}>
+        <Dashboard
+          {...dashboardProps()}
+          page="rules"
+          prompts={[{ id: 'prompt-1', organizationId: 'org-1', name: 'Analyst', instructions: 'Read carefully.', revision: 2, createdAt: '2026-08-01', updatedAt: '2026-08-02' }]}
+          agentRules={[{ id: 'agent-rule-1', organizationId: 'org-1', name: 'Read-only analyst', promptId: 'prompt-1', state: 'active', selectionPolicy: { domain: 'example.com' }, priority: 0, revision: 1, createdAt: '2026-08-01', updatedAt: '2026-08-01' }]}
+          agentRuns={[{ id: 'run-1', agentRuleId: 'agent-rule-1', agentRuleRevision: 1, promptId: 'prompt-1', promptRevision: 2, sourceMessageId: 'source-1', model: 'test-model', startedAt: '2026-08-02', completedAt: '2026-08-02', outcome: 'succeeded', toolCallCount: 1, tokens: 42, expiresAt: '2026-10-31' }]}
+          agentTranscript={{ runId: 'run-1', source: { subject: 'Confidential notice', body: 'Source transcript body', attachments: [] }, finalOutput: 'No action required.', messages: [], error: null }}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('Promptを作成');
+    expect(html).toContain('Read carefully.');
+    expect(html).toContain('Promptを編集');
+    expect(html).toContain('Promptを削除');
+    expect(html).toContain('Agent Ruleを作成');
+    expect(html).toContain('Read-only analyst');
+    expect(html).toContain('Run Transcript');
+    expect(html).toContain('Source transcript body');
+    expect(html).toContain('No action required.');
   });
 });
 

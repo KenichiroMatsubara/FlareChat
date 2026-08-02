@@ -95,7 +95,7 @@ export const applyTestMigrations = (database: TestD1Database, kind: 'control' | 
   const names = readdirSync(migrationDirectory(kind)).filter((file) => file.endsWith('.sql')).sort();
   for (const name of names) {
     const migration = readFileSync(resolve(migrationDirectory(kind), name), 'utf8');
-    for (const statement of migration.split(';').map((value) => value.trim()).filter(Boolean)) {
+    for (const statement of migration.split('--> statement-breakpoint').map((value) => value.trim()).filter(Boolean)) {
       database.execute(statement);
     }
   }

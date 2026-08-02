@@ -5,7 +5,7 @@ import { isRouteErrorResponse, NavLink, Outlet, useLoaderData, useNavigate, useR
 import type { AppState } from '@mail/domain';
 
 import { api } from './api';
-import type { AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationConnections, OrganizationDashboard, OrganizationLineDestination, OrganizationMembership, OrganizationRecipient, OrganizationRecipientInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, RecipientLineDestinationInput, TaskRoleConfiguration } from './api';
+import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationAgentRule, OrganizationConnections, OrganizationDashboard, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationRecipient, OrganizationRecipientInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, RecipientLineDestinationInput, TaskRoleConfiguration } from './api';
 import { defaultOrganizationName, setupPhaseLabel, SignedOutEntry } from './entry';
 import { Dashboard } from './dashboard';
 
@@ -123,6 +123,9 @@ export interface OrganizationRouteData {
   connections: OrganizationConnections;
   dashboard: OrganizationDashboard;
   rules: OrganizationRule[];
+  prompts: OrganizationPrompt[];
+  agentRules: OrganizationAgentRule[];
+  agentRuns: AgentRunIndex[];
   lists: OrganizationTypedList[];
   audit: DeliveryAuditRecord[];
   tasks: OrganizationTask[];
@@ -136,11 +139,14 @@ export const loadOrganization = async (organizationId: string): Promise<Organiza
   if (state.kind !== 'ready') throw new Response('Organization is not ready', { status: 409 });
   const organization = state.organizations.find((value) => value.organizationId === organizationId);
   if (!organization) throw new Response('Organization was not found', { status: 404 });
-  const [automation, connections, dashboard, rules, lists, audit, tasks, taskRoles, recipients, lineDestinations] = await Promise.all([
+  const [automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, recipients, lineDestinations] = await Promise.all([
     api.currentAutomation(organizationId),
     api.organizationConnections(organizationId),
     api.organizationDashboard(organizationId),
     api.organizationRules(organizationId),
+    api.organizationPrompts(organizationId),
+    api.organizationAgentRules(organizationId),
+    api.organizationAgentRuns(organizationId),
     api.organizationLists(organizationId),
     api.organizationDeliveryAudit(organizationId),
     api.organizationTasks(organizationId),
@@ -148,7 +154,7 @@ export const loadOrganization = async (organizationId: string): Promise<Organiza
     api.organizationRecipients(organizationId),
     api.organizationLineDestinations(organizationId),
   ]);
-  return { state, organization, automation, connections, dashboard, rules, lists, audit, tasks, taskRoles, recipients, lineDestinations };
+  return { state, organization, automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, recipients, lineDestinations };
 };
 
 interface OrganizationContextValue extends OrganizationRouteData {
@@ -166,6 +172,13 @@ interface OrganizationContextValue extends OrganizationRouteData {
   createCalendarEvent: () => void;
   createRule: (input: OrganizationRuleInput) => Promise<void>;
   updateRule: (ruleId: string, input: Pick<OrganizationRuleInput, 'permittedRecipientListIds' | 'permittedLineListIds'>) => Promise<void>;
+  agentTranscript: AgentRunTranscript | null;
+  createPrompt: (input: { name: string; instructions: string }) => Promise<void>;
+  updatePrompt: (promptId: string, input: { name?: string; instructions?: string }) => Promise<void>;
+  deletePrompt: (promptId: string) => Promise<void>;
+  createAgentRule: (input: { name: string; promptId: string; state: 'active' | 'suspended'; selectionPolicy: Record<string, unknown>; priority?: number }) => Promise<void>;
+  updateAgentRule: (agentRuleId: string, input: { state?: 'active' | 'suspended' | 'archived' }) => Promise<void>;
+  loadAgentTranscript: (runId: string) => void;
   updateTask: (taskId: string, input: { completed?: boolean; remarks?: string }) => void;
   createTaskRole: (input: { displayName: string; description: string }) => Promise<void>;
   updateTaskRole: (roleId: string, input: { displayName?: string; description?: string }) => Promise<void>;
@@ -239,6 +252,7 @@ export const OrganizationLayout = () => {
   const [mailTestPreview, setMailTestPreview] = useState<MailboxTestPreview | null>(null);
   const [mailTestBusy, setMailTestBusy] = useState(false);
   const [mailTestCreatedEventIds, setMailTestCreatedEventIds] = useState<string[]>([]);
+  const [agentTranscript, setAgentTranscript] = useState<AgentRunTranscript | null>(null);
 
   useEffect(() => {
     setData(initial);
@@ -289,6 +303,29 @@ export const OrganizationLayout = () => {
   const updateRule = async (ruleId: string, input: Pick<OrganizationRuleInput, 'permittedRecipientListIds' | 'permittedLineListIds'>): Promise<void> => withError(async () => {
     const updated = await api.updateOrganizationRule(data.organization.organizationId, ruleId, input);
     setData((current) => ({ ...current, rules: current.rules.map((rule) => rule.id === ruleId ? { ...rule, ...updated } : rule) }));
+  }, setRuleBusy);
+  const createPrompt = async (input: { name: string; instructions: string }): Promise<void> => withError(async () => {
+    const prompt = await api.createOrganizationPrompt(data.organization.organizationId, input);
+    setData((current) => ({ ...current, prompts: [...current.prompts, prompt] }));
+  }, setRuleBusy);
+  const updatePrompt = async (promptId: string, input: { name?: string; instructions?: string }): Promise<void> => withError(async () => {
+    const updated = await api.updateOrganizationPrompt(data.organization.organizationId, promptId, input);
+    setData((current) => ({ ...current, prompts: current.prompts.map((prompt) => prompt.id === promptId ? { ...prompt, ...updated } : prompt) }));
+  }, setRuleBusy);
+  const deletePrompt = async (promptId: string): Promise<void> => withError(async () => {
+    await api.removeOrganizationPrompt(data.organization.organizationId, promptId);
+    setData((current) => ({ ...current, prompts: current.prompts.filter((prompt) => prompt.id !== promptId) }));
+  }, setRuleBusy);
+  const createAgentRule = async (input: { name: string; promptId: string; state: 'active' | 'suspended'; selectionPolicy: Record<string, unknown>; priority?: number }): Promise<void> => withError(async () => {
+    const rule = await api.createOrganizationAgentRule(data.organization.organizationId, input);
+    setData((current) => ({ ...current, agentRules: [...current.agentRules, rule] }));
+  }, setRuleBusy);
+  const updateAgentRule = async (agentRuleId: string, input: { state?: 'active' | 'suspended' | 'archived' }): Promise<void> => withError(async () => {
+    const updated = await api.updateOrganizationAgentRule(data.organization.organizationId, agentRuleId, input);
+    setData((current) => ({ ...current, agentRules: current.agentRules.map((rule) => rule.id === agentRuleId ? updated : rule) }));
+  }, setRuleBusy);
+  const loadAgentTranscript = (runId: string) => void withError(async () => {
+    setAgentTranscript(await api.agentRunTranscript(data.organization.organizationId, runId));
   }, setRuleBusy);
   const updateTask = (taskId: string, input: { completed?: boolean; remarks?: string }) => void withError(async () => {
     const task = await api.updateOrganizationTask(data.organization.organizationId, taskId, input);
@@ -355,7 +392,7 @@ export const OrganizationLayout = () => {
   const refreshRecipients = () => void withError(reloadRecipients, setMemberBusy);
   const logout = () => void withError(async () => { await api.logout(); navigate('/', { replace: true }); }, setBusy);
   const reauthenticate = () => void withError(async () => { window.location.assign((await api.reauthorizeAutomationInbox(data.organization.organizationId)).authorizationUrl); }, setBusy);
-  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateRule, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, createRecipient, updateRecipient, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshRecipients, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, aiTestBusy, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, lineSettingsBusy, aiSettingsBusy, ruleBusy, memberBusy, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
+  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateRule, agentTranscript, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, createRecipient, updateRecipient, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshRecipients, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, aiTestBusy, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, lineSettingsBusy, aiSettingsBusy, ruleBusy, memberBusy, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
   return <OrganizationContext.Provider value={value}><Outlet /></OrganizationContext.Provider>;
 };
 
@@ -413,6 +450,16 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     ruleBusy={value.ruleBusy}
     onCreateRule={value.createRule}
     onUpdateRule={value.updateRule}
+    prompts={value.prompts}
+    agentRules={value.agentRules}
+    agentRuns={value.agentRuns}
+    agentTranscript={value.agentTranscript}
+    onCreatePrompt={value.createPrompt}
+    onUpdatePrompt={value.updatePrompt}
+    onDeletePrompt={value.deletePrompt}
+    onCreateAgentRule={value.createAgentRule}
+    onUpdateAgentRule={value.updateAgentRule}
+    onLoadAgentTranscript={value.loadAgentTranscript}
     organizationTasks={value.tasks}
     onUpdateTask={value.updateTask}
     taskRoles={value.taskRoles.roles}

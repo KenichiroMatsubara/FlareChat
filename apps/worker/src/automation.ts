@@ -9,12 +9,16 @@ import type { SourceAttachmentContent } from './drive-attachments';
 import type { GoogleTokenSet } from './google';
 import { productionAutomationDependencies } from './automation/providers';
 import type { AutomationDependencies, GoogleAutomationPort } from './automation/providers';
+import { AGENT_TRANSCRIPT_RETENTION_DAYS, AgentRunFailure, runReadOnlyAgent, writeAgentRunTranscript } from './agent-runs';
 import { createDatabaseAccess } from './database-access';
 import type { Bindings } from './types';
 import { validateAttachmentIntake } from '@mail/domain';
+import { convertAttachmentsForEventExtraction, type ConvertedAttachment } from './attachment-conversion';
 import { controlDatabase as drizzleControlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
 import { organizationKeys, organizations } from './storage/control-schema';
 import {
+  agentRules,
+  agentRuns,
   connections,
   deliveries,
   automationWarnings,
@@ -24,6 +28,7 @@ import {
   googleConnections,
   listItems,
   operationalTaskRoles,
+  prompts,
   rulePermittedLineLists,
   rulePermittedRecipientLists,
   rules as automationRules,
@@ -97,6 +102,14 @@ export interface ActiveRule {
   permittedLineListIds?: string[];
 }
 
+interface ActiveAgentRule {
+  id: string;
+  priority: number;
+  promptId: string;
+  revision: number;
+  selectionPolicy: Record<string, unknown>;
+}
+
 export interface RuleSource {
   sender: string;
   subject: string;
@@ -163,22 +176,24 @@ export const extractEventCandidate = (subject: string, body: string, current = n
   };
 };
 
-/** Chooses exactly one active Rule, using descending priority after policy matching. */
-export const selectActiveRule = (rules: ActiveRule[], source: RuleSource): ActiveRule | null => {
+const ruleMatches = (rule: Pick<ActiveRule, 'selectionPolicy'>, source: RuleSource): boolean => {
   const sender = source.sender.trim().toLowerCase();
   const domain = sender.split('@')[1] ?? '';
   const content = `${source.subject}\n${source.body}`.toLowerCase();
-  const matching = rules.filter((rule) => {
-    const policy = rule.selectionPolicy;
-    const requiredSender = typeof policy.sender === 'string' ? policy.sender.trim().toLowerCase() : '';
-    const requiredDomain = typeof policy.domain === 'string' ? policy.domain.trim().toLowerCase() : '';
-    const requiredKeyword = typeof policy.keyword === 'string' ? policy.keyword.trim().toLowerCase() : '';
-    const requiredLabel = typeof policy.label === 'string' ? policy.label.trim() : '';
-    return (!requiredSender || requiredSender === sender)
-      && (!requiredDomain || requiredDomain === domain)
-      && (!requiredKeyword || content.includes(requiredKeyword))
-      && (!requiredLabel || (source.labels ?? []).includes(requiredLabel));
-  });
+  const policy = rule.selectionPolicy;
+  const requiredSender = typeof policy.sender === 'string' ? policy.sender.trim().toLowerCase() : '';
+  const requiredDomain = typeof policy.domain === 'string' ? policy.domain.trim().toLowerCase() : '';
+  const requiredKeyword = typeof policy.keyword === 'string' ? policy.keyword.trim().toLowerCase() : '';
+  const requiredLabel = typeof policy.label === 'string' ? policy.label.trim() : '';
+  return (!requiredSender || requiredSender === sender)
+    && (!requiredDomain || requiredDomain === domain)
+    && (!requiredKeyword || content.includes(requiredKeyword))
+    && (!requiredLabel || (source.labels ?? []).includes(requiredLabel));
+};
+
+/** Chooses exactly one active Rule, using descending priority after policy matching. */
+export const selectActiveRule = (rules: ActiveRule[], source: RuleSource): ActiveRule | null => {
+  const matching = rules.filter((rule) => ruleMatches(rule, source));
   return matching.sort((left, right) => right.priority - left.priority)[0] ?? null;
 };
 
@@ -321,6 +336,7 @@ const aiExtraction = async (
   database: D1Database,
   source: string,
   attachments: SourceAttachmentContent[],
+  convertedAttachments: ConvertedAttachment[] | undefined,
   taskRoles: TaskRoleDescription[],
   dependencies: AutomationDependencies,
 ): Promise<MailExtraction | null | undefined> => {
@@ -337,12 +353,127 @@ const aiExtraction = async (
       model: credential.model,
       source,
       attachments,
+      ...(convertedAttachments === undefined ? {} : { convertedAttachments }),
       taskRoles,
       markdown: env.AI,
     });
   } catch {
     return null;
   }
+};
+
+const agentConnection = async (
+  env: Bindings,
+  organizationId: string,
+  database: D1Database,
+): Promise<{ apiKey: string; baseUrl: string; model: string }> => {
+  const connection = await drizzleOrganizationDatabase(database).select().from(connections)
+    .where(and(eq(connections.kind, 'ai'), eq(connections.status, 'active'))).limit(1).get();
+  if (!connection) throw new Error('Agent Rule requires an active AI Connection.');
+  const key = await organizationKeyFor(env, organizationId);
+  const credential = JSON.parse(await decrypt(JSON.parse(connection.credential), key, `organization-connection:${organizationId}:ai`)) as AiCredential;
+  if (!credential.apiKey || !credential.model) throw new Error('Agent Rule requires a configured AI model.');
+  return { apiKey: credential.apiKey, baseUrl: credential.baseUrl || LEGACY_AI_BASE_URL, model: credential.model };
+};
+
+const runMatchingAgentRules = async (input: {
+  dependencies: AutomationDependencies;
+  env: Bindings;
+  database: D1Database;
+  organizationId: string;
+  sourceMessageId: string;
+  sender: string;
+  subject: string;
+  body: string;
+  attachments: ConvertedAttachment[];
+  rules: ActiveAgentRule[];
+}): Promise<boolean> => {
+  if (!input.rules.length) return false;
+  const database = drizzleOrganizationDatabase(input.database);
+  let connection: { apiKey: string; baseUrl: string; model: string } | null = null;
+  let connectionError: string | null = null;
+  try {
+    connection = await agentConnection(input.env, input.organizationId, input.database);
+  } catch (error) {
+    connectionError = error instanceof Error ? error.message : 'Agent Rule AI Connection failed.';
+  }
+  const organizationKey = await organizationKeyFor(input.env, input.organizationId);
+  let failed = false;
+  for (const rule of input.rules) {
+    const runId = crypto.randomUUID();
+    const startedAt = now();
+    const source = { id: input.sourceMessageId, sender: input.sender, subject: input.subject, body: input.body, attachments: input.attachments };
+    let runResult: Awaited<ReturnType<typeof runReadOnlyAgent>> | null = null;
+    let runError: string | null = null;
+    let promptRevision = 0;
+    try {
+      const prompt = await database.select({ instructions: prompts.instructions, revision: prompts.currentRevision }).from(prompts)
+        .where(eq(prompts.id, rule.promptId)).get();
+      if (!prompt) throw new Error('Agent Rule Prompt was not found.');
+      promptRevision = prompt.revision;
+      if (!connection) throw new Error(connectionError ?? 'Agent Rule AI Connection failed.');
+      runResult = await runReadOnlyAgent({
+        database,
+        model: input.dependencies.agent,
+        connection,
+        prompt: prompt.instructions,
+        source,
+      });
+    } catch (error) {
+      if (error instanceof AgentRunFailure) runResult = error.result;
+      runError = error instanceof Error ? error.message : 'Agent Rule run failed.';
+      failed = true;
+    }
+    const completedAt = now();
+    try {
+      const transcriptKey = await writeAgentRunTranscript({
+        bucket: input.env.RECOVERY_RECEIPTS,
+        organizationKey,
+        transcript: {
+          runId,
+          organizationId: input.organizationId,
+          agentRuleId: rule.id,
+          agentRuleRevision: rule.revision,
+          promptId: rule.promptId,
+          promptRevision,
+          source,
+          messages: runResult?.messages ?? [],
+          finalOutput: runResult?.output ?? '',
+          error: runError,
+        },
+      });
+      await database.insert(agentRuns).values({
+        id: runId,
+        agentRuleId: rule.id,
+        agentRuleRevision: rule.revision,
+        promptId: rule.promptId,
+        promptRevision,
+        sourceMessageId: input.sourceMessageId,
+        model: runResult?.model ?? connection?.model ?? 'unconfigured',
+        startedAt,
+        completedAt,
+        outcome: runError ? 'failed' : 'succeeded',
+        toolCallCount: runResult?.toolCallCount ?? 0,
+        tokens: runResult?.tokens ?? 0,
+        transcriptKey,
+        expiresAt: new Date(Date.now() + AGENT_TRANSCRIPT_RETENTION_DAYS * 24 * 60 * 60 * 1_000).toISOString(),
+      }).run();
+    } catch (error) {
+      runError = error instanceof Error ? error.message : 'Run Transcript persistence failed.';
+      failed = true;
+    }
+    if (runError) {
+      await database.insert(automationExceptions).values({
+        id: crypto.randomUUID(),
+        sourceMessageId: input.sourceMessageId,
+        code: 'agent_rule_run_failed',
+        message: runError,
+        state: 'open',
+        createdAt: now(),
+      }).run();
+    }
+  }
+  return failed;
 };
 
 /** Reuses the production AI provider for a confirmed, manual Mailbox Test preview. */
@@ -551,12 +682,16 @@ const processOrganizationMessage = async (
     state: 'processing',
   }).run();
   const body = decodedBody(message.payload) || (message.snippet ?? '');
-  const activeRules = await db.select({
-    id: automationRules.id,
-    priority: automationRules.priority,
-    selectionPolicy: automationRules.selectionPolicy,
-    taskRoleIds: automationRules.taskRoleIds,
-  }).from(automationRules).where(eq(automationRules.status, 'active')).orderBy(automationRules.priority).all();
+  const [activeRules, activeAgentRuleRows] = await Promise.all([
+    db.select({
+      id: automationRules.id,
+      priority: automationRules.priority,
+      selectionPolicy: automationRules.selectionPolicy,
+      taskRoleIds: automationRules.taskRoleIds,
+    }).from(automationRules).where(eq(automationRules.status, 'active')).orderBy(automationRules.priority).all(),
+    db.select({ id: agentRules.id, priority: agentRules.priority, promptId: agentRules.promptId, revision: agentRules.currentRevision, selectionPolicy: agentRules.selectionPolicy })
+      .from(agentRules).where(eq(agentRules.status, 'active')).orderBy(agentRules.priority).all(),
+  ]);
   const activeRuleIds = activeRules.map(({ id }) => id);
   const [permittedRecipientLists, permittedLineLists] = activeRuleIds.length ? await Promise.all([
     db.select().from(rulePermittedRecipientLists)
@@ -564,6 +699,7 @@ const processOrganizationMessage = async (
     db.select().from(rulePermittedLineLists)
       .where(inArray(rulePermittedLineLists.ruleId, activeRuleIds)).all(),
   ]) : [[], []];
+  const source = { sender: senderOf(message.payload), subject, body, ...(message.labelIds === undefined ? {} : { labels: message.labelIds }) };
   const rule = selectActiveRule(activeRules.flatMap((row) => {
     try { return [{
       id: row.id,
@@ -574,8 +710,16 @@ const processOrganizationMessage = async (
       permittedLineListIds: permittedLineLists.flatMap((reference) => reference.ruleId === row.id ? [reference.listId] : []),
     }]; }
     catch { return []; }
-  }), { sender: senderOf(message.payload), subject, body, ...(message.labelIds === undefined ? {} : { labels: message.labelIds }) });
-  if (!rule) {
+  }), source);
+  const matchingAgentRules = activeAgentRuleRows.flatMap((row): ActiveAgentRule[] => {
+    try {
+      const candidate = { id: row.id, priority: row.priority, promptId: row.promptId, revision: row.revision, selectionPolicy: JSON.parse(row.selectionPolicy) as Record<string, unknown> };
+      return ruleMatches(candidate, source) ? [candidate] : [];
+    } catch {
+      return [];
+    }
+  }).sort((left, right) => right.priority - left.priority);
+  if (!rule && !matchingAgentRules.length) {
     await db.update(sourceMessages).set({ state: 'skipped', processedAt: now() })
       .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
@@ -590,7 +734,7 @@ const processOrganizationMessage = async (
       state: 'open',
       createdAt: now(),
     }).run();
-    await deliverSourceMessageNotice({
+    if (rule) await deliverSourceMessageNotice({
       dependencies,
       env,
       database,
@@ -622,7 +766,7 @@ const processOrganizationMessage = async (
       state: 'open',
       createdAt: now(),
     }).run();
-    await deliverSourceMessageNotice({
+    if (rule) await deliverSourceMessageNotice({
       dependencies,
       env,
       database,
@@ -637,6 +781,41 @@ const processOrganizationMessage = async (
       .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
   }
+  let sharedConvertedAttachments: ConvertedAttachment[] | undefined;
+  try {
+    sharedConvertedAttachments = matchingAgentRules.length
+      ? await convertAttachmentsForEventExtraction(attachmentContents, env.AI)
+      : undefined;
+  } catch (error) {
+    await db.insert(automationExceptions).values({
+      id: crypto.randomUUID(),
+      sourceMessageId,
+      code: 'source_attachment_conversion_failed',
+      message: error instanceof Error ? error.message : 'Source Message attachment conversion failed.',
+      state: 'open',
+      createdAt: now(),
+    }).run();
+    await db.update(sourceMessages).set({ state: 'exception', processedAt: now() })
+      .where(eq(sourceMessages.id, sourceMessageId)).run();
+    return;
+  }
+  const agentFailed = await runMatchingAgentRules({
+    dependencies,
+    env,
+    database,
+    organizationId,
+    sourceMessageId,
+    sender: source.sender,
+    subject,
+    body,
+    attachments: sharedConvertedAttachments ?? [],
+    rules: matchingAgentRules,
+  });
+  if (!rule) {
+    await db.update(sourceMessages).set({ state: agentFailed ? 'exception' : 'processed', processedAt: now() })
+      .where(eq(sourceMessages.id, sourceMessageId)).run();
+    return;
+  }
   const organizationRoles = await db.select({
     id: operationalTaskRoles.id,
     displayName: operationalTaskRoles.displayName,
@@ -644,7 +823,7 @@ const processOrganizationMessage = async (
   }).from(operationalTaskRoles).all();
   const allowedRoleIds = new Set(rule.taskRoleIds ?? []);
   const allowedTaskRoles = organizationRoles.filter((role) => allowedRoleIds.has(role.id));
-  const extraction = await aiExtraction(env, organizationId, database, `${subject}\n${body}`, attachmentContents, allowedTaskRoles, dependencies);
+  const extraction = await aiExtraction(env, organizationId, database, `${subject}\n${body}`, attachmentContents, sharedConvertedAttachments, allowedTaskRoles, dependencies);
   if (extraction === null) {
     await db.insert(automationExceptions).values({
       id: crypto.randomUUID(),
@@ -681,7 +860,7 @@ const processOrganizationMessage = async (
   const fallbackCandidate = extractEventCandidate(subject, body);
   const candidates = extraction?.events.map((event) => ({ title: event.title, startsAt: event.startsAt, endsAt: event.endsAt })) ?? (fallbackCandidate ? [fallbackCandidate] : []);
   if (!candidates.length) {
-    await db.update(sourceMessages).set({ state: 'skipped', processedAt: now() })
+    await db.update(sourceMessages).set({ state: agentFailed ? 'exception' : 'skipped', processedAt: now() })
       .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
   }
@@ -768,7 +947,7 @@ const processOrganizationMessage = async (
     }).run();
   }
   await db.update(sourceMessages).set({
-    state: publicationFailed ? 'exception' : 'processed',
+    state: publicationFailed || agentFailed ? 'exception' : 'processed',
     processedAt: now(),
   }).where(eq(sourceMessages.id, sourceMessageId)).run();
 };

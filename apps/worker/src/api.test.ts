@@ -370,6 +370,83 @@ describe('Organization management', () => {
     }] });
   });
 
+  it('creates, revises, lists, and deletes an Organization Prompt', async () => {
+    fixture = createTestApp();
+    const created = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/prompts',
+      { name: 'Event analyst', instructions: 'Read the Source Message.' },
+    ), fixture.environment);
+    const createdBody = await created.json() as { data: { id: string } };
+    const revised = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/prompts/${createdBody.data.id}`,
+      { instructions: 'Read the Source Message and report deadlines.' },
+      'PATCH',
+    ), fixture.environment);
+    const listed = await app.fetch(
+      fixture.request('/api/organizations/organization-1/prompts'),
+      fixture.environment,
+    );
+    const removed = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/prompts/${createdBody.data.id}`,
+      {},
+      'DELETE',
+    ), fixture.environment);
+    const afterRemoval = await app.fetch(
+      fixture.request('/api/organizations/organization-1/prompts'),
+      fixture.environment,
+    );
+
+    expect([created.status, revised.status, removed.status]).toEqual([201, 200, 200]);
+    await expect(revised.json()).resolves.toMatchObject({
+      data: { id: createdBody.data.id, revision: 2 },
+    });
+    await expect(listed.json()).resolves.toMatchObject({ data: [{
+      id: createdBody.data.id,
+      name: 'Event analyst',
+      instructions: 'Read the Source Message and report deadlines.',
+      revision: 2,
+    }] });
+    await expect(afterRemoval.json()).resolves.toEqual({ data: [] });
+  });
+
+  it('creates an Agent Rule for a Prompt and exposes only its three lifecycle states', async () => {
+    fixture = createTestApp();
+    const prompt = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/prompts',
+      { name: 'Event analyst', instructions: 'Read the Source Message.' },
+    ), fixture.environment);
+    const promptId = (await prompt.json() as { data: { id: string } }).data.id;
+    const rejectedDraft = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/agent-rules',
+      { name: 'Draft analyst', promptId, state: 'draft', selectionPolicy: {} },
+    ), fixture.environment);
+    const created = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/agent-rules',
+      { name: 'Trusted analyst', promptId, state: 'active', selectionPolicy: { domain: 'example.com' } },
+    ), fixture.environment);
+    const agentRuleId = (await created.json() as { data: { id: string } }).data.id;
+    const suspended = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/agent-rules/${agentRuleId}`,
+      { state: 'suspended' },
+      'PATCH',
+    ), fixture.environment);
+    const listed = await app.fetch(
+      fixture.request('/api/organizations/organization-1/agent-rules'),
+      fixture.environment,
+    );
+
+    expect(rejectedDraft.status).toBe(400);
+    expect([created.status, suspended.status]).toEqual([201, 200]);
+    await expect(listed.json()).resolves.toMatchObject({ data: [{
+      id: agentRuleId,
+      name: 'Trusted analyst',
+      promptId,
+      state: 'suspended',
+      selectionPolicy: { domain: 'example.com' },
+      revision: 1,
+    }] });
+  });
+
   it('creates, changes, imports, reads, and snapshots Recipient Profiles', async () => {
     fixture = createTestApp('operator');
     seedScheduledEvent(fixture.organization, { id: 'event-1' });

@@ -127,6 +127,10 @@ describe('Organization database resolver', () => {
       { name: '0006_operational_task_roles.sql' },
       { name: '0007_source_message_deliveries.sql' },
       { name: '0008_rule_permitted_lists.sql' },
+      { name: '0009_prompts.sql' },
+      { name: '0010_agent_rules.sql' },
+      { name: '0011_agent_runs.sql' },
+      { name: '0012_event_agent_owners.sql' },
     ]);
   });
 

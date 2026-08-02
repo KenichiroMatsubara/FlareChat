@@ -15,6 +15,9 @@ export interface AutomationDependencies {
   ai: {
     extract: typeof extractAiEventDetails;
   };
+  agent: {
+    complete: typeof completeAgentTurn;
+  };
   tokens: {
     refresh: typeof refreshGoogleToken;
   };
@@ -38,8 +41,10 @@ export const productionAutomationDependencies: AutomationDependencies = {
   google: productionGoogleAutomationPort,
   attachments: { read: readGmailAttachments, publish: publishDriveAttachment },
   ai: { extract: extractAiEventDetails },
+  agent: { complete: completeAgentTurn },
   tokens: { refresh: refreshGoogleToken },
 };
 import { extractAiEventDetails } from '../event-details';
+import { completeAgentTurn } from '../agent-runs';
 import { publishDriveAttachment, readGmailAttachments } from '../drive-attachments';
 import { refreshGoogleToken } from '../google';

@@ -7,6 +7,10 @@ import organizationOptionalRecipientEmailMigration from '../migrations/organizat
 import organizationOperationalTaskRolesMigration from '../migrations/organization/0006_operational_task_roles.sql';
 import organizationSourceMessageDeliveriesMigration from '../migrations/organization/0007_source_message_deliveries.sql';
 import organizationRulePermittedListsMigration from '../migrations/organization/0008_rule_permitted_lists.sql';
+import organizationPromptsMigration from '../migrations/organization/0009_prompts.sql';
+import organizationAgentRulesMigration from '../migrations/organization/0010_agent_rules.sql';
+import organizationAgentRunsMigration from '../migrations/organization/0011_agent_runs.sql';
+import organizationEventAgentOwnersMigration from '../migrations/organization/0012_event_agent_owners.sql';
 
 type SchemaKind = 'organization';
 
@@ -43,6 +47,10 @@ const ORGANIZATION_MIGRATIONS: readonly SchemaMigration[] = [
     name: '0008_rule_permitted_lists.sql',
     sql: organizationRulePermittedListsMigration,
   },
+  { name: '0009_prompts.sql', sql: organizationPromptsMigration },
+  { name: '0010_agent_rules.sql', sql: organizationAgentRulesMigration },
+  { name: '0011_agent_runs.sql', sql: organizationAgentRunsMigration },
+  { name: '0012_event_agent_owners.sql', sql: organizationEventAgentOwnersMigration },
 ];
 const LEGACY_MIGRATION_CHECKSUMS = new Map<string, ReadonlySet<string>>([
   ['0001_tasks.sql', new Set(['4b2f3889191d0eafbbe45b78103db7139c7ce2b937c02cbbb6824f5131d7429f'])],

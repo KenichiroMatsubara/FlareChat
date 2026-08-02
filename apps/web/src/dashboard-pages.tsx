@@ -366,6 +366,14 @@ const RuleDestinationEditor = ({ rule, props }: {
   </>;
 };
 
+const PromptEditor = ({ prompt, props }: { prompt: DashboardProps['prompts'][number]; props: DashboardProps }) => {
+  const [name, setName] = useState(prompt.name);
+  const [instructions, setInstructions] = useState(prompt.instructions);
+  return <article className="rule-row"><div><strong>{prompt.name}</strong><small>revision {prompt.revision}</small><p>{prompt.instructions}</p><details><summary>Promptを編集</summary><label>Prompt名<input value={name} onChange={(event) => setName(event.target.value)} /></label><label>Instructions<textarea value={instructions} onChange={(event) => setInstructions(event.target.value)} /></label><button type="button" className="secondary" onClick={() => void props.onUpdatePrompt(prompt.id, { name, instructions })}>Promptを保存</button></details></div><button type="button" className="secondary" onClick={() => void props.onDeletePrompt(prompt.id)}>Promptを削除</button></article>;
+};
+
+const AgentRunHistory = (props: DashboardProps) => <section className="rules-list"><div className="rules-list-title"><h2>Run Transcripts</h2><span>{props.agentRuns.length}件</span></div>{props.agentRuns.map((run) => <article className="rule-row" key={run.id}><div><strong>{props.agentRules.find((rule) => rule.id === run.agentRuleId)?.name ?? run.agentRuleId}</strong><small>{run.outcome} ・ {run.model} ・ tools {run.toolCallCount} ・ tokens {run.tokens}</small></div><button type="button" className="secondary" onClick={() => props.onLoadAgentTranscript(run.id)}>Run Transcriptを読む</button></article>)}{props.agentTranscript && <article className="test-card"><div><p>RUN TRANSCRIPT</p><h2>{props.agentTranscript.source.subject}</h2></div><pre>{props.agentTranscript.source.body}</pre>{props.agentTranscript.source.attachments.map((attachment) => <pre key={attachment.filename}>{attachment.filename}{'\n'}{attachment.text}</pre>)}<pre>{props.agentTranscript.finalOutput || props.agentTranscript.error}</pre></article>}</section>;
+
 export const RulesPage = (props: DashboardProps) => {
   const settingsReady = Boolean(props.organization && props.canManage);
   const [ruleName, setRuleName] = useState('');
@@ -378,6 +386,12 @@ export const RulesPage = (props: DashboardProps) => {
   const [taskRoleIds, setTaskRoleIds] = useState<string[]>(props.taskRoles.map((role) => role.id));
   const [permittedRecipientListIds, setPermittedRecipientListIds] = useState<string[]>([]);
   const [permittedLineListIds, setPermittedLineListIds] = useState<string[]>([]);
+  const [promptName, setPromptName] = useState('');
+  const [promptInstructions, setPromptInstructions] = useState('');
+  const [agentName, setAgentName] = useState('');
+  const [agentPromptId, setAgentPromptId] = useState(props.prompts[0]?.id ?? '');
+  const [agentDomain, setAgentDomain] = useState('');
+  const [agentState, setAgentState] = useState<'active' | 'suspended'>('active');
   const recipientLists = props.organizationLists.filter((list) => list.kind === 'recipient');
   const lineLists = props.organizationLists.filter((list) => list.kind === 'line');
   const createRule = async (event: React.FormEvent): Promise<void> => {
@@ -386,11 +400,26 @@ export const RulesPage = (props: DashboardProps) => {
     await props.onCreateRule({ name: ruleName, state: ruleState, selectionPolicy, routingPolicy: {}, taskRoleIds, permittedRecipientListIds, permittedLineListIds, priority: Number.parseInt(rulePriority, 10) || 0 });
     setRuleName(''); setRuleSender(''); setRuleDomain(''); setRuleKeyword(''); setRuleLabel(''); setRulePriority('0'); setRuleState('draft'); setPermittedRecipientListIds([]); setPermittedLineListIds([]);
   };
+  const createPrompt = async (event: React.FormEvent): Promise<void> => {
+    event.preventDefault();
+    await props.onCreatePrompt({ name: promptName, instructions: promptInstructions });
+    setPromptName(''); setPromptInstructions('');
+  };
+  const createAgentRule = async (event: React.FormEvent): Promise<void> => {
+    event.preventDefault();
+    await props.onCreateAgentRule({ name: agentName, promptId: agentPromptId, state: agentState, selectionPolicy: agentDomain.trim() ? { domain: agentDomain.trim() } : {} });
+    setAgentName(''); setAgentDomain('');
+  };
   return <section className="page-layout rules-page">
     <div className="page-title"><p>AUTOMATION RULES</p><h1>ルールセット</h1><span>どのメールを予定化するかを、送信者・ドメイン・キーワード・Gmailラベルで指定します。</span></div>
     {!settingsReady ? <section className="empty-page"><SlidersHorizontal size={30} /><h2>ルールを読み込めません</h2><p>Googleでログインし直した後、このページを再読み込みしてください。</p></section> : <>
       <form className="rule-builder" onSubmit={(event) => void createRule(event)}><div><p>NEW RULE</p><h2>ルールを作成</h2><span>下書きで作成してから有効化できます。</span></div><label>ルール名<input value={ruleName} onChange={(event) => setRuleName(event.target.value)} placeholder="例: ローターアクト行事" required /></label><div className="rule-grid"><label>送信者（完全一致）<input value={ruleSender} onChange={(event) => setRuleSender(event.target.value)} placeholder="sender@example.com" /></label><label>送信元ドメイン<input value={ruleDomain} onChange={(event) => setRuleDomain(event.target.value)} placeholder="example.com" /></label><label>本文・件名のキーワード<input value={ruleKeyword} onChange={(event) => setRuleKeyword(event.target.value)} placeholder="例: 招待行事" /></label><label>Gmailラベル<input value={ruleLabel} onChange={(event) => setRuleLabel(event.target.value)} placeholder="例: Announcements" /></label><label>優先度<input type="number" value={rulePriority} onChange={(event) => setRulePriority(event.target.value)} /></label><label>作成時の状態<select value={ruleState} onChange={(event) => setRuleState(event.target.value as 'draft' | 'active')}><option value="draft">下書き</option><option value="active">有効</option></select></label></div><DestinationListChoices legend="許可されたCalendar Recipient Lists" lists={recipientLists} selectedIds={permittedRecipientListIds} onChange={setPermittedRecipientListIds} /><DestinationListChoices legend="許可されたLINE Destination Lists" lists={lineLists} selectedIds={permittedLineListIds} onChange={setPermittedLineListIds} /><fieldset><legend>割り当て可能なOperational Task Roles</legend>{props.taskRoles.map((role) => <label key={role.id}><input type="checkbox" checked={taskRoleIds.includes(role.id)} onChange={(change) => setTaskRoleIds((current) => toggledIds(current, role.id, change.target.checked))} />{role.displayName}<small>{role.description}</small></label>)}</fieldset><button className="primary" disabled={props.ruleBusy}>{props.ruleBusy ? '作成中…' : 'ルールを作成'}</button></form>
       <section className="rules-list"><div className="rules-list-title"><h2>登録済みルール</h2><span>{props.organizationRules.length}件</span></div>{props.organizationRules.length ? props.organizationRules.map((rule) => <article key={rule.id} className="rule-row"><div><strong>{rule.name}</strong><small>優先度 {rule.priority} ・ {Object.entries(rule.selectionPolicy).map(([key, value]) => `${key}: ${String(value)}`).join(' / ') || '条件なし'}</small><small>選択Role: {props.taskRoles.filter((role) => rule.taskRoleIds.includes(role.id)).map((role) => role.displayName).join('、') || '未割り当てのみ'}</small><RuleDestinationEditor rule={rule} props={props} /></div><span className={`rule-state ${rule.state}`}>{rule.state}</span></article>) : <p className="rules-empty">まだルールはありません。</p>}</section>
+      <form className="rule-builder" onSubmit={(event) => void createPrompt(event)}><div><p>PROMPTS</p><h2>Promptを作成</h2><span>Agent Ruleが実行直前に読むOrganization固有の指示です。</span></div><label>Prompt名<input required value={promptName} onChange={(event) => setPromptName(event.target.value)} /></label><label>Instructions<textarea required value={promptInstructions} onChange={(event) => setPromptInstructions(event.target.value)} /></label><button className="primary" disabled={props.ruleBusy}>Promptを作成</button></form>
+      <section className="rules-list"><div className="rules-list-title"><h2>Prompts</h2><span>{props.prompts.length}件</span></div>{props.prompts.map((prompt) => <PromptEditor key={prompt.id} prompt={prompt} props={props} />)}</section>
+      <form className="rule-builder" onSubmit={(event) => void createAgentRule(event)}><div><p>READ-ONLY AGENT RULE</p><h2>Agent Ruleを作成</h2><span>Source MessageとOrganization内の予定・Task・attendanceだけを読み取れます。</span></div><label>Agent Rule名<input required value={agentName} onChange={(event) => setAgentName(event.target.value)} /></label><label>Prompt<select required value={agentPromptId} onChange={(event) => setAgentPromptId(event.target.value)}><option value="">選択してください</option>{props.prompts.map((prompt) => <option key={prompt.id} value={prompt.id}>{prompt.name}</option>)}</select></label><label>送信元ドメイン<input value={agentDomain} onChange={(event) => setAgentDomain(event.target.value)} placeholder="example.com" /></label><label>状態<select value={agentState} onChange={(event) => setAgentState(event.target.value as 'active' | 'suspended')}><option value="active">Active</option><option value="suspended">Suspended</option></select></label><button className="primary" disabled={props.ruleBusy || !agentPromptId}>Agent Ruleを作成</button></form>
+      <section className="rules-list"><div className="rules-list-title"><h2>Agent Rules</h2><span>{props.agentRules.length}件</span></div>{props.agentRules.map((rule) => <article className="rule-row" key={rule.id}><div><strong>{rule.name}</strong><small>Prompt: {props.prompts.find((prompt) => prompt.id === rule.promptId)?.name ?? rule.promptId} ・ revision {rule.revision}</small></div><select aria-label={`${rule.name}の状態`} value={rule.state} onChange={(event) => void props.onUpdateAgentRule(rule.id, { state: event.target.value as 'active' | 'suspended' | 'archived' })}><option value="active">Active</option><option value="suspended">Suspended</option><option value="archived">Archived</option></select></article>)}</section>
+      <AgentRunHistory {...props} />
     </>}
   </section>;
 };

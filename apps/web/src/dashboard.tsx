@@ -2,7 +2,7 @@ import { CheckSquare, CircleAlert, LogOut, Mail, Menu, Play, Settings, ShieldChe
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
-import type { AutomationStatus, AutomationSummary, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OperationalTaskRole, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationRecipient, OrganizationRecipientInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, RecipientLineDestinationInput, TaskRoleAssignment } from './api';
+import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OperationalTaskRole, OrganizationAgentRule, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationRecipient, OrganizationRecipientInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, RecipientLineDestinationInput, TaskRoleAssignment } from './api';
 import { AutomationPage, ConnectionsPage, MailboxTestPage, MembersPage, RulesPage, TasksPage } from './dashboard-pages';
 
 export type Page = 'automation' | 'connections' | 'rules' | 'members' | 'mail-test' | 'tasks';
@@ -83,6 +83,16 @@ export interface DashboardProps {
   ruleBusy: boolean;
   onCreateRule: (input: OrganizationRuleInput) => Promise<void>;
   onUpdateRule: (ruleId: string, input: Pick<OrganizationRuleInput, 'permittedRecipientListIds' | 'permittedLineListIds'>) => Promise<void>;
+  prompts: OrganizationPrompt[];
+  agentRules: OrganizationAgentRule[];
+  agentRuns: AgentRunIndex[];
+  agentTranscript: AgentRunTranscript | null;
+  onCreatePrompt: (input: { name: string; instructions: string }) => Promise<void>;
+  onUpdatePrompt: (promptId: string, input: { name?: string; instructions?: string }) => Promise<void>;
+  onDeletePrompt: (promptId: string) => Promise<void>;
+  onCreateAgentRule: (input: { name: string; promptId: string; state: 'active' | 'suspended'; selectionPolicy: Record<string, unknown>; priority?: number }) => Promise<void>;
+  onUpdateAgentRule: (agentRuleId: string, input: { state?: 'active' | 'suspended' | 'archived' }) => Promise<void>;
+  onLoadAgentTranscript: (runId: string) => void;
   organizationTasks: OrganizationTask[];
   onUpdateTask: (taskId: string, input: { completed?: boolean; remarks?: string }) => void;
   taskRoles: OperationalTaskRole[];

@@ -57,7 +57,7 @@ describe('Schema Lifecycle', () => {
 
     expect(receipt).toMatchObject({
       kind: 'organization',
-      currentMigration: '0008_rule_permitted_lists.sql',
+      currentMigration: '0012_event_agent_owners.sql',
       appliedMigrations: [
         '0001_tasks.sql',
         '0002_line_destination_roster.sql',
@@ -67,6 +67,10 @@ describe('Schema Lifecycle', () => {
         '0006_operational_task_roles.sql',
         '0007_source_message_deliveries.sql',
         '0008_rule_permitted_lists.sql',
+        '0009_prompts.sql',
+        '0010_agent_rules.sql',
+        '0011_agent_runs.sql',
+        '0012_event_agent_owners.sql',
       ],
     });
     expect(database.rows<{ display_name: string }>(
@@ -102,7 +106,7 @@ describe('Schema Lifecycle', () => {
       kind: 'organization',
       database: database.binding,
     })).resolves.toMatchObject({
-      currentMigration: '0008_rule_permitted_lists.sql',
+      currentMigration: '0012_event_agent_owners.sql',
     });
   });
 
@@ -133,7 +137,7 @@ describe('Schema Lifecycle', () => {
     await expect(schemaLifecycle.ensureCurrent({
       kind: 'organization',
       database: database.binding,
-    })).resolves.toMatchObject({ currentMigration: '0008_rule_permitted_lists.sql' });
+    })).resolves.toMatchObject({ currentMigration: '0012_event_agent_owners.sql' });
   });
 
   it('migrates existing assignments and Tasks into Organization-owned role records without losing snapshots', async () => {
@@ -213,8 +217,8 @@ describe('Schema Lifecycle', () => {
     ]);
 
     expect(receipts).toEqual([
-      expect.objectContaining({ currentMigration: '0008_rule_permitted_lists.sql' }),
-      expect.objectContaining({ currentMigration: '0008_rule_permitted_lists.sql' }),
+      expect.objectContaining({ currentMigration: '0012_event_agent_owners.sql' }),
+      expect.objectContaining({ currentMigration: '0012_event_agent_owners.sql' }),
     ]);
   });
 });

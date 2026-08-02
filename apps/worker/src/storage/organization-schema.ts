@@ -66,6 +66,54 @@ export const rulePermittedLineLists = sqliteTable('rule_permitted_line_lists', {
   primaryKey({ columns: [table.ruleId, table.listId] }),
 ]);
 
+export const prompts = sqliteTable('prompts', {
+  id: text('id').primaryKey(),
+  organizationId: text('organization_id').notNull(),
+  name: text('name').notNull(),
+  instructions: text('instructions').notNull(),
+  currentRevision: integer('current_revision').notNull().default(1),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  uniqueIndex('prompts_organization_name_idx').on(table.organizationId, table.name),
+]);
+
+export const promptRevisions = sqliteTable('prompt_revisions', {
+  promptId: text('prompt_id').notNull().references(() => prompts.id, { onDelete: 'cascade' }),
+  revision: integer('revision').notNull(),
+  instructions: text('instructions').notNull(),
+  createdAt: text('created_at').notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.promptId, table.revision] }),
+]);
+
+export const agentRules = sqliteTable('agent_rules', {
+  id: text('id').primaryKey(),
+  organizationId: text('organization_id').notNull(),
+  name: text('name').notNull(),
+  status: text('status', { enum: ['active', 'suspended', 'archived'] }).notNull(),
+  promptId: text('prompt_id').notNull().references(() => prompts.id, { onDelete: 'restrict' }),
+  selectionPolicy: text('selection_policy').notNull().default('{}'),
+  priority: integer('priority').notNull().default(0),
+  currentRevision: integer('current_revision').notNull().default(1),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  check('agent_rules_status_check', sql`${table.status} in ('active', 'suspended', 'archived')`),
+  index('agent_rules_status_idx').on(table.status),
+]);
+
+export const agentRuleRevisions = sqliteTable('agent_rule_revisions', {
+  id: text('id').primaryKey(),
+  agentRuleId: text('agent_rule_id').notNull().references(() => agentRules.id, { onDelete: 'cascade' }),
+  revision: integer('revision').notNull(),
+  promptId: text('prompt_id').notNull().references(() => prompts.id, { onDelete: 'restrict' }),
+  selectionPolicy: text('selection_policy').notNull(),
+  createdAt: text('created_at').notNull(),
+}, (table) => [
+  uniqueIndex('agent_rule_revisions_rule_revision_idx').on(table.agentRuleId, table.revision),
+]);
+
 export const ruleRevisions = sqliteTable('rule_revisions', {
   id: text('id').primaryKey(),
   ruleId: text('rule_id').notNull().references(() => rules.id, { onDelete: 'cascade' }),
@@ -91,10 +139,32 @@ export const sourceMessages = sqliteTable('source_messages', {
   check('source_messages_state_check', sql`${table.state} in ('pending', 'processing', 'processed', 'skipped', 'exception')`),
 ]);
 
+export const agentRuns = sqliteTable('agent_runs', {
+  id: text('id').primaryKey(),
+  agentRuleId: text('agent_rule_id').notNull().references(() => agentRules.id, { onDelete: 'restrict' }),
+  agentRuleRevision: integer('agent_rule_revision').notNull(),
+  promptId: text('prompt_id').notNull().references(() => prompts.id, { onDelete: 'restrict' }),
+  promptRevision: integer('prompt_revision').notNull(),
+  sourceMessageId: text('source_message_id').notNull().references(() => sourceMessages.id, { onDelete: 'cascade' }),
+  model: text('model').notNull(),
+  startedAt: text('started_at').notNull(),
+  completedAt: text('completed_at').notNull(),
+  outcome: text('outcome', { enum: ['succeeded', 'failed'] }).notNull(),
+  toolCallCount: integer('tool_call_count').notNull(),
+  tokens: integer('tokens').notNull(),
+  transcriptKey: text('transcript_key').notNull(),
+  expiresAt: text('expires_at').notNull(),
+}, (table) => [
+  check('agent_runs_outcome_check', sql`${table.outcome} in ('succeeded', 'failed')`),
+  uniqueIndex('agent_runs_rule_source_idx').on(table.agentRuleId, table.sourceMessageId),
+  index('agent_runs_started_idx').on(table.startedAt),
+]);
+
 export const events = sqliteTable('events', {
   id: text('id').primaryKey(),
   organizationId: text('organization_id').notNull(),
   ruleId: text('rule_id').references(() => rules.id),
+  agentRuleId: text('agent_rule_id').references(() => agentRules.id),
   sourceMessageId: text('source_message_id').references(() => sourceMessages.id),
   googleEventId: text('google_event_id'),
   title: text('title').notNull(),
@@ -108,6 +178,7 @@ export const events = sqliteTable('events', {
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
   check('events_status_check', sql`${table.status} in ('draft', 'scheduled', 'cancelled', 'exception')`),
+  check('events_owning_rule_check', sql`(${table.ruleId} is null) != (${table.agentRuleId} is null)`),
   index('events_start_idx').on(table.startsAt),
 ]);
 

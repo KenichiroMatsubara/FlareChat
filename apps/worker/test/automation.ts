@@ -1,12 +1,14 @@
 import { createOrganizationKey, encrypt, masterKey, unwrapOrganizationKey } from '../src/cryptography';
 import type { Bindings } from '../src/types';
 import { createTestApp, type TestApp } from './app';
+import { createMemoryR2, type MemoryR2 } from './seed';
 
 const CREATED_AT = '2026-07-25T00:00:00.000Z';
 const MASTER_KEY_MATERIAL = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
 export interface AutomationTestApp extends TestApp {
   environment: Bindings;
+  transcriptR2: MemoryR2;
 }
 
 export const createAutomationTestApp = async (
@@ -104,5 +106,7 @@ export const createAutomationTestApp = async (
   }
   fixture.environment.CREDENTIAL_MASTER_KEY = MASTER_KEY_MATERIAL;
   fixture.environment.CREDENTIAL_MASTER_KEY_VERSION = 'v1';
-  return fixture;
+  const transcriptR2 = createMemoryR2();
+  fixture.environment.RECOVERY_RECEIPTS = transcriptR2.bucket;
+  return { ...fixture, transcriptR2 };
 };

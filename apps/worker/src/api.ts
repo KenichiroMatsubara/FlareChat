@@ -17,11 +17,15 @@ import { typedListRoutes } from './routes/typed-lists';
 import type { Bindings, ConnectionRow, SessionRow } from './types';
 import type { CipherEnvelope } from './cryptography';
 import { openAiChatCompletionsUrl, type EventDetails, type MailExtraction, type TaskDetails } from './event-details';
+import { readAgentRunTranscript } from './agent-runs';
 import { createTaskWorkflow } from './tasks';
 import { controlDatabase as drizzleControlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
 import { createOrganizationStore } from './storage/organization-store';
 import { identities, members, organizations, recoveryRequests } from './storage/control-schema';
 import {
+  agentRuleRevisions,
+  agentRules,
+  agentRuns,
   attendance,
   automationWarnings,
   connections as organizationConnections,
@@ -43,6 +47,8 @@ import {
   rulePermittedRecipientLists,
   rules as organizationRules,
   operationalTaskRoles,
+  promptRevisions,
+  prompts,
   taskRoleAssignments,
 } from './storage/organization-schema';
 
@@ -532,6 +538,237 @@ app.patch('/api/organizations/:organizationId/lists/:listId/items/:itemId', asyn
     return json(context, { id: context.req.param('itemId'), enabled: input.enabled });
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'List Item could not be updated.', 409);
+  }
+});
+
+app.get('/api/organizations/:organizationId/prompts', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const rows = await drizzleOrganizationDatabase(access.database).select().from(prompts)
+      .orderBy(asc(prompts.name)).all();
+    return json(context, rows.map((row) => ({
+      id: row.id,
+      organizationId: row.organizationId,
+      name: row.name,
+      instructions: row.instructions,
+      revision: row.currentRevision,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    })));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Prompts could not be loaded.', 403);
+  }
+});
+
+app.post('/api/organizations/:organizationId/prompts', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Prompts can only be changed by an Owner or Admin.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ name?: string; instructions?: string }>();
+    const name = input.name?.trim() ?? '';
+    const instructions = input.instructions?.trim() ?? '';
+    if (!name || name.length > 100) return failure(context, 'A Prompt name of at most 100 characters is required.');
+    if (!instructions || instructions.length > 100_000) return failure(context, 'Prompt instructions of at most 100000 characters are required.');
+    const id = crypto.randomUUID();
+    const timestamp = now();
+    const database = drizzleOrganizationDatabase(access.database);
+    await database.batch([
+      database.insert(prompts).values({ id, organizationId: access.organization.id, name, instructions, currentRevision: 1, createdAt: timestamp, updatedAt: timestamp }),
+      database.insert(promptRevisions).values({ promptId: id, revision: 1, instructions, createdAt: timestamp }),
+    ]);
+    return json(context, { id, organizationId: access.organization.id, name, instructions, revision: 1, createdAt: timestamp, updatedAt: timestamp }, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Prompt could not be created.', 409);
+  }
+});
+
+app.patch('/api/organizations/:organizationId/prompts/:promptId', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Prompts can only be changed by an Owner or Admin.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ name?: string; instructions?: string }>();
+    const name = input.name?.trim();
+    const instructions = input.instructions?.trim();
+    if (name === undefined && instructions === undefined) return failure(context, 'A Prompt name or instructions is required.');
+    if (name !== undefined && (!name || name.length > 100)) return failure(context, 'A Prompt name of at most 100 characters is required.');
+    if (instructions !== undefined && (!instructions || instructions.length > 100_000)) return failure(context, 'Prompt instructions of at most 100000 characters are required.');
+    const database = drizzleOrganizationDatabase(access.database);
+    const promptId = context.req.param('promptId');
+    const existing = await database.select().from(prompts).where(eq(prompts.id, promptId)).get();
+    if (!existing) return failure(context, 'Prompt was not found.', 404);
+    const revision = instructions === undefined ? existing.currentRevision : existing.currentRevision + 1;
+    const timestamp = now();
+    await database.batch([
+      database.update(prompts).set({ ...(name === undefined ? {} : { name }), ...(instructions === undefined ? {} : { instructions, currentRevision: revision }), updatedAt: timestamp }).where(eq(prompts.id, promptId)),
+      ...(instructions === undefined ? [] : [database.insert(promptRevisions).values({ promptId, revision, instructions, createdAt: timestamp })]),
+    ]);
+    return json(context, { id: promptId, ...(name === undefined ? {} : { name }), ...(instructions === undefined ? {} : { instructions }), revision, updatedAt: timestamp });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Prompt could not be updated.', 409);
+  }
+});
+
+app.delete('/api/organizations/:organizationId/prompts/:promptId', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Prompts can only be changed by an Owner or Admin.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const promptId = context.req.param('promptId');
+    const removed = await drizzleOrganizationDatabase(access.database).delete(prompts).where(eq(prompts.id, promptId))
+      .returning({ id: prompts.id }).get();
+    if (!removed) return failure(context, 'Prompt was not found.', 404);
+    return json(context, { id: promptId, removed: true });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Prompt could not be deleted.', 409);
+  }
+});
+
+const agentRuleView = (row: typeof agentRules.$inferSelect) => ({
+  id: row.id,
+  organizationId: row.organizationId,
+  name: row.name,
+  state: row.status,
+  promptId: row.promptId,
+  selectionPolicy: JSON.parse(row.selectionPolicy) as Record<string, unknown>,
+  priority: row.priority,
+  revision: row.currentRevision,
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt,
+});
+
+app.get('/api/organizations/:organizationId/agent-rules', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const rows = await drizzleOrganizationDatabase(access.database).select().from(agentRules)
+      .orderBy(desc(agentRules.priority), asc(agentRules.name)).all();
+    return json(context, rows.map(agentRuleView));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Agent Rules could not be loaded.', 403);
+  }
+});
+
+app.post('/api/organizations/:organizationId/agent-rules', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Agent Rules can only be changed by an Owner or Admin.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ name?: string; promptId?: string; state?: string; selectionPolicy?: Record<string, unknown>; priority?: number }>();
+    const name = input.name?.trim() ?? '';
+    const promptId = input.promptId?.trim() ?? '';
+    const state = input.state ?? 'active';
+    if (!name || name.length > 100) return failure(context, 'An Agent Rule name of at most 100 characters is required.');
+    if (!promptId) return failure(context, 'An Agent Rule Prompt is required.');
+    if (!['active', 'suspended', 'archived'].includes(state)) return failure(context, 'Unsupported Agent Rule State.');
+    const database = drizzleOrganizationDatabase(access.database);
+    const prompt = await database.select({ id: prompts.id }).from(prompts).where(and(
+      eq(prompts.id, promptId),
+      eq(prompts.organizationId, access.organization.id),
+    )).get();
+    if (!prompt) return failure(context, 'Agent Rule Prompt was not found.', 409);
+    const id = crypto.randomUUID();
+    const timestamp = now();
+    const selectionPolicy = JSON.stringify(input.selectionPolicy ?? {});
+    const priority = Number.isInteger(input.priority) ? input.priority! : 0;
+    await database.batch([
+      database.insert(agentRules).values({ id, organizationId: access.organization.id, name, status: state as 'active' | 'suspended' | 'archived', promptId, selectionPolicy, priority, currentRevision: 1, createdAt: timestamp, updatedAt: timestamp }),
+      database.insert(agentRuleRevisions).values({ id: crypto.randomUUID(), agentRuleId: id, revision: 1, promptId, selectionPolicy, createdAt: timestamp }),
+    ]);
+    return json(context, agentRuleView({ id, organizationId: access.organization.id, name, status: state as 'active' | 'suspended' | 'archived', promptId, selectionPolicy, priority, currentRevision: 1, createdAt: timestamp, updatedAt: timestamp }), 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Agent Rule could not be created.', 409);
+  }
+});
+
+app.patch('/api/organizations/:organizationId/agent-rules/:agentRuleId', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Agent Rules can only be changed by an Owner or Admin.', 403);
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ name?: string; promptId?: string; state?: string; selectionPolicy?: Record<string, unknown>; priority?: number }>();
+    if (input.state !== undefined && !['active', 'suspended', 'archived'].includes(input.state)) return failure(context, 'Unsupported Agent Rule State.');
+    const name = input.name?.trim();
+    const promptId = input.promptId?.trim();
+    if (name !== undefined && (!name || name.length > 100)) return failure(context, 'An Agent Rule name of at most 100 characters is required.');
+    if (input.promptId !== undefined && !promptId) return failure(context, 'An Agent Rule Prompt is required.');
+    const database = drizzleOrganizationDatabase(access.database);
+    const id = context.req.param('agentRuleId');
+    const existing = await database.select().from(agentRules).where(eq(agentRules.id, id)).get();
+    if (!existing) return failure(context, 'Agent Rule was not found.', 404);
+    if (promptId) {
+      const prompt = await database.select({ id: prompts.id }).from(prompts).where(and(eq(prompts.id, promptId), eq(prompts.organizationId, access.organization.id))).get();
+      if (!prompt) return failure(context, 'Agent Rule Prompt was not found.', 409);
+    }
+    const configurationChanged = promptId !== undefined || input.selectionPolicy !== undefined;
+    const revision = configurationChanged ? existing.currentRevision + 1 : existing.currentRevision;
+    const timestamp = now();
+    const nextPromptId = promptId ?? existing.promptId;
+    const nextSelectionPolicy = input.selectionPolicy === undefined ? existing.selectionPolicy : JSON.stringify(input.selectionPolicy);
+    await database.batch([
+      database.update(agentRules).set({
+        ...(name === undefined ? {} : { name }),
+        ...(input.state === undefined ? {} : { status: input.state as 'active' | 'suspended' | 'archived' }),
+        ...(input.priority === undefined || !Number.isInteger(input.priority) ? {} : { priority: input.priority }),
+        promptId: nextPromptId,
+        selectionPolicy: nextSelectionPolicy,
+        currentRevision: revision,
+        updatedAt: timestamp,
+      }).where(eq(agentRules.id, id)),
+      ...(configurationChanged ? [database.insert(agentRuleRevisions).values({ id: crypto.randomUUID(), agentRuleId: id, revision, promptId: nextPromptId, selectionPolicy: nextSelectionPolicy, createdAt: timestamp })] : []),
+    ]);
+    const updated = await database.select().from(agentRules).where(eq(agentRules.id, id)).get();
+    return json(context, agentRuleView(updated!));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Agent Rule could not be updated.', 409);
+  }
+});
+
+app.get('/api/organizations/:organizationId/agent-runs', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const rows = await drizzleOrganizationDatabase(access.database).select({
+      id: agentRuns.id,
+      agentRuleId: agentRuns.agentRuleId,
+      agentRuleRevision: agentRuns.agentRuleRevision,
+      promptId: agentRuns.promptId,
+      promptRevision: agentRuns.promptRevision,
+      sourceMessageId: agentRuns.sourceMessageId,
+      model: agentRuns.model,
+      startedAt: agentRuns.startedAt,
+      completedAt: agentRuns.completedAt,
+      outcome: agentRuns.outcome,
+      toolCallCount: agentRuns.toolCallCount,
+      tokens: agentRuns.tokens,
+      expiresAt: agentRuns.expiresAt,
+    }).from(agentRuns).orderBy(desc(agentRuns.startedAt)).limit(100).all();
+    return json(context, rows);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Agent Rule runs could not be loaded.', 403);
+  }
+});
+
+app.get('/api/organizations/:organizationId/agent-runs/:runId/transcript', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const runId = context.req.param('runId');
+    const run = await drizzleOrganizationDatabase(access.database).select({ id: agentRuns.id }).from(agentRuns)
+      .where(eq(agentRuns.id, runId)).get();
+    if (!run) return failure(context, 'Run Transcript was not found.', 404);
+    const transcript = await readAgentRunTranscript({
+      bucket: context.env.RECOVERY_RECEIPTS,
+      organizationKey: await organizationKeyForRequest(context.env, access.organization.id),
+      organizationId: access.organization.id,
+      runId,
+    });
+    if (!transcript) return failure(context, 'Run Transcript was not found.', 404);
+    return json(context, transcript);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Run Transcript could not be loaded.', 403);
   }
 });
 
@@ -1206,15 +1443,16 @@ app.get('/api/organizations/:organizationId/dashboard', async (context) => {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
     if (!access.database) throw new Error('Organization database is not available.');
     const database = drizzleOrganizationDatabase(access.database);
-    const [rules, events, jobs, exceptions, connection] = await Promise.all([
+    const [rules, activeAgentRules, events, jobs, exceptions, connection] = await Promise.all([
       database.select({ value: count() }).from(organizationRules).where(eq(organizationRules.status, 'active')).get(),
+      database.select({ value: count() }).from(agentRules).where(eq(agentRules.status, 'active')).get(),
       database.select({ value: count() }).from(organizationEvents).where(and(eq(organizationEvents.status, 'scheduled'), gte(organizationEvents.startsAt, now()))).get(),
       database.select({ value: count() }).from(organizationJobs).where(inArray(organizationJobs.state, ['pending', 'running'])).get(),
       database.select({ value: count() }).from(organizationExceptions).where(eq(organizationExceptions.state, 'open')).get(),
       database.select({ value: max(googleConnections.updatedAt) }).from(googleConnections).where(eq(googleConnections.kind, 'automation_inbox')).get(),
     ]);
     return json(context, {
-      activeRules: rules?.value ?? 0,
+      activeRules: (rules?.value ?? 0) + (activeAgentRules?.value ?? 0),
       upcomingEvents: events?.value ?? 0,
       pendingJobs: jobs?.value ?? 0,
       exceptions: exceptions?.value ?? 0,

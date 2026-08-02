@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { app } from './api';
-import type { EventDetails } from './event-details';
+import { extractAiEventDetails, type EventDetails } from './event-details';
 import {
   createAutomation,
   extractEventCandidate,
@@ -14,6 +14,8 @@ import {
   sourceAttachmentSizes,
 } from './automation';
 import { createAutomationTestApp, type AutomationTestApp } from '../test/automation';
+import { createMemoryR2, seedAttendanceRegistration, seedScheduledEvent } from '../test/seed';
+import { AGENT_TOKEN_CEILING, MAX_AGENT_TOOL_CALLS } from './agent-runs';
 
 let fixture: AutomationTestApp | undefined;
 
@@ -88,6 +90,246 @@ describe('Source Message event extraction', () => {
 });
 
 describe('Organization Automation Inbox scheduling', () => {
+  it('runs each matching read-only Agent Rule once with only Organization query tools', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    fixture.organization.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");
+    fixture.organization.execute(
+      "INSERT INTO source_messages (id, gmail_message_id, gmail_history_id, sender, subject, received_at, state) VALUES ('source-existing', 'gmail-existing', 'history-existing', 'member@example.com', '既存行事', '2026-08-01', 'processed')",
+    );
+    seedScheduledEvent(fixture.organization, { id: 'event-existing', title: '既存行事' });
+    seedAttendanceRegistration(fixture.organization, {
+      eventId: 'event-existing', recipientId: 'recipient-existing', destination: 'reader@example.com', status: 'attending',
+    });
+    fixture.organization.execute(
+      "INSERT INTO tasks (id, organization_id, source_message_id, source_message_subject, title, deadline, assignee_role_id, assignee_role_name, description, created_at, updated_at) VALUES ('task-existing', 'organization-1', 'source-existing', '既存行事', '資料確認', '2026-08-10', 'unassigned', '未割り当て', '資料を確認する', '2026-08-01', '2026-08-01')",
+    );
+    const prompt = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/prompts', {
+      name: 'Read-only analyst', instructions: 'Inspect the Source Message and Organization records.',
+    }), fixture.environment);
+    const promptId = (await prompt.json() as { data: { id: string } }).data.id;
+    const agentRule = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/agent-rules', {
+      name: 'Example.com analyst', promptId, state: 'active', selectionPolicy: { domain: 'example.com' },
+    }), fixture.environment);
+    expect(agentRule.status).toBe(201);
+
+    const requests: Array<{ messages: Array<{ role: string; name?: string; content?: string }> }> = [];
+    const complete = vi.fn(async (request: { messages: Array<{ role: string; name?: string; content?: string }> }) => {
+      requests.push(request);
+      if (requests.length === 1) return {
+        model: 'test-model',
+        content: '',
+        toolCalls: [
+          { id: 'tool-source', name: 'read_source_message' as const, arguments: '{}' },
+          { id: 'tool-events', name: 'query_scheduled_events' as const, arguments: '{}' },
+          { id: 'tool-tasks', name: 'query_tasks' as const, arguments: '{}' },
+          { id: 'tool-attendance', name: 'query_attendance' as const, arguments: '{}' },
+        ],
+        totalTokens: 400,
+      };
+      return { model: 'test-model', content: 'Read-only review complete.', toolCalls: [], totalTokens: 120 };
+    });
+    const googleRequests: string[] = [];
+    const automation = createAutomation(fixture.environment, {
+      google: { request: async <T>(_token: string, url: string): Promise<T> => {
+        googleRequests.push(url);
+        if (url.includes('/history')) return { historyId: 'history-agent', history: [{ messagesAdded: [{ message: { id: 'gmail-agent' } }] }] } as T;
+        if (url.includes('/messages/gmail-agent')) return { id: 'gmail-agent', payload: {
+          headers: [{ name: 'Subject', value: '例会のお知らせ' }, { name: 'From', value: 'member@example.com' }],
+          body: { data: gmailBody('日時: 2026年8月3日 19:00〜21:30') },
+        } } as T;
+        throw new Error(`Unexpected Google request: ${url}`);
+      } },
+      agent: { complete },
+    });
+
+    await expect(automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding }))
+      .resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 0 });
+    expect(complete).toHaveBeenCalledTimes(2);
+    const toolResults = requests[1]?.messages.filter((message) => message.role === 'tool').map((message) => message.content).join('\n') ?? '';
+    expect(toolResults).toContain('例会のお知らせ');
+    expect(toolResults).toContain('既存行事');
+    expect(toolResults).toContain('資料確認');
+    expect(toolResults).toContain('attending');
+    expect(googleRequests.some((url) => url.includes('/calendar/'))).toBe(false);
+  });
+
+  it('fetches and converts one Source Message once for its Primary Schema Rule and every matching Agent Rule', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    for (const suffix of ['one', 'two']) {
+      const prompt = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/prompts', {
+        name: `Analyst ${suffix}`, instructions: `Review ${suffix}.`,
+      }), fixture.environment);
+      const promptId = (await prompt.json() as { data: { id: string } }).data.id;
+      const created = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/agent-rules', {
+        name: `Agent ${suffix}`, promptId, state: 'active', selectionPolicy: { domain: 'example.com' },
+      }), fixture.environment);
+      expect(created.status).toBe(201);
+    }
+    const toMarkdown = vi.fn(async () => ({ format: 'markdown' as const, name: 'agenda.pdf', mimetype: 'application/pdf', tokens: 4, data: 'Converted agenda' }));
+    fixture.environment.AI = { toMarkdown };
+    const read = vi.fn(async () => [{ attachmentId: 'attachment-1', filename: 'agenda.pdf', mimeType: 'application/pdf', size: 12, data: btoa('agenda') }]);
+    const extract = vi.fn(async (input: Parameters<typeof extractAiEventDetails>[0]) => extractAiEventDetails({
+      ...input,
+      fetch: async () => Response.json({ choices: [{ message: { content: JSON.stringify({
+        summary: '例会です。',
+        events: [{ title: '例会', startsAt: '2026-08-03T19:00:00+09:00', endsAt: '2026-08-03T21:30:00+09:00', timeZone: 'Asia/Tokyo', location: '', description: '例会です' }],
+        tasks: [],
+      }) } }] }),
+    }));
+    const agentRequests: Array<{ messages: Array<{ role: string; content?: string }> }> = [];
+    const complete = vi.fn(async (request: { messages: Array<{ role: string; content?: string }> }) => {
+      agentRequests.push(request);
+      return request.messages.some((message) => message.role === 'tool')
+        ? { model: 'test-model', content: 'Reviewed.', toolCalls: [], totalTokens: 20 }
+        : { model: 'test-model', content: '', toolCalls: [{ id: crypto.randomUUID(), name: 'read_source_message' as const, arguments: '{}' }], totalTokens: 20 };
+    });
+    const googleRequests: string[] = [];
+    const automation = createAutomation(fixture.environment, {
+      google: { request: async <T>(_token: string, url: string): Promise<T> => {
+        googleRequests.push(url);
+        if (url.includes('/history')) return { historyId: 'history-shared', history: [{ messagesAdded: [{ message: { id: 'gmail-shared' } }] }] } as T;
+        if (url.includes('/messages/gmail-shared')) return { id: 'gmail-shared', payload: {
+          headers: [{ name: 'Subject', value: '例会のお知らせ' }, { name: 'From', value: 'member@example.com' }],
+          body: { data: gmailBody('日時: 2026年8月3日 19:00〜21:30') },
+          parts: [{ filename: 'agenda.pdf', mimeType: 'application/pdf', body: { attachmentId: 'attachment-1', size: 12 } }],
+        } } as T;
+        return { id: 'calendar-shared' } as T;
+      } },
+      attachments: { read, publish: async () => ({ outcome: 'succeeded', driveFileId: 'drive-1', publicUrl: 'https://drive.example/agenda' }) },
+      ai: { extract },
+      agent: { complete },
+    });
+
+    await expect(automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding }))
+      .resolves.toEqual({ scanned: 1, created: 1, skipped: 0, exceptions: 0 });
+    expect(googleRequests.filter((url) => url.includes('/messages/gmail-shared'))).toHaveLength(1);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(toMarkdown).toHaveBeenCalledTimes(1);
+    expect(extract).toHaveBeenCalledTimes(1);
+    expect(complete).toHaveBeenCalledTimes(4);
+    expect(agentRequests.flatMap((request) => request.messages).filter((message) => message.role === 'tool').map((message) => message.content).join('\n'))
+      .toContain('Converted agenda');
+    const runs = await app.fetch(fixture.request('/api/organizations/organization-1/agent-runs'), fixture.environment);
+    const runsBody = await runs.json() as { data: Array<{ id: string }> };
+    expect(runsBody.data).toHaveLength(2);
+    const transcript = await app.fetch(fixture.request(`/api/organizations/organization-1/agent-runs/${runsBody.data[0]?.id}/transcript`), fixture.environment);
+    await expect(transcript.json()).resolves.toMatchObject({ data: { source: {
+      attachments: [{ filename: 'agenda.pdf', text: 'Converted agenda' }],
+    } } });
+  });
+
+  it('turns an Agent Rule tool-call limit failure into one non-retried Automation Exception', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    fixture.organization.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");
+    const prompt = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/prompts', {
+      name: 'Bounded analyst', instructions: 'Inspect the Source Message.',
+    }), fixture.environment);
+    const promptId = (await prompt.json() as { data: { id: string } }).data.id;
+    await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/agent-rules', {
+      name: 'Bounded Agent', promptId, state: 'active', selectionPolicy: {},
+    }), fixture.environment);
+    const complete = vi.fn(async () => ({
+      model: 'test-model', content: '', totalTokens: 10,
+      toolCalls: Array.from({ length: MAX_AGENT_TOOL_CALLS + 1 }, (_, index) => ({ id: `tool-${index}`, name: 'read_source_message' as const, arguments: '{}' })),
+    }));
+    const automation = createAutomation(fixture.environment, {
+      google: { request: async <T>(_token: string, url: string): Promise<T> => {
+        if (url.includes('/history')) return { historyId: 'history-bounded', history: [{ messagesAdded: [{ message: { id: 'gmail-bounded' } }] }] } as T;
+        if (url.includes('/messages/gmail-bounded')) return { id: 'gmail-bounded', payload: {
+          headers: [{ name: 'Subject', value: 'お知らせ' }, { name: 'From', value: 'member@example.com' }],
+          body: { data: gmailBody('確認してください。') },
+        } } as T;
+        throw new Error(`Unexpected Google request: ${url}`);
+      } },
+      agent: { complete },
+    });
+
+    await expect(automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding }))
+      .resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 1 });
+    await expect(automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding }))
+      .resolves.toEqual({ scanned: 0, created: 0, skipped: 0, exceptions: 0 });
+    const exceptions = await app.fetch(fixture.request('/api/organizations/organization-1/operations/exceptions'), fixture.environment);
+    await expect(exceptions.json()).resolves.toMatchObject({ data: [{
+      code: 'agent_rule_run_failed',
+      message: `Agent Rule tool-call maximum of ${MAX_AGENT_TOOL_CALLS} was exceeded.`,
+      state: 'open',
+    }] });
+    const runs = await app.fetch(fixture.request('/api/organizations/organization-1/agent-runs'), fixture.environment);
+    const runsBody = await runs.json() as { data: Array<{ id: string }> };
+    expect(runsBody).toMatchObject({ data: [{
+      outcome: 'failed',
+      toolCallCount: MAX_AGENT_TOOL_CALLS + 1,
+      tokens: 10,
+    }] });
+    const transcript = await app.fetch(fixture.request(
+      `/api/organizations/organization-1/agent-runs/${runsBody.data[0]?.id}/transcript`,
+    ), fixture.environment);
+    await expect(transcript.json()).resolves.toMatchObject({ data: {
+      error: `Agent Rule tool-call maximum of ${MAX_AGENT_TOOL_CALLS} was exceeded.`,
+    } });
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
+
+  it('indexes every Agent Rule run in D1 and exposes its encrypted R2 Run Transcript', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    fixture.organization.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");
+    const r2 = createMemoryR2();
+    fixture.environment.RECOVERY_RECEIPTS = r2.bucket;
+    const prompt = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/prompts', {
+      name: 'Transcript analyst', instructions: 'Explain what you read.',
+    }), fixture.environment);
+    const promptBody = await prompt.json() as { data: { id: string; revision: number } };
+    await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/prompts/${promptBody.data.id}`,
+      { instructions: 'Explain the current Source Message carefully.' },
+      'PATCH',
+    ), fixture.environment);
+    const agentRule = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/agent-rules', {
+      name: 'Transcript Agent', promptId: promptBody.data.id, state: 'active', selectionPolicy: {},
+    }), fixture.environment);
+    const agentRuleId = (await agentRule.json() as { data: { id: string } }).data.id;
+    const automation = createAutomation(fixture.environment, {
+      google: { request: async <T>(_token: string, url: string): Promise<T> => {
+        if (url.includes('/history')) return { historyId: 'history-transcript', history: [{ messagesAdded: [{ message: { id: 'gmail-transcript' } }] }] } as T;
+        if (url.includes('/messages/gmail-transcript')) return { id: 'gmail-transcript', payload: {
+          headers: [{ name: 'Subject', value: 'Confidential notice' }, { name: 'From', value: 'member@example.com' }],
+          body: { data: gmailBody('Secret Source Message body') },
+        } } as T;
+        throw new Error(`Unexpected Google request: ${url}`);
+      } },
+      agent: { complete: async (request) => {
+        expect(request.messages[0]?.content).toContain('Explain the current Source Message carefully.');
+        return { model: 'audited-model', content: 'No action required.', toolCalls: [], totalTokens: 321 };
+      } },
+    });
+
+    await automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding });
+    const runs = await app.fetch(fixture.request('/api/organizations/organization-1/agent-runs'), fixture.environment);
+    const runsBody = await runs.json() as { data: Array<{ id: string; agentRuleId: string; promptId: string; promptRevision: number; model: string; outcome: string; toolCallCount: number; tokens: number; expiresAt: string }> };
+    const transcript = await app.fetch(fixture.request(
+      `/api/organizations/organization-1/agent-runs/${runsBody.data[0]?.id}/transcript`,
+    ), fixture.environment);
+
+    expect(runs.status).toBe(200);
+    expect(runsBody).toMatchObject({ data: [{
+      agentRuleId,
+      promptId: promptBody.data.id,
+      promptRevision: 2,
+      model: 'audited-model',
+      outcome: 'succeeded',
+      toolCallCount: 0,
+      tokens: 321,
+      expiresAt: expect.any(String),
+    }] });
+    expect(transcript.status).toBe(200);
+    await expect(transcript.json()).resolves.toMatchObject({ data: {
+      source: { subject: 'Confidential notice', body: 'Secret Source Message body' },
+      finalOutput: 'No action required.',
+    } });
+    expect(r2.keys()).toHaveLength(1);
+    expect(r2.object(r2.keys()[0]!) ?? '').not.toContain('Secret Source Message body');
+  });
+
   it('keeps events and tasks when one extracted role is unknown and raises an Automation Warning', async () => {
     fixture = await createAutomationTestApp({ ai: true });
     const createdRole = await app.fetch(fixture.jsonRequest(
