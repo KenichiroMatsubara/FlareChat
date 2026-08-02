@@ -3,6 +3,7 @@ import organizationTasksMigration from '../migrations/organization/0001_tasks.sq
 import organizationLineDestinationRosterMigration from '../migrations/organization/0002_line_destination_roster.sql';
 import organizationReleaseSafeLineDestinationIndexMigration from '../migrations/organization/0003_release_safe_line_destination_index.sql';
 import organizationManualLineDestinationSourceMigration from '../migrations/organization/0004_manual_line_destination_source.sql';
+import organizationOptionalRecipientEmailMigration from '../migrations/organization/0005_optional_recipient_email.sql';
 
 type SchemaKind = 'organization';
 
@@ -22,6 +23,10 @@ const ORGANIZATION_MIGRATIONS: readonly SchemaMigration[] = [
   {
     name: '0004_manual_line_destination_source.sql',
     sql: organizationManualLineDestinationSourceMigration,
+  },
+  {
+    name: '0005_optional_recipient_email.sql',
+    sql: organizationOptionalRecipientEmailMigration,
   },
 ];
 export const ORGANIZATION_SCHEMA_TARGET =

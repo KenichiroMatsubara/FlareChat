@@ -39,17 +39,29 @@ describe('Schema Lifecycle', () => {
 
     expect(receipt).toMatchObject({
       kind: 'organization',
-      currentMigration: '0004_manual_line_destination_source.sql',
+      currentMigration: '0005_optional_recipient_email.sql',
       appliedMigrations: [
         '0001_tasks.sql',
         '0002_line_destination_roster.sql',
         '0003_release_safe_line_destination_index.sql',
         '0004_manual_line_destination_source.sql',
+        '0005_optional_recipient_email.sql',
       ],
     });
     expect(database.rows<{ display_name: string }>(
       'SELECT display_name FROM line_destinations',
     )).toEqual([]);
+    database.execute(
+      "INSERT INTO recipient_profiles (id, organization_id, name, email, state, tags, created_at, updated_at) VALUES ('recipient-1', 'organization-1', 'First', '', 'active', '[]', '2026-01-01', '2026-01-01')",
+    );
+    database.execute(
+      "INSERT INTO recipient_profiles (id, organization_id, name, email, state, tags, created_at, updated_at) VALUES ('recipient-2', 'organization-1', 'Second', '', 'active', '[]', '2026-01-01', '2026-01-01')",
+    );
+    expect(database.rows<{ email: string }>('SELECT email FROM recipient_profiles')).toEqual([
+      { email: '' },
+      { email: '' },
+    ]);
+    expect(database.rows('PRAGMA foreign_key_check')).toEqual([]);
   });
 
   it('can retry a migration after a failed batch leaves the database unchanged', async () => {
@@ -69,7 +81,7 @@ describe('Schema Lifecycle', () => {
       kind: 'organization',
       database: database.binding,
     })).resolves.toMatchObject({
-      currentMigration: '0004_manual_line_destination_source.sql',
+      currentMigration: '0005_optional_recipient_email.sql',
     });
   });
 
@@ -113,8 +125,8 @@ describe('Schema Lifecycle', () => {
     ]);
 
     expect(receipts).toEqual([
-      expect.objectContaining({ currentMigration: '0004_manual_line_destination_source.sql' }),
-      expect.objectContaining({ currentMigration: '0004_manual_line_destination_source.sql' }),
+      expect.objectContaining({ currentMigration: '0005_optional_recipient_email.sql' }),
+      expect.objectContaining({ currentMigration: '0005_optional_recipient_email.sql' }),
     ]);
   });
 });

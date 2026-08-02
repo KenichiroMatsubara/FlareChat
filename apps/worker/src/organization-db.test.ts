@@ -123,6 +123,7 @@ describe('Organization database resolver', () => {
       { name: '0002_line_destination_roster.sql' },
       { name: '0003_release_safe_line_destination_index.sql' },
       { name: '0004_manual_line_destination_source.sql' },
+      { name: '0005_optional_recipient_email.sql' },
     ]);
   });
 

@@ -240,13 +240,14 @@ export const recipientProfiles = sqliteTable('recipient_profiles', {
   id: text('id').primaryKey(),
   organizationId: text('organization_id').notNull(),
   name: text('name').notNull(),
-  email: text('email').notNull().unique(),
+  email: text('email').notNull(),
   state: text('state', { enum: ['active', 'inactive'] }).notNull().default('active'),
   tags: text('tags').notNull().default('[]'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
   check('recipient_profiles_state_check', sql`${table.state} in ('active', 'inactive')`),
+  uniqueIndex('recipient_profiles_email_unique').on(table.email).where(sql`${table.email} <> ''`),
 ]);
 
 export const eventRecipients = sqliteTable('event_recipients', {

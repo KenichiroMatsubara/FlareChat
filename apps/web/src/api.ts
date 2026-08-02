@@ -150,7 +150,7 @@ export interface OrganizationLineDestination extends RecipientLineDestination {
 
 export interface OrganizationRecipientInput {
   name: string;
-  email: string;
+  email?: string;
   tags?: string[];
   lineDestinationId?: string;
 }

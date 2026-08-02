@@ -305,6 +305,42 @@ describe('Organization management', () => {
     });
   });
 
+  it('creates multiple Recipient Profiles without email and allows email to be edited later', async () => {
+    fixture = createTestApp('operator');
+    const first = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/recipients',
+      { name: 'メール未設定 一郎' },
+    ), fixture.environment);
+    const second = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/recipients',
+      { name: 'メール未設定 二郎' },
+    ), fixture.environment);
+    const firstBody = await first.json() as { data: { id: string; email: string } };
+    const setEmail = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/recipients/${firstBody.data.id}`,
+      { email: 'later@example.com' },
+      'PATCH',
+    ), fixture.environment);
+    const clearEmail = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/recipients/${firstBody.data.id}`,
+      { email: '' },
+      'PATCH',
+    ), fixture.environment);
+    const listed = await app.fetch(
+      fixture.request('/api/organizations/organization-1/recipients'),
+      fixture.environment,
+    );
+
+    expect([first.status, second.status, setEmail.status, clearEmail.status]).toEqual([201, 201, 200, 200]);
+    expect(firstBody.data.email).toBe('');
+    await expect(listed.json()).resolves.toMatchObject({
+      data: expect.arrayContaining([
+        expect.objectContaining({ name: 'メール未設定 一郎', email: '' }),
+        expect.objectContaining({ name: 'メール未設定 二郎', email: '' }),
+      ]),
+    });
+  });
+
   it('builds dashboard counts from durable Organization behavior', async () => {
     fixture = createTestApp();
     seedAutomationRule(fixture.organization, { id: 'rule-1' });
@@ -432,6 +468,13 @@ describe('Public attendance and operational outcomes', () => {
       destination: 'guest@example.com',
       createdAt: '2026-07-25T00:00:00.000Z',
     });
+    seedDeliveryRecord(fixture.organization, {
+      id: 'delivery-line',
+      eventId: 'event-1',
+      destination: 'Udelivery0000000000000000000000000',
+      channel: 'line',
+      createdAt: '2026-07-26T00:00:00.000Z',
+    });
     seedAutomationException(fixture.organization, { id: 'exception-1' });
 
     const event = await app.fetch(fixture.jsonRequest(
@@ -458,9 +501,14 @@ describe('Public attendance and operational outcomes', () => {
     );
 
     expect([event.status, exception.status, audit.status]).toEqual([200, 200, 200]);
-    await expect(audit.json()).resolves.toMatchObject({
-      data: [{ destination: 'guest@example.com', outcome: 'succeeded' }],
+    const auditBody = await audit.json();
+    expect(auditBody).toMatchObject({
+      data: expect.arrayContaining([
+        expect.objectContaining({ destination: 'guest@example.com', outcome: 'succeeded' }),
+        expect.objectContaining({ destination: 'Udeli…', outcome: 'succeeded' }),
+      ]),
     });
+    expect(JSON.stringify(auditBody)).not.toContain('Udelivery0000000000000000000000000');
     await expect(operations.json()).resolves.toMatchObject({
       data: [{ id: 'exception-1', state: 'resolved' }],
     });
@@ -539,7 +587,7 @@ describe('LINE destinations', () => {
       recipientProfileId: string | null;
     }> };
     expect(destinationsBody.data[0]).toMatchObject({
-      destinationId: 'U1234567890',
+      destinationId: 'U1234…',
       source: 'webhook',
       recipientProfileId: null,
     });
@@ -569,7 +617,7 @@ describe('LINE destinations', () => {
         email: 'taro@example.com',
         tags: ['ロータリー'],
         lineDestinations: [{
-          destinationId: 'U1234567890',
+          destinationId: 'U1234…',
           displayName: '山田 太郎',
           kind: 'user',
         }],
@@ -614,7 +662,7 @@ describe('LINE destinations', () => {
     expect(recipient.status).toBe(201);
     expect(issued.status).toBe(201);
     await expect(consumed.json()).resolves.toMatchObject({
-      data: { recipientProfileId: recipientBody.data.id, destinationId: 'group-1' },
+      data: { recipientProfileId: recipientBody.data.id, destinationId: 'group…' },
     });
     expect(duplicate.status).toBe(410);
   });
@@ -650,7 +698,7 @@ describe('LINE destinations', () => {
       data: [{
         id: recipientBody.data.id,
         lineDestinations: [{
-          destinationId: 'Ucorrected0000000000000000000000',
+          destinationId: 'Ucorr…',
           displayName: '手動 太郎',
           kind: 'user',
           source: 'manual',
@@ -773,7 +821,7 @@ describe('LINE destinations', () => {
     await expect(pending.json()).resolves.toMatchObject({
       data: [{
         id: registeredBody.data.id,
-        destinationId: 'Upending00000000000000000000000000',
+        destinationId: 'Upend…',
         displayName: '保留 太郎',
         source: 'manual',
         status: 'discovered',
@@ -806,7 +854,7 @@ describe('LINE destinations', () => {
 
     const promoted = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/recipients',
-      { name: '昇格 花子', email: 'promoted@example.com', lineDestinationId: registeredBody.data.id },
+      { name: '昇格 花子', lineDestinationId: registeredBody.data.id },
     ), fixture.environment);
     const blockedRemoval = await app.fetch(fixture.jsonRequest(
       `/api/organizations/organization-1/line-destinations/${registeredBody.data.id}`,

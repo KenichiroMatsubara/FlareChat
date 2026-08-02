@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { and, asc, count, desc, eq, gt, gte, inArray, isNull, max, ne } from 'drizzle-orm';
 
-import { canUpdateAttendance, discoveredLineDestinations, displayRecipientIdentifier, verifyLineWebhookSignature } from '@mail/domain';
+import { canUpdateAttendance, discoveredLineDestinations, displayLineDestinationId, displayRecipientIdentifier, verifyLineWebhookSignature } from '@mail/domain';
 
 import { createAutomation, LEGACY_AI_BASE_URL } from './automation';
 import { decrypt, encrypt } from './cryptography';
@@ -658,7 +658,9 @@ app.get('/api/organizations/:organizationId/recipients', async (context) => {
         id: row.id,
         organizationId: access.organization.id,
         name: row.name,
-        email: displayRecipientIdentifier(access.role as 'owner' | 'admin' | 'operator' | 'viewer', row.email),
+        email: row.email
+          ? displayRecipientIdentifier(access.role as 'owner' | 'admin' | 'operator' | 'viewer', row.email)
+          : '',
         state: row.state,
         tags: JSON.parse(row.tags) as string[],
         createdAt: row.createdAt,
@@ -668,7 +670,7 @@ app.get('/api/organizations/:organizationId/recipients', async (context) => {
       if (row.lineDestinationRowId && row.lineDestinationId && row.lineKind && row.lineStatus) {
         recipient.lineDestinations.push({
           id: row.lineDestinationRowId,
-          destinationId: displayRecipientIdentifier(access.role as 'owner' | 'admin' | 'operator' | 'viewer', row.lineDestinationId),
+          destinationId: displayLineDestinationId(row.lineDestinationId),
           displayName: row.lineDisplayName ?? '',
           kind: row.lineKind,
           status: row.lineStatus,
@@ -701,10 +703,7 @@ app.get('/api/organizations/:organizationId/line-destinations', async (context) 
       .orderBy(desc(lineDestinations.discoveredAt)).all();
     return json(context, rows.map((row) => ({
       ...row,
-      destinationId: displayRecipientIdentifier(
-        access.role as 'owner' | 'admin' | 'operator' | 'viewer',
-        row.destinationId,
-      ),
+      destinationId: displayLineDestinationId(row.destinationId),
     })));
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'LINE Destinations could not be loaded.', 403);
@@ -745,7 +744,7 @@ app.post('/api/organizations/:organizationId/line-destinations', async (context)
       }).where(eq(lineDestinations.id, existing.id)).run();
       return json(context, {
         id: existing.id,
-        destinationId: displayRecipientIdentifier(access.role as 'owner' | 'admin' | 'operator' | 'viewer', destinationId),
+        destinationId: displayLineDestinationId(destinationId),
         displayName,
         kind,
         status: 'discovered' as const,
@@ -768,7 +767,7 @@ app.post('/api/organizations/:organizationId/line-destinations', async (context)
     }).run();
     return json(context, {
       id,
-      destinationId: displayRecipientIdentifier(access.role as 'owner' | 'admin' | 'operator' | 'viewer', destinationId),
+      destinationId: displayLineDestinationId(destinationId),
       displayName,
       kind,
       status: 'discovered' as const,
@@ -823,8 +822,9 @@ app.post('/api/organizations/:organizationId/recipients', async (context) => {
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ name?: string; email?: string; tags?: unknown; lineDestinationId?: string }>();
     const name = input.name?.trim();
-    const email = input.email?.trim().toLowerCase();
-    if (!name || !email || !email.includes('@')) return failure(context, 'Recipient name and a valid email address are required.');
+    const email = input.email?.trim().toLowerCase() ?? '';
+    if (!name) return failure(context, 'Recipient name is required.');
+    if (email && !email.includes('@')) return failure(context, 'Recipient email address must be valid when provided.');
     const tags = input.tags === undefined ? [] : input.tags;
     if (!Array.isArray(tags) || tags.some((tag) => typeof tag !== 'string' || !tag.trim())) {
       return failure(context, 'Recipient tags must be non-empty strings.');
@@ -883,7 +883,10 @@ app.post('/api/organizations/:organizationId/recipients', async (context) => {
       tags: normalizedTags,
       createdAt: timestamp,
       updatedAt: timestamp,
-      lineDestinations: lineDestination ? [lineDestination] : [],
+      lineDestinations: lineDestination ? [{
+        ...lineDestination,
+        destinationId: displayLineDestinationId(lineDestination.destinationId),
+      }] : [],
     }, 201);
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Recipient Profile could not be created.', 409);
@@ -904,7 +907,7 @@ app.patch('/api/organizations/:organizationId/recipients/:recipientId', async (c
     }
     if (input.email !== undefined) {
       const email = input.email.trim().toLowerCase();
-      if (!email.includes('@')) return failure(context, 'A valid Recipient email address is required.');
+      if (email && !email.includes('@')) return failure(context, 'Recipient email address must be valid when provided.');
       updates.email = email;
     }
     let tags: string[] | undefined;
@@ -1038,7 +1041,7 @@ app.put('/api/organizations/:organizationId/recipients/:recipientId/line-destina
     }
     return json(context, {
       id: lineDestinationId,
-      destinationId: displayRecipientIdentifier(access.role as 'owner' | 'admin' | 'operator' | 'viewer', destinationId),
+      destinationId: displayLineDestinationId(destinationId),
       displayName,
       kind,
       status: 'discovered' as const,
@@ -1480,7 +1483,9 @@ app.get('/api/organizations/:organizationId/audit/deliveries', async (context) =
       id: row.id,
       eventId: row.eventId,
       channel: row.channel,
-      destination: displayRecipientIdentifier(access.role as 'owner' | 'admin' | 'operator' | 'viewer', row.destination),
+      destination: row.channel === 'line'
+        ? displayLineDestinationId(row.destination)
+        : displayRecipientIdentifier(access.role as 'owner' | 'admin' | 'operator' | 'viewer', row.destination),
       outcome: row.outcome,
       externalId: row.externalId,
       createdAt: row.createdAt,
@@ -1610,7 +1615,10 @@ app.post('/api/public/organizations/:organizationId/line-links/:token', async (c
       isNull(recipientLinkTokens.usedAt),
     )).returning({ token: recipientLinkTokens.token }).get();
     if (!consumed) return failure(context, 'Recipient Link was already used.', 410);
-    return json(context, { recipientProfileId: link.recipientProfileId, destinationId: input.destinationId.trim() });
+    return json(context, {
+      recipientProfileId: link.recipientProfileId,
+      destinationId: displayLineDestinationId(input.destinationId.trim()),
+    });
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Recipient Link could not be consumed.', 409);
   }
