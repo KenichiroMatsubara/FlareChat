@@ -2,6 +2,8 @@
 
 Mail Automation turns selected Gmail messages into shared calendar events and LINE notifications without a human approval step.
 
+Mail Automation is general. It knows Organizations, roles, rules, and destinations, but never the vocabulary of any particular organization; every domain-specific name lives in a Preset that an Organization copies and edits. A Schema Rule extracts Event Details, Tasks, and a Message Summary against one product-defined schema, so the external effects it can cause are known before it runs. An Agent Rule runs an Organization-authored Prompt with a bounded tool set and decides for itself whether and how to act, within the destinations its rule permits and under its Execution Mode. Dangerous freedom is confined to the second path; the first stays predictable and cheap.
+
 The deployment uses the Workers Paid plan and is designed to remain near its $5 monthly minimum under the intended small-organization workload. Cloudflare usage above included allowances may incur additional charges, so this is a cost target rather than a hard spending guarantee. Google, LINE, and AI provider quotas, plans, and charges remain separate Organization-managed constraints.
 
 The deployment uses one Control D1 database plus one Organization D1 database per Organization. Control D1 contains only identities, Organization routing, memberships, and deployment capacity state; each Organization D1 contains that Organization's rules, events, recipients, Jobs, credentials, and history. Application-owned Durable Objects are not used.
@@ -150,17 +152,53 @@ _Avoid_: winning rule, extraction rule
 The Primary Rule retained by a Scheduled Event for interpreting its later Event Changes unless an Operator explicitly reassigns it.
 _Avoid_: event rule, pinned rule
 
+**Schema Rule**:
+An Automation Rule that derives Event Details, Tasks, and a Message Summary from a Source Message through one product-defined extraction schema, so that every external effect it can cause is known before it runs.
+_Avoid_: standard rule, default rule
+
+**Agent Rule**:
+An Automation Rule that runs an Organization-authored Prompt against a Source Message with a bounded tool set, deciding for itself whether and how often to act within the destinations its rule permits.
+_Avoid_: AI rule, custom rule, MCP rule
+
+**Prompt**:
+An Organization-owned, separately identified set of instructions referenced by Agent Rules, retained so that any produced Scheduled Event, Task, or delivery names the exact instructions that caused it.
+_Avoid_: system message, template
+
+**Preset**:
+A self-contained sample configuration—rules, Prompts, Operational Task Roles, and empty typed lists—copied once into an Organization and thereafter unlinked from the product release that supplied it.
+_Avoid_: template, default configuration
+
 **Rule Revision**:
 An immutable version of an Automation Rule's selection, extraction, routing, scheduling, and delivery configuration.
 _Avoid_: rule history, configuration version
 
 **Rule State**:
-The Draft, Active, Suspended, or Archived lifecycle status that determines whether an Automation Rule may preview, execute, resume, or remain historical.
+The Draft, Active, Suspended, or Archived lifecycle status that determines whether an Automation Rule may preview, execute, resume, or remain historical. An Agent Rule has no Draft state, because its Execution Mode already governs whether a run may act.
 _Avoid_: enabled flag, rule status
+
+**Execution Mode**:
+Whether an Agent Rule may only read, may write once a member approves each proposal, or may write unattended.
+_Avoid_: permission level, safety setting
+
+**Proposed Action**:
+One external effect an Agent Rule's run recorded instead of performing, held with its exact arguments until a member approves it, rejects it, or it expires.
+_Avoid_: pending delivery, draft action
+
+**Run Transcript**:
+The complete encrypted record of one Agent Rule run—its Prompt revision, model, every tool call with arguments and results, and final output—retained to explain a run that will never be retried.
+_Avoid_: log, agent history
 
 **Event Details**:
 The structured title, start and end time, time zone, location, and description extracted from a Source Message through an AI Connection and completed with an Automation Rule's defaults.
 _Avoid_: parsed fields, event data
+
+**Message Summary**:
+The single plain-text account of one Source Message and its accepted attachments produced by that message's one extraction, delivered on its own schedule whether or not the message yielded any Event Candidate.
+_Avoid_: description, digest, snippet
+
+**Intake Notice**:
+The sender-and-subject-only notification substituted for a Message Summary when a Source Message becomes an Automation Exception before a summary exists.
+_Avoid_: error notice, fallback summary
 
 **Event Candidate**:
 One distinct proposed event or recurring series extracted from a Source Message before it becomes a Scheduled Event or Automation Exception.
@@ -171,7 +209,7 @@ A nullable Organization-defined classification selected for an Event Candidate t
 _Avoid_: tag, event type
 
 **Extraction Policy**:
-Trusted Organization-authored instructions and defaults that constrain how an Automation Rule derives Event Details from untrusted Source Message content.
+Trusted Organization-authored instructions and defaults that constrain how a Schema Rule derives Event Details from untrusted Source Message content, within the product-defined extraction schema.
 _Avoid_: prompt, system message
 
 **Selection Policy**:
@@ -267,7 +305,7 @@ A Recipient Profile invited to a Scheduled Event and allowed to submit an Attend
 _Avoid_: participant, confirmed attendee
 
 **Recipient Snapshot**:
-A versioned set of Eligible Recipients resolved from executed Routing Policies, changed by a newly due matched rule or an explicit previewed synchronization from current tメール部分だけにしてくださいyped lists.
+A versioned set of Eligible Recipients resolved from executed Routing Policies, changed by a newly due matched rule or an explicit previewed synchronization from current typed lists.
 _Avoid_: recipient cache, resolved list
 
 **Registration Deadline**:
@@ -295,7 +333,7 @@ An Organization-owned, deadline-bearing work item extracted once from a Source M
 _Avoid_: reminder, to-do
 
 **Operational Task Role**:
-The responsibility used to route a Task—currently Organizer or Treasurer—distinct from an Organization member's application authorization role.
+An Organization-defined responsibility used to route a Task, distinct from an Organization member's application authorization role. Every Organization defines its own set; an Automation Rule selects the subset it may assign, and a Task Assignment names the holder once per Organization rather than once per rule.
 _Avoid_: member role, permission
 
 **Task Assignment**:
