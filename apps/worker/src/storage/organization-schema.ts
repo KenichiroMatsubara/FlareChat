@@ -92,6 +92,7 @@ export const agentRules = sqliteTable('agent_rules', {
   organizationId: text('organization_id').notNull(),
   name: text('name').notNull(),
   status: text('status', { enum: ['active', 'suspended', 'archived'] }).notNull(),
+  executionMode: text('execution_mode', { enum: ['read_only', 'approval', 'unattended'] }).notNull().default('approval'),
   promptId: text('prompt_id').notNull().references(() => prompts.id, { onDelete: 'restrict' }),
   selectionPolicy: text('selection_policy').notNull().default('{}'),
   priority: integer('priority').notNull().default(0),
@@ -100,6 +101,7 @@ export const agentRules = sqliteTable('agent_rules', {
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
   check('agent_rules_status_check', sql`${table.status} in ('active', 'suspended', 'archived')`),
+  check('agent_rules_execution_mode_check', sql`${table.executionMode} in ('read_only', 'approval', 'unattended')`),
   index('agent_rules_status_idx').on(table.status),
 ]);
 
@@ -109,10 +111,24 @@ export const agentRuleRevisions = sqliteTable('agent_rule_revisions', {
   revision: integer('revision').notNull(),
   promptId: text('prompt_id').notNull().references(() => prompts.id, { onDelete: 'restrict' }),
   selectionPolicy: text('selection_policy').notNull(),
+  executionMode: text('execution_mode', { enum: ['read_only', 'approval', 'unattended'] }).notNull().default('read_only'),
+  permittedRecipientListIds: text('permitted_recipient_list_ids').notNull().default('[]'),
+  permittedLineListIds: text('permitted_line_list_ids').notNull().default('[]'),
   createdAt: text('created_at').notNull(),
 }, (table) => [
   uniqueIndex('agent_rule_revisions_rule_revision_idx').on(table.agentRuleId, table.revision),
+  check('agent_rule_revisions_execution_mode_check', sql`${table.executionMode} in ('read_only', 'approval', 'unattended')`),
 ]);
+
+export const agentRulePermittedRecipientLists = sqliteTable('agent_rule_permitted_recipient_lists', {
+  agentRuleId: text('agent_rule_id').notNull().references(() => agentRules.id, { onDelete: 'cascade' }),
+  listId: text('list_id').notNull().references(() => lists.id),
+}, (table) => [primaryKey({ columns: [table.agentRuleId, table.listId] })]);
+
+export const agentRulePermittedLineLists = sqliteTable('agent_rule_permitted_line_lists', {
+  agentRuleId: text('agent_rule_id').notNull().references(() => agentRules.id, { onDelete: 'cascade' }),
+  listId: text('list_id').notNull().references(() => lists.id),
+}, (table) => [primaryKey({ columns: [table.agentRuleId, table.listId] })]);
 
 export const ruleRevisions = sqliteTable('rule_revisions', {
   id: text('id').primaryKey(),
@@ -158,6 +174,23 @@ export const agentRuns = sqliteTable('agent_runs', {
   check('agent_runs_outcome_check', sql`${table.outcome} in ('succeeded', 'failed')`),
   uniqueIndex('agent_runs_rule_source_idx').on(table.agentRuleId, table.sourceMessageId),
   index('agent_runs_started_idx').on(table.startedAt),
+]);
+
+export const proposedActions = sqliteTable('proposed_actions', {
+  id: text('id').primaryKey(),
+  agentRunId: text('agent_run_id').notNull(),
+  agentRuleId: text('agent_rule_id').notNull(),
+  tool: text('tool', { enum: ['send_line_message', 'create_scheduled_event'] }).notNull(),
+  arguments: text('arguments').notNull(),
+  status: text('status', { enum: ['pending', 'approved', 'rejected', 'expired', 'failed'] }).notNull().default('pending'),
+  createdAt: text('created_at').notNull(),
+  expiresAt: text('expires_at').notNull(),
+  decidedAt: text('decided_at'),
+  decidedBy: text('decided_by'),
+}, (table) => [
+  check('proposed_actions_tool_check', sql`${table.tool} in ('send_line_message', 'create_scheduled_event')`),
+  check('proposed_actions_status_check', sql`${table.status} in ('pending', 'approved', 'rejected', 'expired', 'failed')`),
+  index('proposed_actions_run_idx').on(table.agentRunId, table.createdAt),
 ]);
 
 export const events = sqliteTable('events', {

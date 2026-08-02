@@ -2,7 +2,7 @@ import { CheckSquare, CircleAlert, LogOut, Mail, Menu, Play, Settings, ShieldChe
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
-import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OperationalTaskRole, OrganizationAgentRule, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationRecipient, OrganizationRecipientInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, RecipientLineDestinationInput, TaskRoleAssignment } from './api';
+import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OperationalTaskRole, OrganizationAgentRule, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationRecipient, OrganizationRecipientInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, ProposedAction, RecipientLineDestinationInput, TaskRoleAssignment } from './api';
 import { AutomationPage, ConnectionsPage, MailboxTestPage, MembersPage, RulesPage, TasksPage } from './dashboard-pages';
 
 export type Page = 'automation' | 'connections' | 'rules' | 'members' | 'mail-test' | 'tasks';
@@ -87,12 +87,15 @@ export interface DashboardProps {
   agentRules: OrganizationAgentRule[];
   agentRuns: AgentRunIndex[];
   agentTranscript: AgentRunTranscript | null;
+  proposedActions: ProposedAction[];
   onCreatePrompt: (input: { name: string; instructions: string }) => Promise<void>;
   onUpdatePrompt: (promptId: string, input: { name?: string; instructions?: string }) => Promise<void>;
   onDeletePrompt: (promptId: string) => Promise<void>;
-  onCreateAgentRule: (input: { name: string; promptId: string; state: 'active' | 'suspended'; selectionPolicy: Record<string, unknown>; priority?: number }) => Promise<void>;
-  onUpdateAgentRule: (agentRuleId: string, input: { state?: 'active' | 'suspended' | 'archived' }) => Promise<void>;
+  onCreateAgentRule: (input: { name: string; promptId: string; state: 'active' | 'suspended'; executionMode?: 'read_only' | 'approval' | 'unattended'; selectionPolicy: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[]; priority?: number }) => Promise<void>;
+  onUpdateAgentRule: (agentRuleId: string, input: { state?: 'active' | 'suspended' | 'archived'; executionMode?: 'read_only' | 'approval' | 'unattended'; permittedRecipientListIds?: string[]; permittedLineListIds?: string[] }) => Promise<void>;
   onLoadAgentTranscript: (runId: string) => void;
+  onDecideProposedAction: (actionId: string, decision: 'approve' | 'reject') => void;
+  onDecideProposedActionBatch: (runId: string, decision: 'approve' | 'reject') => void;
   organizationTasks: OrganizationTask[];
   onUpdateTask: (taskId: string, input: { completed?: boolean; remarks?: string }) => void;
   taskRoles: OperationalTaskRole[];
