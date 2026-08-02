@@ -35,7 +35,7 @@ describe('Database Access', () => {
       databaseId: 'database-example',
     });
 
-    expect(ready.schema.currentMigration).toBe('0007_source_message_deliveries.sql');
+    expect(ready.schema.currentMigration).toBe('0008_rule_permitted_lists.sql');
     await expect(ready.raw.prepare(
       'SELECT display_name FROM line_destinations',
     ).all()).resolves.toMatchObject({ success: true });

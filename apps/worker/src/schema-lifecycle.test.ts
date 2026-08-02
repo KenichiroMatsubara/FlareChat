@@ -57,7 +57,7 @@ describe('Schema Lifecycle', () => {
 
     expect(receipt).toMatchObject({
       kind: 'organization',
-      currentMigration: '0007_source_message_deliveries.sql',
+      currentMigration: '0008_rule_permitted_lists.sql',
       appliedMigrations: [
         '0001_tasks.sql',
         '0002_line_destination_roster.sql',
@@ -66,6 +66,7 @@ describe('Schema Lifecycle', () => {
         '0005_optional_recipient_email.sql',
         '0006_operational_task_roles.sql',
         '0007_source_message_deliveries.sql',
+        '0008_rule_permitted_lists.sql',
       ],
     });
     expect(database.rows<{ display_name: string }>(
@@ -101,7 +102,7 @@ describe('Schema Lifecycle', () => {
       kind: 'organization',
       database: database.binding,
     })).resolves.toMatchObject({
-      currentMigration: '0007_source_message_deliveries.sql',
+      currentMigration: '0008_rule_permitted_lists.sql',
     });
   });
 
@@ -132,7 +133,7 @@ describe('Schema Lifecycle', () => {
     await expect(schemaLifecycle.ensureCurrent({
       kind: 'organization',
       database: database.binding,
-    })).resolves.toMatchObject({ currentMigration: '0007_source_message_deliveries.sql' });
+    })).resolves.toMatchObject({ currentMigration: '0008_rule_permitted_lists.sql' });
   });
 
   it('migrates existing assignments and Tasks into Organization-owned role records without losing snapshots', async () => {
@@ -170,6 +171,23 @@ describe('Schema Lifecycle', () => {
     expect(database.rows('PRAGMA foreign_key_check')).toEqual([]);
   });
 
+  it('migrates each existing Rule destination reference into a one-element permitted set', async () => {
+    const database = databaseBeforeOperationalTaskRoles();
+    database.execute("INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('recipient-list-1', 'organization-1', 'recipient', 'Members', '2026-08-01', '2026-08-01')");
+    database.execute("INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('line-list-1', 'organization-1', 'line', 'Member LINE', '2026-08-01', '2026-08-01')");
+    database.execute("INSERT INTO rules (id, organization_id, name, status, recipient_list_id, line_list_id, created_at, updated_at) VALUES ('rule-1', 'organization-1', 'Announcements', 'active', 'recipient-list-1', 'line-list-1', '2026-08-01', '2026-08-01')");
+
+    await schemaLifecycle.ensureCurrent({ kind: 'organization', database: database.binding });
+
+    expect(database.rows('SELECT rule_id, list_id FROM rule_permitted_recipient_lists')).toEqual([
+      { rule_id: 'rule-1', list_id: 'recipient-list-1' },
+    ]);
+    expect(database.rows('SELECT rule_id, list_id FROM rule_permitted_line_lists')).toEqual([
+      { rule_id: 'rule-1', list_id: 'line-list-1' },
+    ]);
+    expect(database.rows('PRAGMA foreign_key_check')).toEqual([]);
+  });
+
   it('includes every checked-in Organization migration in the current schema', async () => {
     const database = createTestD1Database();
     openDatabases.push(database);
@@ -195,8 +213,8 @@ describe('Schema Lifecycle', () => {
     ]);
 
     expect(receipts).toEqual([
-      expect.objectContaining({ currentMigration: '0007_source_message_deliveries.sql' }),
-      expect.objectContaining({ currentMigration: '0007_source_message_deliveries.sql' }),
+      expect.objectContaining({ currentMigration: '0008_rule_permitted_lists.sql' }),
+      expect.objectContaining({ currentMigration: '0008_rule_permitted_lists.sql' }),
     ]);
   });
 });

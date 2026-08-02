@@ -293,6 +293,83 @@ describe('Organization management', () => {
     expect(listedText).not.toContain(secondId);
   });
 
+  it('creates an Automation Rule with permitted Calendar Recipient and LINE Destination List sets', async () => {
+    fixture = createTestApp();
+    const recipientOne = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', {
+      kind: 'recipient', name: 'Members',
+    }), fixture.environment);
+    const recipientTwo = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', {
+      kind: 'recipient', name: 'Guests',
+    }), fixture.environment);
+    const lineOne = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', {
+      kind: 'line', name: 'Member LINE',
+    }), fixture.environment);
+    const lineTwo = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', {
+      kind: 'line', name: 'Guest LINE',
+    }), fixture.environment);
+    const recipientListIds = await Promise.all([recipientOne, recipientTwo].map(async (response) =>
+      (await response.json() as { data: { id: string } }).data.id));
+    const lineListIds = await Promise.all([lineOne, lineTwo].map(async (response) =>
+      (await response.json() as { data: { id: string } }).data.id));
+
+    const created = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/rules', {
+      name: 'Permitted destinations',
+      permittedRecipientListIds: [...recipientListIds, recipientListIds[0]],
+      permittedLineListIds: [...lineListIds, lineListIds[0]],
+    }), fixture.environment);
+    const listed = await app.fetch(
+      fixture.request('/api/organizations/organization-1/rules'),
+      fixture.environment,
+    );
+
+    expect(created.status).toBe(201);
+    const listedBody = await listed.json() as { data: Array<{
+      name: string;
+      permittedRecipientListIds: string[];
+      permittedLineListIds: string[];
+    }> };
+    expect(listedBody.data[0]).toMatchObject({
+      name: 'Permitted destinations',
+      permittedRecipientListIds: expect.arrayContaining(recipientListIds),
+      permittedLineListIds: expect.arrayContaining(lineListIds),
+    });
+    expect(listedBody.data[0]?.permittedRecipientListIds).toHaveLength(2);
+    expect(listedBody.data[0]?.permittedLineListIds).toHaveLength(2);
+  });
+
+  it('adds and removes permitted destination lists through the Automation Rule interface', async () => {
+    fixture = createTestApp();
+    const firstList = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', {
+      kind: 'recipient', name: 'Current readers',
+    }), fixture.environment);
+    const secondList = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', {
+      kind: 'recipient', name: 'New readers',
+    }), fixture.environment);
+    const firstListId = (await firstList.json() as { data: { id: string } }).data.id;
+    const secondListId = (await secondList.json() as { data: { id: string } }).data.id;
+    const created = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/rules', {
+      name: 'Editable blast radius', permittedRecipientListIds: [firstListId],
+    }), fixture.environment);
+    const ruleId = (await created.json() as { data: { id: string } }).data.id;
+
+    const updated = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/rules/${ruleId}`,
+      { permittedRecipientListIds: [secondListId], permittedLineListIds: [] },
+      'PATCH',
+    ), fixture.environment);
+    const listed = await app.fetch(
+      fixture.request('/api/organizations/organization-1/rules'),
+      fixture.environment,
+    );
+
+    expect(updated.status).toBe(200);
+    await expect(listed.json()).resolves.toMatchObject({ data: [{
+      id: ruleId,
+      permittedRecipientListIds: [secondListId],
+      permittedLineListIds: [],
+    }] });
+  });
+
   it('creates, changes, imports, reads, and snapshots Recipient Profiles', async () => {
     fixture = createTestApp('operator');
     seedScheduledEvent(fixture.organization, { id: 'event-1' });

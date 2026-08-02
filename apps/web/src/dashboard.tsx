@@ -2,7 +2,7 @@ import { CheckSquare, CircleAlert, LogOut, Mail, Menu, Play, Settings, ShieldChe
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
-import type { AutomationStatus, AutomationSummary, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OperationalTaskRole, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationRecipient, OrganizationRecipientInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, RecipientLineDestinationInput, TaskRoleAssignment } from './api';
+import type { AutomationStatus, AutomationSummary, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OperationalTaskRole, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationRecipient, OrganizationRecipientInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, RecipientLineDestinationInput, TaskRoleAssignment } from './api';
 import { AutomationPage, ConnectionsPage, MailboxTestPage, MembersPage, RulesPage, TasksPage } from './dashboard-pages';
 
 export type Page = 'automation' | 'connections' | 'rules' | 'members' | 'mail-test' | 'tasks';
@@ -79,8 +79,10 @@ export interface DashboardProps {
   onPreviewMailbox: (messageId: string) => void;
   onCreateCalendarEvent: () => void;
   organizationRules: OrganizationRule[];
+  organizationLists: OrganizationTypedList[];
   ruleBusy: boolean;
   onCreateRule: (input: OrganizationRuleInput) => Promise<void>;
+  onUpdateRule: (ruleId: string, input: Pick<OrganizationRuleInput, 'permittedRecipientListIds' | 'permittedLineListIds'>) => Promise<void>;
   organizationTasks: OrganizationTask[];
   onUpdateTask: (taskId: string, input: { completed?: boolean; remarks?: string }) => void;
   taskRoles: OperationalTaskRole[];

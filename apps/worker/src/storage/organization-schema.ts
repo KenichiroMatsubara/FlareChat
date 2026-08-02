@@ -37,8 +37,6 @@ export const rules = sqliteTable('rules', {
   name: text('name').notNull(),
   status: text('status', { enum: ['draft', 'active', 'suspended', 'archived'] }).notNull(),
   sourceListId: text('source_list_id').references(() => lists.id),
-  recipientListId: text('recipient_list_id').references(() => lists.id),
-  lineListId: text('line_list_id').references(() => lists.id),
   selectionPolicy: text('selection_policy').notNull().default('{}'),
   routingPolicy: text('routing_policy').notNull().default('{}'),
   taskRoleIds: text('task_role_ids').notNull().default('[]'),
@@ -52,6 +50,20 @@ export const rules = sqliteTable('rules', {
   check('rules_status_check', sql`${table.status} in ('draft', 'active', 'suspended', 'archived')`),
   check('rules_require_attendance_check', sql`${table.requireAttendance} in (0, 1)`),
   index('rules_status_idx').on(table.status),
+]);
+
+export const rulePermittedRecipientLists = sqliteTable('rule_permitted_recipient_lists', {
+  ruleId: text('rule_id').notNull().references(() => rules.id, { onDelete: 'cascade' }),
+  listId: text('list_id').notNull().references(() => lists.id),
+}, (table) => [
+  primaryKey({ columns: [table.ruleId, table.listId] }),
+]);
+
+export const rulePermittedLineLists = sqliteTable('rule_permitted_line_lists', {
+  ruleId: text('rule_id').notNull().references(() => rules.id, { onDelete: 'cascade' }),
+  listId: text('list_id').notNull().references(() => lists.id),
+}, (table) => [
+  primaryKey({ columns: [table.ruleId, table.listId] }),
 ]);
 
 export const ruleRevisions = sqliteTable('rule_revisions', {

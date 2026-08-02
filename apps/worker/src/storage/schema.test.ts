@@ -60,6 +60,7 @@ describe('canonical D1 schemas', () => {
       '0005_optional_recipient_email.sql',
       '0006_operational_task_roles.sql',
       '0007_source_message_deliveries.sql',
+      '0008_rule_permitted_lists.sql',
     ]);
   });
 

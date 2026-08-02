@@ -6,6 +6,7 @@ import organizationManualLineDestinationSourceMigration from '../migrations/orga
 import organizationOptionalRecipientEmailMigration from '../migrations/organization/0005_optional_recipient_email.sql';
 import organizationOperationalTaskRolesMigration from '../migrations/organization/0006_operational_task_roles.sql';
 import organizationSourceMessageDeliveriesMigration from '../migrations/organization/0007_source_message_deliveries.sql';
+import organizationRulePermittedListsMigration from '../migrations/organization/0008_rule_permitted_lists.sql';
 
 type SchemaKind = 'organization';
 
@@ -37,6 +38,10 @@ const ORGANIZATION_MIGRATIONS: readonly SchemaMigration[] = [
   {
     name: '0007_source_message_deliveries.sql',
     sql: organizationSourceMessageDeliveriesMigration,
+  },
+  {
+    name: '0008_rule_permitted_lists.sql',
+    sql: organizationRulePermittedListsMigration,
   },
 ];
 const LEGACY_MIGRATION_CHECKSUMS = new Map<string, ReadonlySet<string>>([

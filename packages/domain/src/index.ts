@@ -37,8 +37,8 @@ export interface AutomationRule {
   name: string;
   status: RuleStatus;
   sourceListId: string | null;
-  recipientListId: string | null;
-  lineListId: string | null;
+  permittedRecipientListIds: string[];
+  permittedLineListIds: string[];
   scheduleMinutes: number;
   requireAttendance: boolean;
   deadlineDaysBefore: number | null;

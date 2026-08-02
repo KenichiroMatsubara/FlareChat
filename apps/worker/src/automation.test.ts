@@ -312,7 +312,7 @@ describe('Organization Automation Inbox scheduling', () => {
     fixture.organization.execute(
       "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('reader-1', 'recipients-1', 'reader@example.com', 'Reader', 1)",
     );
-    fixture.organization.execute("UPDATE rules SET recipient_list_id = 'recipients-1' WHERE id = 'rule-1'");
+    fixture.organization.execute("INSERT INTO rule_permitted_recipient_lists (rule_id, list_id) VALUES ('rule-1', 'recipients-1')");
     const upstreamRequests: Array<{ url: string; body: string | undefined }> = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       upstreamRequests.push({ url, body: typeof init?.body === 'string' ? init.body : undefined });
@@ -362,6 +362,86 @@ describe('Organization Automation Inbox scheduling', () => {
     });
   });
 
+  it('delivers a Message Summary to the deduplicated destinations from every permitted list', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    fixture.organization.execute(
+      "INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('summary-readers-1', 'organization-1', 'recipient', 'Members', '2026-08-01', '2026-08-01')",
+    );
+    fixture.organization.execute(
+      "INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('summary-readers-2', 'organization-1', 'recipient', 'Guests', '2026-08-01', '2026-08-01')",
+    );
+    fixture.organization.execute(
+      "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('summary-reader-1', 'summary-readers-1', 'member@example.com', 'Member', 1)",
+    );
+    fixture.organization.execute(
+      "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('summary-reader-2', 'summary-readers-2', 'guest@example.com', 'Guest', 1)",
+    );
+    fixture.organization.execute(
+      "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('summary-reader-duplicate', 'summary-readers-2', 'member@example.com', 'Member duplicate', 1)",
+    );
+    fixture.organization.execute(
+      "INSERT INTO rule_permitted_recipient_lists (rule_id, list_id) VALUES ('rule-1', 'summary-readers-1'), ('rule-1', 'summary-readers-2')",
+    );
+    const upstreamRequests: Array<{ url: string; body: string | undefined }> = [];
+    let deliveryIndex = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      upstreamRequests.push({ url, body: typeof init?.body === 'string' ? init.body : undefined });
+      if (url.includes('/history')) return new Response(JSON.stringify({
+        historyId: 'history-after-permitted-summaries',
+        history: [{ messagesAdded: [{ message: { id: 'gmail-message-permitted-summaries' } }] }],
+      }), { status: 200 });
+      if (url.includes('/messages/gmail-message-permitted-summaries')) return sourceMessageResponse();
+      if (url.includes('ai.example.com')) return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+        summary: '許可された読者へ送る要約です。', events: [], tasks: [],
+      }) } }] }), { status: 200 });
+      if (url.includes('/messages/send')) {
+        deliveryIndex += 1;
+        return new Response(JSON.stringify({ id: `gmail-summary-delivery-${deliveryIndex}` }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ error: { message: `unexpected request: ${url}` } }), { status: 500 });
+    }));
+
+    await runOrganizationAutomation(
+      fixture.environment,
+      'organization-1',
+      fixture.organization.binding,
+    );
+
+    const emailRequests = upstreamRequests.filter(({ url }) => url.includes('/messages/send'));
+    expect(emailRequests).toHaveLength(2);
+    const deliveredMessages = emailRequests.map(({ body }) => {
+      const raw = (JSON.parse(body ?? '{}') as { raw?: string }).raw ?? '';
+      const paddedRaw = `${raw.replaceAll('-', '+').replaceAll('_', '/')}${'='.repeat((4 - raw.length % 4) % 4)}`;
+      return new TextDecoder().decode(Uint8Array.from(atob(paddedRaw), (character) => character.charCodeAt(0)));
+    });
+    expect(deliveredMessages.join('\n')).toContain('To: member@example.com');
+    expect(deliveredMessages.join('\n')).toContain('To: guest@example.com');
+  });
+
+  it('skips Message Summary channels with no permitted lists without failing the Source Message', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    const upstreamRequests: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      upstreamRequests.push(url);
+      if (url.includes('/history')) return new Response(JSON.stringify({
+        historyId: 'history-after-no-destinations',
+        history: [{ messagesAdded: [{ message: { id: 'gmail-message-no-destinations' } }] }],
+      }), { status: 200 });
+      if (url.includes('/messages/gmail-message-no-destinations')) return sourceMessageResponse();
+      if (url.includes('ai.example.com')) return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+        summary: '宛先なしの要約です。', events: [], tasks: [],
+      }) } }] }), { status: 200 });
+      return new Response(JSON.stringify({ error: { message: `unexpected request: ${url}` } }), { status: 500 });
+    }));
+
+    await expect(runOrganizationAutomation(
+      fixture.environment,
+      'organization-1',
+      fixture.organization.binding,
+    )).resolves.toEqual({ scanned: 1, created: 0, skipped: 1, exceptions: 0 });
+    expect(upstreamRequests.some((url) => url.includes('/messages/send') || url.includes('api.line.me'))).toBe(false);
+  });
+
   it('delivers exactly one Message Summary when one Source Message produces multiple Scheduled Events', async () => {
     fixture = await createAutomationTestApp({ ai: true, lineSecret: 'line-secret' });
     fixture.organization.execute(
@@ -370,7 +450,7 @@ describe('Organization Automation Inbox scheduling', () => {
     fixture.organization.execute(
       "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('line-reader-1', 'line-readers-1', 'Usummary-reader-1', 'LINE Reader', 1)",
     );
-    fixture.organization.execute("UPDATE rules SET line_list_id = 'line-readers-1' WHERE id = 'rule-1'");
+    fixture.organization.execute("INSERT INTO rule_permitted_line_lists (rule_id, list_id) VALUES ('rule-1', 'line-readers-1')");
     const upstreamRequests: Array<{ url: string; body: string | undefined }> = [];
     let calendarIndex = 0;
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
@@ -466,7 +546,7 @@ describe('Organization Automation Inbox scheduling', () => {
     fixture.organization.execute(
       "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('intake-reader-1', 'intake-readers-1', 'intake-reader@example.com', 'Reader', 1)",
     );
-    fixture.organization.execute("UPDATE rules SET recipient_list_id = 'intake-readers-1' WHERE id = 'rule-1'");
+    fixture.organization.execute("INSERT INTO rule_permitted_recipient_lists (rule_id, list_id) VALUES ('rule-1', 'intake-readers-1')");
     const upstreamRequests: Array<{ url: string; body: string | undefined }> = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       upstreamRequests.push({ url, body: typeof init?.body === 'string' ? init.body : undefined });

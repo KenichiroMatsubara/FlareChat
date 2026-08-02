@@ -71,6 +71,8 @@ export interface OrganizationRule {
   selectionPolicy: Record<string, unknown>;
   routingPolicy: Record<string, unknown>;
   taskRoleIds: string[];
+  permittedRecipientListIds: string[];
+  permittedLineListIds: string[];
   priority: number;
   createdAt: string;
   updatedAt: string;
@@ -82,7 +84,19 @@ export interface OrganizationRuleInput {
   selectionPolicy?: Record<string, unknown>;
   routingPolicy?: Record<string, unknown>;
   taskRoleIds?: string[];
+  permittedRecipientListIds?: string[];
+  permittedLineListIds?: string[];
   priority?: number;
+}
+
+export interface OrganizationTypedList {
+  id: string;
+  organizationId: string;
+  kind: 'source' | 'recipient' | 'line';
+  name: string;
+  description: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface DeliveryAuditRecord {
@@ -210,6 +224,7 @@ export const api = {
   currentAutomation,
   organizationDashboard: (organizationId: string): Promise<OrganizationDashboard> => request(`/api/organizations/${encodeURIComponent(organizationId)}/dashboard`),
   organizationRules: (organizationId: string): Promise<OrganizationRule[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules`),
+  organizationLists: (organizationId: string): Promise<OrganizationTypedList[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/lists`),
   organizationDeliveryAudit: (organizationId: string): Promise<DeliveryAuditRecord[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/audit/deliveries`),
   organizationTasks: (organizationId: string): Promise<OrganizationTask[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/tasks`),
   organizationRecipients: (organizationId: string): Promise<OrganizationRecipient[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/recipients`),
@@ -262,6 +277,10 @@ export const api = {
   updateOrganizationTask: (organizationId: string, taskId: string, input: { completed?: boolean; remarks?: string }): Promise<OrganizationTask> => request(`/api/organizations/${encodeURIComponent(organizationId)}/tasks/${encodeURIComponent(taskId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   createOrganizationRule: (organizationId: string, input: OrganizationRuleInput): Promise<OrganizationRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules`, {
     method: 'POST',
+    body: JSON.stringify(input),
+  }),
+  updateOrganizationRule: (organizationId: string, ruleId: string, input: Pick<OrganizationRuleInput, 'permittedRecipientListIds' | 'permittedLineListIds'>): Promise<Partial<OrganizationRule> & { id: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules/${encodeURIComponent(ruleId)}`, {
+    method: 'PATCH',
     body: JSON.stringify(input),
   }),
   organizationConnections: (organizationId: string): Promise<OrganizationConnections> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections`),

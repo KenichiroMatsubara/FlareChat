@@ -82,7 +82,7 @@ describe('Fleet Migration', () => {
     } as unknown as Bindings);
 
     expect(receipt).toMatchObject({
-      targetMigration: '0007_source_message_deliveries.sql',
+      targetMigration: '0008_rule_permitted_lists.sql',
       migratedDatabases: 2,
     });
     expect(active.rows<{ display_name: string }>(
@@ -141,12 +141,13 @@ describe('Fleet Migration', () => {
     } as unknown as Bindings);
 
     expect(receipt).toMatchObject({
-      targetMigration: '0007_source_message_deliveries.sql',
+      targetMigration: '0008_rule_permitted_lists.sql',
       migratedDatabases: 1,
     });
     expect(applied.has('0004_manual_line_destination_source.sql')).toBe(true);
     expect(applied.has('0006_operational_task_roles.sql')).toBe(true);
     expect(applied.has('0007_source_message_deliveries.sql')).toBe(true);
+    expect(applied.has('0008_rule_permitted_lists.sql')).toBe(true);
   });
 
   it('includes an allocated database that is still in Organization provisioning', async () => {

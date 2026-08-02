@@ -5,7 +5,7 @@ import { isRouteErrorResponse, NavLink, Outlet, useLoaderData, useNavigate, useR
 import type { AppState } from '@mail/domain';
 
 import { api } from './api';
-import type { AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationConnections, OrganizationDashboard, OrganizationLineDestination, OrganizationMembership, OrganizationRecipient, OrganizationRecipientInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, RecipientLineDestinationInput, TaskRoleConfiguration } from './api';
+import type { AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationConnections, OrganizationDashboard, OrganizationLineDestination, OrganizationMembership, OrganizationRecipient, OrganizationRecipientInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, RecipientLineDestinationInput, TaskRoleConfiguration } from './api';
 import { defaultOrganizationName, setupPhaseLabel, SignedOutEntry } from './entry';
 import { Dashboard } from './dashboard';
 
@@ -123,6 +123,7 @@ export interface OrganizationRouteData {
   connections: OrganizationConnections;
   dashboard: OrganizationDashboard;
   rules: OrganizationRule[];
+  lists: OrganizationTypedList[];
   audit: DeliveryAuditRecord[];
   tasks: OrganizationTask[];
   taskRoles: TaskRoleConfiguration;
@@ -135,18 +136,19 @@ export const loadOrganization = async (organizationId: string): Promise<Organiza
   if (state.kind !== 'ready') throw new Response('Organization is not ready', { status: 409 });
   const organization = state.organizations.find((value) => value.organizationId === organizationId);
   if (!organization) throw new Response('Organization was not found', { status: 404 });
-  const [automation, connections, dashboard, rules, audit, tasks, taskRoles, recipients, lineDestinations] = await Promise.all([
+  const [automation, connections, dashboard, rules, lists, audit, tasks, taskRoles, recipients, lineDestinations] = await Promise.all([
     api.currentAutomation(organizationId),
     api.organizationConnections(organizationId),
     api.organizationDashboard(organizationId),
     api.organizationRules(organizationId),
+    api.organizationLists(organizationId),
     api.organizationDeliveryAudit(organizationId),
     api.organizationTasks(organizationId),
     api.organizationTaskRoles(organizationId),
     api.organizationRecipients(organizationId),
     api.organizationLineDestinations(organizationId),
   ]);
-  return { state, organization, automation, connections, dashboard, rules, audit, tasks, taskRoles, recipients, lineDestinations };
+  return { state, organization, automation, connections, dashboard, rules, lists, audit, tasks, taskRoles, recipients, lineDestinations };
 };
 
 interface OrganizationContextValue extends OrganizationRouteData {
@@ -163,6 +165,7 @@ interface OrganizationContextValue extends OrganizationRouteData {
   previewMailbox: (messageId: string) => void;
   createCalendarEvent: () => void;
   createRule: (input: OrganizationRuleInput) => Promise<void>;
+  updateRule: (ruleId: string, input: Pick<OrganizationRuleInput, 'permittedRecipientListIds' | 'permittedLineListIds'>) => Promise<void>;
   updateTask: (taskId: string, input: { completed?: boolean; remarks?: string }) => void;
   createTaskRole: (input: { displayName: string; description: string }) => Promise<void>;
   updateTaskRole: (roleId: string, input: { displayName?: string; description?: string }) => Promise<void>;
@@ -283,6 +286,10 @@ export const OrganizationLayout = () => {
   }, setMailTestBusy);
   const createCalendarEvent = () => void withError(async () => { if (mailTestPreview) setMailTestCreatedEventIds((await api.createMailboxTestCalendarEvent(data.organization.organizationId, mailTestPreview.confirmationToken)).eventIds); }, setMailTestBusy);
   const createRule = async (input: OrganizationRuleInput): Promise<void> => withError(async () => { const rule = await api.createOrganizationRule(data.organization.organizationId, input); setData((current) => ({ ...current, rules: [...current.rules, rule] })); }, setRuleBusy);
+  const updateRule = async (ruleId: string, input: Pick<OrganizationRuleInput, 'permittedRecipientListIds' | 'permittedLineListIds'>): Promise<void> => withError(async () => {
+    const updated = await api.updateOrganizationRule(data.organization.organizationId, ruleId, input);
+    setData((current) => ({ ...current, rules: current.rules.map((rule) => rule.id === ruleId ? { ...rule, ...updated } : rule) }));
+  }, setRuleBusy);
   const updateTask = (taskId: string, input: { completed?: boolean; remarks?: string }) => void withError(async () => {
     const task = await api.updateOrganizationTask(data.organization.organizationId, taskId, input);
     setData((current) => ({ ...current, tasks: current.tasks.map((currentTask) => currentTask.id === task.id ? task : currentTask) }));
@@ -348,7 +355,7 @@ export const OrganizationLayout = () => {
   const refreshRecipients = () => void withError(reloadRecipients, setMemberBusy);
   const logout = () => void withError(async () => { await api.logout(); navigate('/', { replace: true }); }, setBusy);
   const reauthenticate = () => void withError(async () => { window.location.assign((await api.reauthorizeAutomationInbox(data.organization.organizationId)).authorizationUrl); }, setBusy);
-  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, createRecipient, updateRecipient, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshRecipients, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, aiTestBusy, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, lineSettingsBusy, aiSettingsBusy, ruleBusy, memberBusy, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
+  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateRule, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, createRecipient, updateRecipient, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshRecipients, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, aiTestBusy, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, lineSettingsBusy, aiSettingsBusy, ruleBusy, memberBusy, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
   return <OrganizationContext.Provider value={value}><Outlet /></OrganizationContext.Provider>;
 };
 
@@ -402,8 +409,10 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     onPreviewMailbox={value.previewMailbox}
     onCreateCalendarEvent={value.createCalendarEvent}
     organizationRules={value.rules}
+    organizationLists={value.lists}
     ruleBusy={value.ruleBusy}
     onCreateRule={value.createRule}
+    onUpdateRule={value.updateRule}
     organizationTasks={value.tasks}
     onUpdateTask={value.updateTask}
     taskRoles={value.taskRoles.roles}

@@ -324,6 +324,48 @@ export const MailboxTestPage = (props: DashboardProps) => {
   </section>;
 };
 
+const toggledIds = (current: string[], id: string, checked: boolean): string[] =>
+  checked ? [...new Set([...current, id])] : current.filter((value) => value !== id);
+
+const DestinationListChoices = ({
+  legend,
+  lists,
+  selectedIds,
+  onChange,
+}: {
+  legend: string;
+  lists: DashboardProps['organizationLists'];
+  selectedIds: string[];
+  onChange: (ids: string[]) => void;
+}) => <fieldset>
+  <legend>{legend}</legend>
+  {lists.length
+    ? lists.map((list) => <label key={list.id}><input type="checkbox" checked={selectedIds.includes(list.id)} onChange={(change) => onChange(toggledIds(selectedIds, list.id, change.target.checked))} />{list.name}<small>{list.description}</small></label>)
+    : <small>利用できるリストはありません。</small>}
+</fieldset>;
+
+const RuleDestinationEditor = ({ rule, props }: {
+  rule: DashboardProps['organizationRules'][number];
+  props: DashboardProps;
+}) => {
+  const recipientLists = props.organizationLists.filter((list) => list.kind === 'recipient');
+  const lineLists = props.organizationLists.filter((list) => list.kind === 'line');
+  const [permittedRecipientListIds, setPermittedRecipientListIds] = useState(rule.permittedRecipientListIds);
+  const [permittedLineListIds, setPermittedLineListIds] = useState(rule.permittedLineListIds);
+  const recipientNames = recipientLists.filter((list) => rule.permittedRecipientListIds.includes(list.id)).map((list) => list.name);
+  const lineNames = lineLists.filter((list) => rule.permittedLineListIds.includes(list.id)).map((list) => list.name);
+  return <>
+    <small>選択中: {recipientNames.join('、') || 'Calendar Recipient Listなし'}</small>
+    <small>選択中: {lineNames.join('、') || 'LINE Destination Listなし'}</small>
+    <details className="rule-destination-editor">
+      <summary>許可リストを編集</summary>
+      <DestinationListChoices legend="許可されたCalendar Recipient Lists" lists={recipientLists} selectedIds={permittedRecipientListIds} onChange={setPermittedRecipientListIds} />
+      <DestinationListChoices legend="許可されたLINE Destination Lists" lists={lineLists} selectedIds={permittedLineListIds} onChange={setPermittedLineListIds} />
+      <button type="button" className="secondary" disabled={props.ruleBusy} onClick={() => void props.onUpdateRule(rule.id, { permittedRecipientListIds, permittedLineListIds })}>許可リストを保存</button>
+    </details>
+  </>;
+};
+
 export const RulesPage = (props: DashboardProps) => {
   const settingsReady = Boolean(props.organization && props.canManage);
   const [ruleName, setRuleName] = useState('');
@@ -334,17 +376,21 @@ export const RulesPage = (props: DashboardProps) => {
   const [rulePriority, setRulePriority] = useState('0');
   const [ruleState, setRuleState] = useState<'draft' | 'active'>('draft');
   const [taskRoleIds, setTaskRoleIds] = useState<string[]>(props.taskRoles.map((role) => role.id));
+  const [permittedRecipientListIds, setPermittedRecipientListIds] = useState<string[]>([]);
+  const [permittedLineListIds, setPermittedLineListIds] = useState<string[]>([]);
+  const recipientLists = props.organizationLists.filter((list) => list.kind === 'recipient');
+  const lineLists = props.organizationLists.filter((list) => list.kind === 'line');
   const createRule = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault();
     const selectionPolicy = Object.fromEntries(Object.entries({ sender: ruleSender.trim(), domain: ruleDomain.trim(), keyword: ruleKeyword.trim(), label: ruleLabel.trim() }).filter(([, value]) => value));
-    await props.onCreateRule({ name: ruleName, state: ruleState, selectionPolicy, routingPolicy: {}, taskRoleIds, priority: Number.parseInt(rulePriority, 10) || 0 });
-    setRuleName(''); setRuleSender(''); setRuleDomain(''); setRuleKeyword(''); setRuleLabel(''); setRulePriority('0'); setRuleState('draft');
+    await props.onCreateRule({ name: ruleName, state: ruleState, selectionPolicy, routingPolicy: {}, taskRoleIds, permittedRecipientListIds, permittedLineListIds, priority: Number.parseInt(rulePriority, 10) || 0 });
+    setRuleName(''); setRuleSender(''); setRuleDomain(''); setRuleKeyword(''); setRuleLabel(''); setRulePriority('0'); setRuleState('draft'); setPermittedRecipientListIds([]); setPermittedLineListIds([]);
   };
   return <section className="page-layout rules-page">
     <div className="page-title"><p>AUTOMATION RULES</p><h1>ルールセット</h1><span>どのメールを予定化するかを、送信者・ドメイン・キーワード・Gmailラベルで指定します。</span></div>
     {!settingsReady ? <section className="empty-page"><SlidersHorizontal size={30} /><h2>ルールを読み込めません</h2><p>Googleでログインし直した後、このページを再読み込みしてください。</p></section> : <>
-      <form className="rule-builder" onSubmit={(event) => void createRule(event)}><div><p>NEW RULE</p><h2>ルールを作成</h2><span>下書きで作成してから有効化できます。</span></div><label>ルール名<input value={ruleName} onChange={(event) => setRuleName(event.target.value)} placeholder="例: ローターアクト行事" required /></label><div className="rule-grid"><label>送信者（完全一致）<input value={ruleSender} onChange={(event) => setRuleSender(event.target.value)} placeholder="sender@example.com" /></label><label>送信元ドメイン<input value={ruleDomain} onChange={(event) => setRuleDomain(event.target.value)} placeholder="example.com" /></label><label>本文・件名のキーワード<input value={ruleKeyword} onChange={(event) => setRuleKeyword(event.target.value)} placeholder="例: 招待行事" /></label><label>Gmailラベル<input value={ruleLabel} onChange={(event) => setRuleLabel(event.target.value)} placeholder="例: Announcements" /></label><label>優先度<input type="number" value={rulePriority} onChange={(event) => setRulePriority(event.target.value)} /></label><label>作成時の状態<select value={ruleState} onChange={(event) => setRuleState(event.target.value as 'draft' | 'active')}><option value="draft">下書き</option><option value="active">有効</option></select></label></div><fieldset><legend>割り当て可能なOperational Task Roles</legend>{props.taskRoles.map((role) => <label key={role.id}><input type="checkbox" checked={taskRoleIds.includes(role.id)} onChange={(change) => setTaskRoleIds((current) => change.target.checked ? [...current, role.id] : current.filter((id) => id !== role.id))} />{role.displayName}<small>{role.description}</small></label>)}</fieldset><button className="primary" disabled={props.ruleBusy}>{props.ruleBusy ? '作成中…' : 'ルールを作成'}</button></form>
-      <section className="rules-list"><div className="rules-list-title"><h2>登録済みルール</h2><span>{props.organizationRules.length}件</span></div>{props.organizationRules.length ? props.organizationRules.map((rule) => <article key={rule.id} className="rule-row"><div><strong>{rule.name}</strong><small>優先度 {rule.priority} ・ {Object.entries(rule.selectionPolicy).map(([key, value]) => `${key}: ${String(value)}`).join(' / ') || '条件なし'}</small><small>選択Role: {props.taskRoles.filter((role) => rule.taskRoleIds.includes(role.id)).map((role) => role.displayName).join('、') || '未割り当てのみ'}</small></div><span className={`rule-state ${rule.state}`}>{rule.state}</span></article>) : <p className="rules-empty">まだルールはありません。</p>}</section>
+      <form className="rule-builder" onSubmit={(event) => void createRule(event)}><div><p>NEW RULE</p><h2>ルールを作成</h2><span>下書きで作成してから有効化できます。</span></div><label>ルール名<input value={ruleName} onChange={(event) => setRuleName(event.target.value)} placeholder="例: ローターアクト行事" required /></label><div className="rule-grid"><label>送信者（完全一致）<input value={ruleSender} onChange={(event) => setRuleSender(event.target.value)} placeholder="sender@example.com" /></label><label>送信元ドメイン<input value={ruleDomain} onChange={(event) => setRuleDomain(event.target.value)} placeholder="example.com" /></label><label>本文・件名のキーワード<input value={ruleKeyword} onChange={(event) => setRuleKeyword(event.target.value)} placeholder="例: 招待行事" /></label><label>Gmailラベル<input value={ruleLabel} onChange={(event) => setRuleLabel(event.target.value)} placeholder="例: Announcements" /></label><label>優先度<input type="number" value={rulePriority} onChange={(event) => setRulePriority(event.target.value)} /></label><label>作成時の状態<select value={ruleState} onChange={(event) => setRuleState(event.target.value as 'draft' | 'active')}><option value="draft">下書き</option><option value="active">有効</option></select></label></div><DestinationListChoices legend="許可されたCalendar Recipient Lists" lists={recipientLists} selectedIds={permittedRecipientListIds} onChange={setPermittedRecipientListIds} /><DestinationListChoices legend="許可されたLINE Destination Lists" lists={lineLists} selectedIds={permittedLineListIds} onChange={setPermittedLineListIds} /><fieldset><legend>割り当て可能なOperational Task Roles</legend>{props.taskRoles.map((role) => <label key={role.id}><input type="checkbox" checked={taskRoleIds.includes(role.id)} onChange={(change) => setTaskRoleIds((current) => toggledIds(current, role.id, change.target.checked))} />{role.displayName}<small>{role.description}</small></label>)}</fieldset><button className="primary" disabled={props.ruleBusy}>{props.ruleBusy ? '作成中…' : 'ルールを作成'}</button></form>
+      <section className="rules-list"><div className="rules-list-title"><h2>登録済みルール</h2><span>{props.organizationRules.length}件</span></div>{props.organizationRules.length ? props.organizationRules.map((rule) => <article key={rule.id} className="rule-row"><div><strong>{rule.name}</strong><small>優先度 {rule.priority} ・ {Object.entries(rule.selectionPolicy).map(([key, value]) => `${key}: ${String(value)}`).join(' / ') || '条件なし'}</small><small>選択Role: {props.taskRoles.filter((role) => rule.taskRoleIds.includes(role.id)).map((role) => role.displayName).join('、') || '未割り当てのみ'}</small><RuleDestinationEditor rule={rule} props={props} /></div><span className={`rule-state ${rule.state}`}>{rule.state}</span></article>) : <p className="rules-empty">まだルールはありません。</p>}</section>
     </>}
   </section>;
 };

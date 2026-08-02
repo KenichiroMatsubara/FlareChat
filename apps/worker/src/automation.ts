@@ -1,4 +1,4 @@
-import { and, count, eq, isNotNull } from 'drizzle-orm';
+import { and, count, eq, inArray, isNotNull } from 'drizzle-orm';
 
 import { decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
 import { fromBase64Url } from './encoding';
@@ -24,6 +24,8 @@ import {
   googleConnections,
   listItems,
   operationalTaskRoles,
+  rulePermittedLineLists,
+  rulePermittedRecipientLists,
   rules as automationRules,
   sourceMessages,
 } from './storage/organization-schema';
@@ -91,8 +93,8 @@ export interface ActiveRule {
   priority: number;
   selectionPolicy: Record<string, unknown>;
   taskRoleIds?: string[];
-  recipientListId?: string | null;
-  lineListId?: string | null;
+  permittedRecipientListIds?: string[];
+  permittedLineListIds?: string[];
 }
 
 export interface RuleSource {
@@ -279,12 +281,13 @@ const deliverSourceMessageNotice = async (input: {
   body: string;
 }): Promise<void> => {
   const db = drizzleOrganizationDatabase(input.database);
-  if (input.rule.recipientListId) {
+  const permittedRecipientListIds = input.rule.permittedRecipientListIds ?? [];
+  if (permittedRecipientListIds.length) {
     const recipients = await db.select({ destination: listItems.value }).from(listItems).where(and(
-      eq(listItems.listId, input.rule.recipientListId),
+      inArray(listItems.listId, permittedRecipientListIds),
       eq(listItems.enabled, true),
     )).all();
-    await Promise.all(recipients.map(({ destination }) => deliverSourceMessageEmail({
+    await Promise.all([...new Set(recipients.map(({ destination }) => destination))].map((destination) => deliverSourceMessageEmail({
       database: input.database,
       google: input.dependencies.google,
       accessToken: input.googleAccessToken,
@@ -294,14 +297,15 @@ const deliverSourceMessageNotice = async (input: {
       body: input.body,
     })));
   }
-  if (!input.rule.lineListId) return;
+  const permittedLineListIds = input.rule.permittedLineListIds ?? [];
+  if (!permittedLineListIds.length) return;
   const accessToken = await lineAccessToken(input.env, input.organizationId, input.database);
   if (!accessToken) return;
   const destinations = await db.select({ destinationId: listItems.value }).from(listItems).where(and(
-    eq(listItems.listId, input.rule.lineListId),
+    inArray(listItems.listId, permittedLineListIds),
     eq(listItems.enabled, true),
   )).all();
-  await Promise.all(destinations.map(({ destinationId }) => deliverLineBatch({
+  await Promise.all([...new Set(destinations.map(({ destinationId }) => destinationId))].map((destinationId) => deliverLineBatch({
     database: input.database,
     accessToken,
     sourceMessageId: input.sourceMessageId,
@@ -552,11 +556,23 @@ const processOrganizationMessage = async (
     priority: automationRules.priority,
     selectionPolicy: automationRules.selectionPolicy,
     taskRoleIds: automationRules.taskRoleIds,
-    recipientListId: automationRules.recipientListId,
-    lineListId: automationRules.lineListId,
   }).from(automationRules).where(eq(automationRules.status, 'active')).orderBy(automationRules.priority).all();
+  const activeRuleIds = activeRules.map(({ id }) => id);
+  const [permittedRecipientLists, permittedLineLists] = activeRuleIds.length ? await Promise.all([
+    db.select().from(rulePermittedRecipientLists)
+      .where(inArray(rulePermittedRecipientLists.ruleId, activeRuleIds)).all(),
+    db.select().from(rulePermittedLineLists)
+      .where(inArray(rulePermittedLineLists.ruleId, activeRuleIds)).all(),
+  ]) : [[], []];
   const rule = selectActiveRule(activeRules.flatMap((row) => {
-    try { return [{ id: row.id, priority: row.priority, selectionPolicy: JSON.parse(row.selectionPolicy) as Record<string, unknown>, taskRoleIds: JSON.parse(row.taskRoleIds) as string[], recipientListId: row.recipientListId, lineListId: row.lineListId }]; }
+    try { return [{
+      id: row.id,
+      priority: row.priority,
+      selectionPolicy: JSON.parse(row.selectionPolicy) as Record<string, unknown>,
+      taskRoleIds: JSON.parse(row.taskRoleIds) as string[],
+      permittedRecipientListIds: permittedRecipientLists.flatMap((reference) => reference.ruleId === row.id ? [reference.listId] : []),
+      permittedLineListIds: permittedLineLists.flatMap((reference) => reference.ruleId === row.id ? [reference.listId] : []),
+    }]; }
     catch { return []; }
   }), { sender: senderOf(message.payload), subject, body, ...(message.labelIds === undefined ? {} : { labels: message.labelIds }) });
   if (!rule) {

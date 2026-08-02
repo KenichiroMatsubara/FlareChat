@@ -27,7 +27,7 @@ const dashboardProps = (): DashboardProps => ({
   onAiTestPromptChange: vi.fn(), onTestAi: vi.fn(), mailTestSubject: '', mailTestMatches: [], mailTestAiRequest: null,
   mailTestPreview: null, mailTestBusy: false, mailTestCreatedEventIds: [], onMailTestSubjectChange: vi.fn(), onSearchMailbox: vi.fn(),
   onPrepareMailbox: vi.fn(), onPreviewMailbox: vi.fn(), onCreateCalendarEvent: vi.fn(), organizationRules: [], ruleBusy: false,
-  onCreateRule: vi.fn(), organizationTasks: [], onUpdateTask: vi.fn(), taskRoles: [], taskRoleAssignments: [], taskMembers: [], onCreateTaskRole: vi.fn(), onUpdateTaskRole: vi.fn(), onDeleteTaskRole: vi.fn(), onAssignTaskRole: vi.fn(),
+  organizationLists: [], onCreateRule: vi.fn(), onUpdateRule: vi.fn(), organizationTasks: [], onUpdateTask: vi.fn(), taskRoles: [], taskRoleAssignments: [], taskMembers: [], onCreateTaskRole: vi.fn(), onUpdateTaskRole: vi.fn(), onDeleteTaskRole: vi.fn(), onAssignTaskRole: vi.fn(),
   organizationRecipients: [], lineDestinations: [], memberBusy: false, onCreateRecipient: vi.fn(), onUpdateRecipient: vi.fn(),
   onSetLineDestination: vi.fn(), onUnlinkLineDestination: vi.fn(), onRegisterLineDestination: vi.fn(), onRemoveLineDestination: vi.fn(), onRefreshRecipients: vi.fn(),
 });
@@ -103,6 +103,7 @@ describe('Operational Task Roles', () => {
           organizationRules={[{
             id: 'rule-1', organizationId: 'org-1', name: '登録案内', state: 'active',
             selectionPolicy: {}, routingPolicy: {}, taskRoleIds: ['role-registration'], priority: 0,
+            permittedRecipientListIds: [], permittedLineListIds: [],
             createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z',
           }]}
         />
@@ -113,6 +114,39 @@ describe('Operational Task Roles', () => {
     expect(html).toContain('参加登録担当');
     expect(html).toContain('支払担当');
     expect(html).toContain('選択Role: 参加登録担当');
+  });
+
+  it('lets a member add and remove permitted destination lists in the Automation Rule editor', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/rules']}>
+        <Dashboard
+          {...dashboardProps()}
+          page="rules"
+          organizationLists={[
+            { id: 'recipients-members', organizationId: 'org-1', kind: 'recipient', name: 'Members', description: '' },
+            { id: 'recipients-guests', organizationId: 'org-1', kind: 'recipient', name: 'Guests', description: '' },
+            { id: 'line-members', organizationId: 'org-1', kind: 'line', name: 'Member LINE', description: '' },
+          ]}
+          organizationRules={[{
+            id: 'rule-1', organizationId: 'org-1', name: 'Announcements', state: 'active',
+            selectionPolicy: {}, routingPolicy: {}, taskRoleIds: [],
+            permittedRecipientListIds: ['recipients-members'],
+            permittedLineListIds: ['line-members'],
+            priority: 0, createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z',
+          }]}
+          onUpdateRule={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('許可されたCalendar Recipient Lists');
+    expect(html).toContain('許可されたLINE Destination Lists');
+    expect(html).toContain('Members');
+    expect(html).toContain('Guests');
+    expect(html).toContain('Member LINE');
+    expect(html).toContain('許可リストを編集');
+    expect(html).toContain('選択中: Members');
+    expect(html).toContain('選択中: Member LINE');
   });
 });
 
