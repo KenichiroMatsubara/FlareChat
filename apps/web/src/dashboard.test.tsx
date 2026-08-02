@@ -31,6 +31,7 @@ const dashboardProps = (): DashboardProps => ({
   prompts: [], agentRules: [], agentRuns: [], agentTranscript: null, proposedActions: [], onCreatePrompt: vi.fn(), onUpdatePrompt: vi.fn(), onDeletePrompt: vi.fn(), onCreateAgentRule: vi.fn(), onUpdateAgentRule: vi.fn(), onLoadAgentTranscript: vi.fn(), onDecideProposedAction: vi.fn(), onDecideProposedActionBatch: vi.fn(),
   organizationRecipients: [], lineDestinations: [], memberBusy: false, onCreateRecipient: vi.fn(), onUpdateRecipient: vi.fn(),
   onSetLineDestination: vi.fn(), onUnlinkLineDestination: vi.fn(), onRegisterLineDestination: vi.fn(), onRemoveLineDestination: vi.fn(), onRefreshRecipients: vi.fn(),
+  presets: [{ id: 'membership-organization', name: 'Membership organization', description: 'Starting configuration.' }], onApplyPreset: vi.fn(),
 });
 
 const markup = (): string => renderToStaticMarkup(
@@ -148,6 +149,24 @@ describe('Operational Task Roles', () => {
     expect(html).toContain('許可リストを編集');
     expect(html).toContain('選択中: Members');
     expect(html).toContain('選択中: Member LINE');
+  });
+});
+
+describe('Preset settings', () => {
+  it('requires an explicit choice before adding a Preset beside existing configuration', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/connections']}>
+        <Dashboard
+          {...dashboardProps()}
+          page="connections"
+          organizationLists={[{ id: 'existing', organizationId: 'org-1', kind: 'source', name: 'Existing', description: '' }]}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('Membership organization');
+    expect(html).toContain('既存の構成に別のコピーを追加する');
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Presetを適用<\/button>/u);
   });
 });
 

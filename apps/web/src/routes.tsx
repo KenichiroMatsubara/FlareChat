@@ -5,7 +5,7 @@ import { isRouteErrorResponse, NavLink, Outlet, useLoaderData, useNavigate, useR
 import type { AppState } from '@mail/domain';
 
 import { api } from './api';
-import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationAgentRule, OrganizationConnections, OrganizationDashboard, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationRecipient, OrganizationRecipientInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, ProposedAction, RecipientLineDestinationInput, TaskRoleConfiguration } from './api';
+import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationAgentRule, OrganizationConnections, OrganizationDashboard, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationRecipient, OrganizationRecipientInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, ProposedAction, RecipientLineDestinationInput, TaskRoleConfiguration } from './api';
 import { defaultOrganizationName, setupPhaseLabel, SignedOutEntry } from './entry';
 import { Dashboard } from './dashboard';
 
@@ -57,16 +57,40 @@ export const SetupRoute = () => {
   </SetupCard>;
 };
 
+export const PresetSetupChoice = ({ presets, selectedId, onChange }: {
+  presets: PresetSummary[];
+  selectedId: string;
+  onChange: (presetId: string) => void;
+}) => <fieldset className="preset-choice">
+  <legend>Preset</legend>
+  {presets.map((preset) => <label key={preset.id}>
+    <input
+      type="checkbox"
+      checked={selectedId === preset.id}
+      onChange={(event) => onChange(event.target.checked ? preset.id : '')}
+    />
+    <span><strong>{preset.name}</strong><small>{preset.description}</small></span>
+  </label>)}
+  <p>選択した構成をOrganization作成時にコピーします。後の製品更新とはリンクされません。</p>
+</fieldset>;
+
 export const SetupConfirmRoute = () => {
   const state = useLoaderData() as AppState;
   const navigate = useNavigate();
   const [name, setName] = useState(state.kind === 'confirming_organization' ? state.setup.name : '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [presets, setPresets] = useState<PresetSummary[]>([]);
+  const [presetId, setPresetId] = useState('');
+  useEffect(() => {
+    void api.presets().then(setPresets).catch((cause: unknown) => {
+      setError(cause instanceof Error ? cause.message : 'Presetを読み込めませんでした。');
+    });
+  }, []);
   if (state.kind !== 'confirming_organization') return null;
   const submit = async (event: React.FormEvent) => {
     event.preventDefault(); setBusy(true); setError('');
-    try { await api.confirmOnboarding(name); navigate('/setup/provisioning', { replace: true }); }
+    try { await api.confirmOnboarding(name, presetId || undefined); navigate('/setup/provisioning', { replace: true }); }
     catch (cause) { setError(cause instanceof Error ? cause.message : '組織の作成を開始できませんでした。'); setBusy(false); }
   };
   return <SetupCard><form className="setup-form" onSubmit={(event) => void submit(event)}>
@@ -74,6 +98,7 @@ export const SetupConfirmRoute = () => {
     <p className="eyebrow">CONFIRM ORGANIZATION</p><h1>組織名を確認</h1>
     <p className="setup-copy">認可したGoogleアカウントをAutomation Inboxと初期Ownerにします。</p>
     <label>組織名<input value={name} onChange={(event) => setName(event.target.value)} autoComplete="organization" required /></label>
+    <PresetSetupChoice presets={presets} selectedId={presetId} onChange={setPresetId} />
     <button className="primary" disabled={busy}>{busy ? '組織DBを作成中…' : 'この名前で組織を作成する'}</button>
   </form></SetupCard>;
 };
@@ -132,6 +157,7 @@ export interface OrganizationRouteData {
   taskRoles: TaskRoleConfiguration;
   recipients: OrganizationRecipient[];
   lineDestinations: OrganizationLineDestination[];
+  presets: PresetSummary[];
 }
 
 export const loadOrganization = async (organizationId: string): Promise<OrganizationRouteData> => {
@@ -139,7 +165,7 @@ export const loadOrganization = async (organizationId: string): Promise<Organiza
   if (state.kind !== 'ready') throw new Response('Organization is not ready', { status: 409 });
   const organization = state.organizations.find((value) => value.organizationId === organizationId);
   if (!organization) throw new Response('Organization was not found', { status: 404 });
-  const [automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, recipients, lineDestinations] = await Promise.all([
+  const [automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, recipients, lineDestinations, presets] = await Promise.all([
     api.currentAutomation(organizationId),
     api.organizationConnections(organizationId),
     api.organizationDashboard(organizationId),
@@ -153,8 +179,9 @@ export const loadOrganization = async (organizationId: string): Promise<Organiza
     api.organizationTaskRoles(organizationId),
     api.organizationRecipients(organizationId),
     api.organizationLineDestinations(organizationId),
+    api.presets(),
   ]);
-  return { state, organization, automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, recipients, lineDestinations };
+  return { state, organization, automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, recipients, lineDestinations, presets };
 };
 
 interface OrganizationContextValue extends OrganizationRouteData {
@@ -194,6 +221,7 @@ interface OrganizationContextValue extends OrganizationRouteData {
   registerLineDestination: (input: RecipientLineDestinationInput) => Promise<void>;
   removeLineDestination: (lineDestinationId: string) => Promise<void>;
   refreshRecipients: () => void;
+  applyPreset: (presetId: string, conflictPolicy?: 'duplicate') => void;
   lineChannelAccessToken: string;
   lineChannelSecret: string;
   aiApiKey: string;
@@ -405,9 +433,20 @@ export const OrganizationLayout = () => {
       await reloadRecipients();
     }, setMemberBusy);
   const refreshRecipients = () => void withError(reloadRecipients, setMemberBusy);
+  const applyPreset = (presetId: string, conflictPolicy?: 'duplicate') => void withError(async () => {
+    await api.applyOrganizationPreset(data.organization.organizationId, presetId, conflictPolicy);
+    const [rules, prompts, agentRules, lists, taskRoles] = await Promise.all([
+      api.organizationRules(data.organization.organizationId),
+      api.organizationPrompts(data.organization.organizationId),
+      api.organizationAgentRules(data.organization.organizationId),
+      api.organizationLists(data.organization.organizationId),
+      api.organizationTaskRoles(data.organization.organizationId),
+    ]);
+    setData((current) => ({ ...current, rules, prompts, agentRules, lists, taskRoles }));
+  }, setRuleBusy);
   const logout = () => void withError(async () => { await api.logout(); navigate('/', { replace: true }); }, setBusy);
   const reauthenticate = () => void withError(async () => { window.location.assign((await api.reauthorizeAutomationInbox(data.organization.organizationId)).authorizationUrl); }, setBusy);
-  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateRule, agentTranscript, proposedActions, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, decideProposedAction, decideProposedActionBatch, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, createRecipient, updateRecipient, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshRecipients, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, aiTestBusy, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, lineSettingsBusy, aiSettingsBusy, ruleBusy, memberBusy, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
+  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateRule, agentTranscript, proposedActions, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, decideProposedAction, decideProposedActionBatch, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, createRecipient, updateRecipient, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshRecipients, applyPreset, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, aiTestBusy, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, lineSettingsBusy, aiSettingsBusy, ruleBusy, memberBusy, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
   return <OrganizationContext.Provider value={value}><Outlet /></OrganizationContext.Provider>;
 };
 
@@ -497,6 +536,8 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     onRegisterLineDestination={value.registerLineDestination}
     onRemoveLineDestination={value.removeLineDestination}
     onRefreshRecipients={value.refreshRecipients}
+    presets={value.presets}
+    onApplyPreset={value.applyPreset}
   />;
 };
 

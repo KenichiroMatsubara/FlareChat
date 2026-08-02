@@ -312,7 +312,7 @@ describe('application entry', () => {
     expect(fixture.control.row<{ count: number }>('SELECT COUNT(*) AS count FROM organization_provisionings')?.count).toBe(0);
   });
 
-  it('confirms the Organization name through the session and activates the provisioned Organization', async () => {
+  it('confirms the Organization name and selected Preset through the session', async () => {
     fixture = createTestApp();
     localOrganization = createTestD1Database();
     (fixture.environment as unknown as Record<string, unknown>).LOCAL_ORGANIZATION_DB_1 = localOrganization.binding;
@@ -360,7 +360,7 @@ describe('application entry', () => {
         'Content-Type': 'application/json',
         Cookie: `mail_session=${sessionCookie}`,
       },
-      body: JSON.stringify({ name: 'New Organization' }),
+      body: JSON.stringify({ name: 'New Organization', presetId: 'membership-organization' }),
     }), fixture.environment);
     const bootstrap = await app.fetch(new Request('https://app.example.com/api/bootstrap', {
       headers: { Cookie: `mail_session=${sessionCookie}` },
@@ -379,6 +379,11 @@ describe('application entry', () => {
         }],
       },
     });
+    expect(localOrganization.rows<{ name: string }>('SELECT name FROM lists ORDER BY name')).toEqual([
+      { name: 'Calendar members' },
+      { name: 'LINE members' },
+      { name: 'Trusted announcement sources' },
+    ]);
   });
 
   it('returns an unassigned identity after an unconfirmed Organization setup expires', async () => {

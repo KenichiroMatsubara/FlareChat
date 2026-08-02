@@ -2,7 +2,7 @@ import { CheckSquare, CircleAlert, LogOut, Mail, Menu, Play, Settings, ShieldChe
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
-import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OperationalTaskRole, OrganizationAgentRule, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationRecipient, OrganizationRecipientInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, ProposedAction, RecipientLineDestinationInput, TaskRoleAssignment } from './api';
+import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OperationalTaskRole, OrganizationAgentRule, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationRecipient, OrganizationRecipientInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, ProposedAction, RecipientLineDestinationInput, TaskRoleAssignment } from './api';
 import { AutomationPage, ConnectionsPage, MailboxTestPage, MembersPage, RulesPage, TasksPage } from './dashboard-pages';
 
 export type Page = 'automation' | 'connections' | 'rules' | 'members' | 'mail-test' | 'tasks';
@@ -115,6 +115,8 @@ export interface DashboardProps {
   onRegisterLineDestination: (input: RecipientLineDestinationInput) => Promise<void>;
   onRemoveLineDestination: (lineDestinationId: string) => Promise<void>;
   onRefreshRecipients: () => void;
+  presets: PresetSummary[];
+  onApplyPreset: (presetId: string, conflictPolicy?: 'duplicate') => void;
 }
 
 export const Dashboard = (props: DashboardProps) => {

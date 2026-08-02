@@ -1,0 +1,76 @@
+{
+  "id": "membership-organization",
+  "name": "Membership organization",
+  "description": "A starting configuration for membership organizations that coordinate schedules, treasury deadlines, and member notices.",
+  "typedLists": [
+    {
+      "key": "trusted-sources",
+      "kind": "source",
+      "name": "Trusted announcement sources",
+      "description": "Source addresses accepted by the sample rules.",
+      "items": []
+    },
+    {
+      "key": "calendar-members",
+      "kind": "recipient",
+      "name": "Calendar members",
+      "description": "Recipients of Scheduled Events and Message Summaries.",
+      "items": []
+    },
+    {
+      "key": "line-members",
+      "kind": "line",
+      "name": "LINE members",
+      "description": "LINE destinations for Scheduled Events and Message Summaries.",
+      "items": []
+    }
+  ],
+  "operationalTaskRoles": [
+    {
+      "key": "schedule",
+      "displayName": "Schedule",
+      "description": "Coordinates registrations, attendance, and event deadlines."
+    },
+    {
+      "key": "treasury",
+      "displayName": "Treasury",
+      "description": "Coordinates payment and reimbursement deadlines."
+    }
+  ],
+  "prompts": [
+    {
+      "key": "membership-assistant",
+      "name": "Membership assistant",
+      "instructions": "Read the Source Message and help the organization coordinate the work it explicitly requests. Use only the destinations permitted by this Agent Rule."
+    }
+  ],
+  "schemaRules": [
+    {
+      "key": "membership-announcements",
+      "name": "Membership announcements",
+      "state": "draft",
+      "sourceListKey": "trusted-sources",
+      "selectionPolicy": {},
+      "routingPolicy": {},
+      "taskRoleKeys": ["schedule", "treasury"],
+      "priority": 0,
+      "messageSummary": {
+        "recipientListKeys": ["calendar-members"],
+        "lineListKeys": ["line-members"]
+      }
+    }
+  ],
+  "agentRules": [
+    {
+      "key": "membership-follow-up",
+      "name": "Membership follow-up",
+      "state": "suspended",
+      "executionMode": "approval",
+      "promptKey": "membership-assistant",
+      "selectionPolicy": {},
+      "recipientListKeys": ["calendar-members"],
+      "lineListKeys": ["line-members"],
+      "priority": 0
+    }
+  ]
+}
