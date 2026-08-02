@@ -81,6 +81,25 @@ describe('Organization provisioning', () => {
     expect(cloudflare).not.toHaveBeenCalled();
   });
 
+  it('copies the selected Preset while creating an Organization', async () => {
+    fixture = await createProvisioningTestApp();
+    const selected = { ...fixture.provisioning, presetId: 'membership-organization' };
+
+    await provisionOrganization(fixture.environment, selected);
+
+    expect(fixture.organization.rows<{ name: string }>('SELECT name FROM lists ORDER BY name')).toEqual([
+      { name: 'Calendar members' },
+      { name: 'LINE members' },
+      { name: 'Trusted announcement sources' },
+    ]);
+    expect(fixture.organization.row<{ name: string }>('SELECT name FROM rules')).toEqual({
+      name: 'Membership announcements',
+    });
+    expect(fixture.organization.row<{ name: string }>('SELECT name FROM agent_rules')).toEqual({
+      name: 'Membership follow-up',
+    });
+  });
+
   it('refreshes the same Automation Inbox credential without erasing a rediscovered database', async () => {
     fixture = await createProvisioningTestApp();
     applyTestMigrations(fixture.organization, 'organization');

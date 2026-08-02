@@ -158,6 +158,21 @@ export interface OrganizationTypedList {
   updatedAt?: string;
 }
 
+export interface PresetSummary {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export interface PresetApplicationSummary {
+  presetId: string;
+  typedLists: number;
+  operationalTaskRoles: number;
+  prompts: number;
+  schemaRules: number;
+  agentRules: number;
+}
+
 export interface DeliveryAuditRecord {
   id: string;
   eventId: string | null;
@@ -276,8 +291,9 @@ export const api = {
     request('/api/entry/google', { method: 'POST', body: JSON.stringify({ intent }) }),
   reauthorizeAutomationInbox: (organizationId: string): Promise<{ authorizationUrl: string }> =>
     request(`/api/organizations/${encodeURIComponent(organizationId)}/automation/reauthorize`, { method: 'POST' }),
-  confirmOnboarding: (name: string): Promise<{ accepted: boolean }> =>
-    request('/api/onboarding/confirm', { method: 'POST', body: JSON.stringify({ name }) }),
+  presets: (): Promise<PresetSummary[]> => request('/api/presets'),
+  confirmOnboarding: (name: string, presetId?: string): Promise<{ accepted: boolean }> =>
+    request('/api/onboarding/confirm', { method: 'POST', body: JSON.stringify({ name, ...(presetId ? { presetId } : {}) }) }),
   retryOnboarding: (): Promise<{ accepted: boolean }> => request('/api/onboarding/retry', { method: 'POST' }),
   cancelOnboarding: (): Promise<{ cancelled: boolean }> => request('/api/onboarding', { method: 'DELETE' }),
   currentAutomation,
@@ -288,6 +304,10 @@ export const api = {
   organizationAgentRuns: (organizationId: string): Promise<AgentRunIndex[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-runs`),
   agentRunTranscript: (organizationId: string, runId: string): Promise<AgentRunTranscript> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-runs/${encodeURIComponent(runId)}/transcript`),
   organizationLists: (organizationId: string): Promise<OrganizationTypedList[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/lists`),
+  applyOrganizationPreset: (organizationId: string, presetId: string, conflictPolicy?: 'duplicate'): Promise<PresetApplicationSummary> => request(`/api/organizations/${encodeURIComponent(organizationId)}/presets/${encodeURIComponent(presetId)}/apply`, {
+    method: 'POST',
+    body: JSON.stringify(conflictPolicy ? { conflictPolicy } : {}),
+  }),
   organizationDeliveryAudit: (organizationId: string): Promise<DeliveryAuditRecord[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/audit/deliveries`),
   organizationTasks: (organizationId: string): Promise<OrganizationTask[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/tasks`),
   organizationRecipients: (organizationId: string): Promise<OrganizationRecipient[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/recipients`),

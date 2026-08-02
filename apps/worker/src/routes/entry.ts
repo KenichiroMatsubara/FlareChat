@@ -64,8 +64,8 @@ entryRoutes.post('/onboarding/confirm', async (context) => {
   const session = await createRequestContext(context.req.raw, context.env).session();
   if (!session) return failure(context, 'Authentication is required.', 401);
   try {
-    const input = await context.req.json<{ name?: string }>();
-    await confirmOrganization(context.env, session.identity_id, input.name ?? '');
+    const input = await context.req.json<{ name?: string; presetId?: string }>();
+    await confirmOrganization(context.env, session.identity_id, input.name ?? '', input.presetId);
     return json(context, { accepted: true });
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Organization setup could not be confirmed.', 409);

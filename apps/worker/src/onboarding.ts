@@ -12,6 +12,7 @@ import {
   provisionOrganization,
   SchemaReleaseInProgressError,
 } from './provisioning';
+import { availablePresets } from './presets';
 import { controlDatabase } from './storage/database';
 import {
   automationInboxClaims,
@@ -92,6 +93,7 @@ const beginProvisioning = async (
   env: Bindings,
   setup: OrganizationSetupRecord,
   name: string,
+  presetId?: string,
 ): Promise<void> => {
   const organizationId = crypto.randomUUID();
   const { bindingName } = await organizationDatabaseIdentity(setup.inboxAddress);
@@ -125,6 +127,7 @@ const beginProvisioning = async (
       historyId: setup.historyId,
       bindingName,
       provisioningKey: crypto.randomUUID(),
+      presetId: presetId ?? null,
       expiresAt: expiresIn(PROVISIONING_WINDOW_MS),
       createdAt,
       updatedAt: createdAt,
@@ -145,6 +148,7 @@ export const confirmOrganization = async (
   env: Bindings,
   ownerIdentityId: string,
   requestedName: string,
+  presetId?: string,
 ): Promise<void> => {
   const setup = await controlDatabase(env.CONTROL_DB).select().from(organizationSetups)
     .where(eq(organizationSetups.ownerIdentityId, ownerIdentityId)).get();
@@ -155,7 +159,8 @@ export const confirmOrganization = async (
   }
   const name = requestedName.trim() || setup.name;
   if (!name) throw new Error('Organization name is required.');
-  await beginProvisioning(env, setup, name);
+  if (presetId && !availablePresets().some((preset) => preset.id === presetId)) throw new Error('Preset was not found.');
+  await beginProvisioning(env, setup, name, presetId);
 };
 
 export const retryOrganizationProvisioning = async (

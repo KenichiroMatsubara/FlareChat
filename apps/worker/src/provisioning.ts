@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { createOrganizationKey, decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
 import { fleetMigration } from './fleet-migration';
 import { provisionOrganizationDatabase } from './organization-db';
+import { applyPreset } from './presets';
 import { controlDatabase, organizationDatabase } from './storage/database';
 import { members, organizationKeys, organizationProvisionings, organizations } from './storage/control-schema';
 import type { OrganizationProvisioningRecord } from './storage/control-schema';
@@ -52,6 +53,12 @@ export const provisionOrganization = async (
   }).where(eq(organizationProvisionings.organizationId, provisioning.organizationId)).run();
   await recordPhase(env, provisioning.organizationId, 'applying_schema');
   await provisioned.initialize();
+  const organization = organizationDatabase(provisioned.database);
+  if (provisioning.presetId) {
+    await applyPreset(organization, provisioning.organizationId, provisioning.presetId, {
+      applicationKey: provisioning.provisioningKey,
+    });
+  }
   const keyRecord = await control.select({
     masterKeyVersion: organizationKeys.masterKeyVersion,
     wrappedKeyEnvelope: organizationKeys.wrappedKeyEnvelope,
@@ -73,7 +80,7 @@ export const provisionOrganization = async (
   );
   const timestamp = new Date().toISOString();
   await recordPhase(env, provisioning.organizationId, 'storing_credentials');
-  await organizationDatabase(provisioned.database).insert(googleConnections).values({
+  await organization.insert(googleConnections).values({
     id: crypto.randomUUID(),
     kind: 'automation_inbox',
     googleSubject: provisioning.googleSubject,

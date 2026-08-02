@@ -19,6 +19,7 @@ import type { CipherEnvelope } from './cryptography';
 import { openAiChatCompletionsUrl, type EventDetails, type MailExtraction, type TaskDetails } from './event-details';
 import { approveProposedAction, expireProposedActions, proposedActionsForRun, readAgentRunTranscript, rejectProposedAction } from './agent-runs';
 import { createTaskWorkflow } from './tasks';
+import { applyPreset, availablePresets, PresetConfigurationConflictError } from './presets';
 import { controlDatabase as drizzleControlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
 import { createOrganizationStore } from './storage/organization-store';
 import { identities, members, organizations, recoveryRequests } from './storage/control-schema';
@@ -111,6 +112,35 @@ const activeOrganizationDatabase = (env: Bindings, organizationId: string) =>
 
 const mailTestContext = (organizationId: string): string => `mail-test-preview:${organizationId}`;
 const MAIL_TEST_WINDOW_MS = 15 * 60 * 1_000;
+
+app.get('/api/presets', async (context) => {
+  const session = await createRequestContext(context.req.raw, context.env).session();
+  if (!session) return failure(context, 'Authentication is required.', 401);
+  return json(context, availablePresets().map(({ id, name, description }) => ({ id, name, description })));
+});
+
+app.post('/api/organizations/:organizationId/presets/:presetId/apply', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Presets can only be applied by an Owner or Admin.', 403);
+    if (!access.database) return failure(context, 'Organization database is not available.', 503);
+    const input = await context.req.json<{ conflictPolicy?: unknown }>();
+    if (input.conflictPolicy !== undefined && input.conflictPolicy !== 'duplicate') return failure(context, 'Unsupported Preset conflict policy.');
+    const applied = await applyPreset(
+      drizzleOrganizationDatabase(access.database),
+      access.organization.id,
+      context.req.param('presetId'),
+      input.conflictPolicy === 'duplicate' ? { conflictPolicy: 'duplicate' } : {},
+    );
+    return json(context, applied, 201);
+  } catch (error) {
+    if (error instanceof PresetConfigurationConflictError) {
+      return context.json({ error: { code: 'preset_configuration_conflict', message: error.message } }, 409);
+    }
+    const message = error instanceof Error ? error.message : 'Preset could not be applied.';
+    return failure(context, message, message === 'Preset was not found.' ? 404 : 409);
+  }
+});
 
 interface MailTestConfirmation {
   messageId: string;

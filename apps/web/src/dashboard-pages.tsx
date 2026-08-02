@@ -264,6 +264,13 @@ export const ConnectionsPage = (props: DashboardProps) => {
   );
   const aiReady = Boolean(props.aiBaseUrl.trim() && props.aiModel.trim() && (props.aiApiKey || hasAiApi));
   const webhookUrl = props.connections?.line.webhookUrl ?? '';
+  const hasConfiguration = Boolean(
+    props.organizationLists.length
+    || props.organizationRules.length
+    || props.taskRoles.length
+    || props.prompts.length
+    || props.agentRules.length,
+  );
   const copyWebhookUrl = (): void => {
     if (!webhookUrl) return;
     void navigator.clipboard.writeText(webhookUrl).then(() => setWebhookCopied(true));
@@ -291,7 +298,30 @@ export const ConnectionsPage = (props: DashboardProps) => {
         </section>
       </div>
       <section className="test-card"><div><p>AI CONNECTION TEST</p><h2>OpenAI 互換 API をテスト</h2><span>保存済みの接続設定を使って、任意の質問を送信します。</span></div><textarea value={props.aiTestPrompt} onChange={(event) => props.onAiTestPromptChange(event.target.value)} maxLength={10_000} aria-label="APIへの質問" /><button className="secondary" onClick={props.onTestAi} disabled={props.aiTestBusy || !hasAiApi}>{props.aiTestBusy ? '問い合わせ中…' : 'API に質問する'}</button>{props.aiTestResult && <pre>{props.aiTestResult}</pre>}</section>
+      <PresetSettings
+        presets={props.presets}
+        hasConfiguration={hasConfiguration}
+        busy={props.ruleBusy}
+        onApply={props.onApplyPreset}
+      />
     </>}
+  </section>;
+};
+
+export const PresetSettings = ({ presets, hasConfiguration, busy, onApply }: {
+  presets: DashboardProps['presets'];
+  hasConfiguration: boolean;
+  busy: boolean;
+  onApply: DashboardProps['onApplyPreset'];
+}) => {
+  const [confirmed, setConfirmed] = useState(false);
+  return <section className="test-card preset-settings">
+    <div><p>PRESET</p><h2>Presetをコピー</h2><span>コピー後の構成は製品更新とリンクされず、このOrganizationだけで編集できます。</span></div>
+    {presets.map((preset) => <article key={preset.id}>
+      <strong>{preset.name}</strong><p>{preset.description}</p>
+      {hasConfiguration && <label><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />既存の構成に別のコピーを追加する</label>}
+      <button type="button" className="secondary" disabled={busy || (hasConfiguration && !confirmed)} onClick={() => onApply(preset.id, hasConfiguration ? 'duplicate' : undefined)}>Presetを適用</button>
+    </article>)}
   </section>;
 };
 

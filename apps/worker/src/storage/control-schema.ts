@@ -79,6 +79,7 @@ export const organizationProvisionings = sqliteTable('organization_provisionings
   databaseId: text('database_id'),
   bindingName: text('binding_name').notNull(),
   provisioningKey: text('provisioning_key').notNull().unique(),
+  presetId: text('preset_id'),
   errorMessage: text('error_message'),
   expiresAt: text('expires_at').notNull(),
   createdAt: text('created_at').notNull(),
