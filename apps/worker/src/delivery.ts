@@ -1,6 +1,11 @@
+import type { GoogleAutomationPort } from './automation/providers';
+import { organizationDatabase } from './storage/database';
+import { deliveries } from './storage/organization-schema';
+
 export interface DeliveryAttempt {
   id: string;
-  eventId: string;
+  eventId: string | null;
+  sourceMessageId: string | null;
   destination: string;
   channel: 'calendar' | 'line' | 'email' | 'drive';
   outcome: 'succeeded' | 'failed' | 'pending';
@@ -11,11 +16,74 @@ export interface DeliveryAttempt {
 /** Preserves one external effect outcome per destination instead of collapsing a partial batch. */
 export const recordDeliveryAttempt = async (
   database: D1Database,
-  input: Omit<DeliveryAttempt, 'id' | 'createdAt'>,
+  input: Omit<DeliveryAttempt, 'id' | 'createdAt' | 'eventId' | 'sourceMessageId'> & {
+    eventId?: string | null;
+    sourceMessageId?: string | null;
+  },
 ): Promise<DeliveryAttempt> => {
-  const record: DeliveryAttempt = { id: crypto.randomUUID(), ...input, createdAt: new Date().toISOString() };
+  const record: DeliveryAttempt = {
+    id: crypto.randomUUID(),
+    eventId: input.eventId ?? null,
+    sourceMessageId: input.sourceMessageId ?? null,
+    destination: input.destination,
+    channel: input.channel,
+    outcome: input.outcome,
+    externalId: input.externalId,
+    createdAt: new Date().toISOString(),
+  };
   await organizationDatabase(database).insert(deliveries).values(record).run();
   return record;
+};
+
+const base64 = (value: string): string => {
+  const bytes = new TextEncoder().encode(value);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+};
+
+const base64Url = (value: string): string =>
+  base64(value).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '');
+
+/** Sends one Source Message notice through the Automation Inbox and records the effect independently of Events. */
+export const deliverSourceMessageEmail = async (input: {
+  database: D1Database;
+  google: GoogleAutomationPort;
+  accessToken: string;
+  sourceMessageId: string;
+  destination: string;
+  subject: string;
+  body: string;
+}): Promise<DeliveryAttempt> => {
+  let outcome: DeliveryAttempt['outcome'] = 'failed';
+  let externalId: string | null = null;
+  try {
+    const raw = base64Url([
+      `To: ${input.destination}`,
+      `Subject: =?UTF-8?B?${base64(input.subject)}?=`,
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset=UTF-8',
+      'Content-Transfer-Encoding: 8bit',
+      '',
+      input.body,
+    ].join('\r\n'));
+    const sent = await input.google.request<{ id?: string }>(
+      input.accessToken,
+      'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
+      { method: 'POST', body: JSON.stringify({ raw }) },
+    );
+    outcome = 'succeeded';
+    externalId = sent.id ?? null;
+  } catch {
+    // The failed intended effect remains visible and independently retryable.
+  }
+  return recordDeliveryAttempt(input.database, {
+    sourceMessageId: input.sourceMessageId,
+    destination: input.destination,
+    channel: 'email',
+    outcome,
+    externalId,
+  });
 };
 
 /** Invites one snapshotted recipient and always leaves an independent Delivery Record. */
@@ -63,7 +131,8 @@ export const deliverCalendarInvitation = async (input: {
 export const deliverLineBatch = async (input: {
   database: D1Database;
   accessToken: string;
-  eventId: string;
+  eventId?: string | null;
+  sourceMessageId?: string | null;
   destinationId: string;
   messages: string[];
 }): Promise<DeliveryAttempt[]> => {
@@ -83,12 +152,11 @@ export const deliverLineBatch = async (input: {
     // Every failed intended message still receives its own retryable record below.
   }
   return Promise.all(input.messages.map(() => recordDeliveryAttempt(input.database, {
-    eventId: input.eventId,
+    ...(input.eventId === undefined ? {} : { eventId: input.eventId }),
+    ...(input.sourceMessageId === undefined ? {} : { sourceMessageId: input.sourceMessageId }),
     destination: input.destinationId,
     channel: 'line',
     outcome,
     externalId,
   })));
 };
-import { organizationDatabase } from './storage/database';
-import { deliveries } from './storage/organization-schema';

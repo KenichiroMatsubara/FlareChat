@@ -59,6 +59,12 @@ describe('canonical D1 schemas', () => {
       '0004_manual_line_destination_source.sql',
       '0005_optional_recipient_email.sql',
       '0006_operational_task_roles.sql',
+      '0007_source_message_deliveries.sql',
+      '0008_rule_permitted_lists.sql',
+      '0009_prompts.sql',
+      '0010_agent_rules.sql',
+      '0011_agent_runs.sql',
+      '0012_event_agent_owners.sql',
     ]);
   });
 
@@ -95,6 +101,24 @@ describe('canonical D1 schemas', () => {
     expect(tableNames('organization')).toContain('google_connections');
     expect(tableNames('organization')).not.toContain('schema_migrations');
     expect(migrationSql('organization')).not.toMatch(/schema_migrations|kind.+google.+line.+ai/u);
+  });
+
+  it('constrains every Scheduled Event to exactly one Schema or Agent Owning Rule', () => {
+    const database = createMigratedTestD1('organization');
+    try {
+      database.execute("INSERT INTO rules (id, organization_id, name, status, created_at, updated_at) VALUES ('schema-rule', 'organization-1', 'Schema', 'active', '2026-08-01', '2026-08-01')");
+      database.execute("INSERT INTO prompts (id, organization_id, name, instructions, created_at, updated_at) VALUES ('prompt-1', 'organization-1', 'Prompt', 'Read.', '2026-08-01', '2026-08-01')");
+      database.execute("INSERT INTO agent_rules (id, organization_id, name, status, prompt_id, created_at, updated_at) VALUES ('agent-rule', 'organization-1', 'Agent', 'active', 'prompt-1', '2026-08-01', '2026-08-01')");
+      const event = (id: string, ruleId: string, agentRuleId: string): string =>
+        `INSERT INTO events (id, organization_id, rule_id, agent_rule_id, title, starts_at, ends_at, status, created_at, updated_at) VALUES ('${id}', 'organization-1', ${ruleId}, ${agentRuleId}, 'Event', '2026-09-01', '2026-09-02', 'scheduled', '2026-08-01', '2026-08-01')`;
+
+      expect(() => database.execute(event('neither', 'NULL', 'NULL'))).toThrow();
+      expect(() => database.execute(event('both', "'schema-rule'", "'agent-rule'"))).toThrow();
+      expect(() => database.execute(event('schema-owned', "'schema-rule'", 'NULL'))).not.toThrow();
+      expect(() => database.execute(event('agent-owned', 'NULL', "'agent-rule'"))).not.toThrow();
+    } finally {
+      database.close();
+    }
   });
 
   it('rejects the removed generic Google connection shape at the type seam', () => {

@@ -69,6 +69,19 @@ describe('OpenAI-compatible Event Details validation', () => {
     expect(validatedEventDetails('not json')).toBeNull();
   });
 
+  it('retains a Message Summary when extraction produces no Event Candidate', () => {
+    expect(validatedMailExtraction(JSON.stringify({
+      summary: '次年度の活動方針を共有するお知らせです。',
+      events: [],
+      tasks: [],
+    }))).toEqual({
+      summary: '次年度の活動方針を共有するお知らせです。',
+      events: [],
+      tasks: [],
+      warnings: [],
+    });
+  });
+
   it('uses a bounded OpenAI-compatible request and accepts only a validated JSON candidate', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ title: '例会', startsAt: '2026-08-03T19:00:00+09:00', endsAt: '2026-08-03T21:00:00+09:00', timeZone: 'Asia/Tokyo', location: '', description: '月例会' }) } }] }), { status: 200 }));
 

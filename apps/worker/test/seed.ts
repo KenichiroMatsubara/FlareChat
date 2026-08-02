@@ -38,12 +38,25 @@ export const seedScheduledEvent = (
     status?: 'draft' | 'scheduled' | 'cancelled' | 'exception';
   },
 ): void => {
+  const organizationId = input.organizationId ?? 'organization-1';
+  const ruleId = `seed-owning-rule-${organizationId}`;
+  organization.execute(
+    `INSERT OR IGNORE INTO rules
+      (id, organization_id, name, status, created_at, updated_at)
+     VALUES (?, ?, ?, 'archived', ?, ?)`,
+    ruleId,
+    organizationId,
+    'Seed Owning Rule',
+    CREATED_AT,
+    CREATED_AT,
+  );
   organization.execute(
     `INSERT INTO events
-      (id, organization_id, title, starts_at, ends_at, status, attendance_deadline, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, organization_id, rule_id, title, starts_at, ends_at, status, attendance_deadline, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     input.id,
-    input.organizationId ?? 'organization-1',
+    organizationId,
+    ruleId,
     input.title ?? input.id,
     input.startsAt ?? '2099-01-01T10:00:00.000Z',
     input.endsAt ?? '2099-01-01T11:00:00.000Z',

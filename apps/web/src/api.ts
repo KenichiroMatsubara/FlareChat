@@ -71,6 +71,8 @@ export interface OrganizationRule {
   selectionPolicy: Record<string, unknown>;
   routingPolicy: Record<string, unknown>;
   taskRoleIds: string[];
+  permittedRecipientListIds: string[];
+  permittedLineListIds: string[];
   priority: number;
   createdAt: string;
   updatedAt: string;
@@ -82,7 +84,66 @@ export interface OrganizationRuleInput {
   selectionPolicy?: Record<string, unknown>;
   routingPolicy?: Record<string, unknown>;
   taskRoleIds?: string[];
+  permittedRecipientListIds?: string[];
+  permittedLineListIds?: string[];
   priority?: number;
+}
+
+export interface OrganizationPrompt {
+  id: string;
+  organizationId: string;
+  name: string;
+  instructions: string;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrganizationAgentRule {
+  id: string;
+  organizationId: string;
+  name: string;
+  state: 'active' | 'suspended' | 'archived';
+  promptId: string;
+  selectionPolicy: Record<string, unknown>;
+  priority: number;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentRunIndex {
+  id: string;
+  agentRuleId: string;
+  agentRuleRevision: number;
+  promptId: string;
+  promptRevision: number;
+  sourceMessageId: string;
+  model: string;
+  startedAt: string;
+  completedAt: string;
+  outcome: 'succeeded' | 'failed';
+  toolCallCount: number;
+  tokens: number;
+  expiresAt: string;
+}
+
+export interface AgentRunTranscript {
+  runId: string;
+  source: { subject: string; body: string; attachments: Array<{ filename: string; text: string }> };
+  messages: Array<{ role: string; content: string }>;
+  finalOutput: string;
+  error: string | null;
+}
+
+export interface OrganizationTypedList {
+  id: string;
+  organizationId: string;
+  kind: 'source' | 'recipient' | 'line';
+  name: string;
+  description: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface DeliveryAuditRecord {
@@ -210,6 +271,11 @@ export const api = {
   currentAutomation,
   organizationDashboard: (organizationId: string): Promise<OrganizationDashboard> => request(`/api/organizations/${encodeURIComponent(organizationId)}/dashboard`),
   organizationRules: (organizationId: string): Promise<OrganizationRule[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules`),
+  organizationPrompts: (organizationId: string): Promise<OrganizationPrompt[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/prompts`),
+  organizationAgentRules: (organizationId: string): Promise<OrganizationAgentRule[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-rules`),
+  organizationAgentRuns: (organizationId: string): Promise<AgentRunIndex[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-runs`),
+  agentRunTranscript: (organizationId: string, runId: string): Promise<AgentRunTranscript> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-runs/${encodeURIComponent(runId)}/transcript`),
+  organizationLists: (organizationId: string): Promise<OrganizationTypedList[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/lists`),
   organizationDeliveryAudit: (organizationId: string): Promise<DeliveryAuditRecord[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/audit/deliveries`),
   organizationTasks: (organizationId: string): Promise<OrganizationTask[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/tasks`),
   organizationRecipients: (organizationId: string): Promise<OrganizationRecipient[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/recipients`),
@@ -264,6 +330,15 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(input),
   }),
+  updateOrganizationRule: (organizationId: string, ruleId: string, input: Pick<OrganizationRuleInput, 'permittedRecipientListIds' | 'permittedLineListIds'>): Promise<Partial<OrganizationRule> & { id: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules/${encodeURIComponent(ruleId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  }),
+  createOrganizationPrompt: (organizationId: string, input: { name: string; instructions: string }): Promise<OrganizationPrompt> => request(`/api/organizations/${encodeURIComponent(organizationId)}/prompts`, { method: 'POST', body: JSON.stringify(input) }),
+  updateOrganizationPrompt: (organizationId: string, promptId: string, input: { name?: string; instructions?: string }): Promise<Partial<OrganizationPrompt> & { id: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/prompts/${encodeURIComponent(promptId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  removeOrganizationPrompt: (organizationId: string, promptId: string): Promise<{ id: string; removed: boolean }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/prompts/${encodeURIComponent(promptId)}`, { method: 'DELETE' }),
+  createOrganizationAgentRule: (organizationId: string, input: { name: string; promptId: string; state: 'active' | 'suspended'; selectionPolicy: Record<string, unknown>; priority?: number }): Promise<OrganizationAgentRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-rules`, { method: 'POST', body: JSON.stringify(input) }),
+  updateOrganizationAgentRule: (organizationId: string, agentRuleId: string, input: { state?: 'active' | 'suspended' | 'archived'; promptId?: string; selectionPolicy?: Record<string, unknown> }): Promise<OrganizationAgentRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-rules/${encodeURIComponent(agentRuleId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   organizationConnections: (organizationId: string): Promise<OrganizationConnections> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections`),
   saveOrganizationLineConnection: (organizationId: string, input: {
     channelAccessToken?: string | undefined;

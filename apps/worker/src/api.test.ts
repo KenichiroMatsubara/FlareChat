@@ -293,6 +293,160 @@ describe('Organization management', () => {
     expect(listedText).not.toContain(secondId);
   });
 
+  it('creates an Automation Rule with permitted Calendar Recipient and LINE Destination List sets', async () => {
+    fixture = createTestApp();
+    const recipientOne = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', {
+      kind: 'recipient', name: 'Members',
+    }), fixture.environment);
+    const recipientTwo = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', {
+      kind: 'recipient', name: 'Guests',
+    }), fixture.environment);
+    const lineOne = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', {
+      kind: 'line', name: 'Member LINE',
+    }), fixture.environment);
+    const lineTwo = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', {
+      kind: 'line', name: 'Guest LINE',
+    }), fixture.environment);
+    const recipientListIds = await Promise.all([recipientOne, recipientTwo].map(async (response) =>
+      (await response.json() as { data: { id: string } }).data.id));
+    const lineListIds = await Promise.all([lineOne, lineTwo].map(async (response) =>
+      (await response.json() as { data: { id: string } }).data.id));
+
+    const created = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/rules', {
+      name: 'Permitted destinations',
+      permittedRecipientListIds: [...recipientListIds, recipientListIds[0]],
+      permittedLineListIds: [...lineListIds, lineListIds[0]],
+    }), fixture.environment);
+    const listed = await app.fetch(
+      fixture.request('/api/organizations/organization-1/rules'),
+      fixture.environment,
+    );
+
+    expect(created.status).toBe(201);
+    const listedBody = await listed.json() as { data: Array<{
+      name: string;
+      permittedRecipientListIds: string[];
+      permittedLineListIds: string[];
+    }> };
+    expect(listedBody.data[0]).toMatchObject({
+      name: 'Permitted destinations',
+      permittedRecipientListIds: expect.arrayContaining(recipientListIds),
+      permittedLineListIds: expect.arrayContaining(lineListIds),
+    });
+    expect(listedBody.data[0]?.permittedRecipientListIds).toHaveLength(2);
+    expect(listedBody.data[0]?.permittedLineListIds).toHaveLength(2);
+  });
+
+  it('adds and removes permitted destination lists through the Automation Rule interface', async () => {
+    fixture = createTestApp();
+    const firstList = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', {
+      kind: 'recipient', name: 'Current readers',
+    }), fixture.environment);
+    const secondList = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', {
+      kind: 'recipient', name: 'New readers',
+    }), fixture.environment);
+    const firstListId = (await firstList.json() as { data: { id: string } }).data.id;
+    const secondListId = (await secondList.json() as { data: { id: string } }).data.id;
+    const created = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/rules', {
+      name: 'Editable blast radius', permittedRecipientListIds: [firstListId],
+    }), fixture.environment);
+    const ruleId = (await created.json() as { data: { id: string } }).data.id;
+
+    const updated = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/rules/${ruleId}`,
+      { permittedRecipientListIds: [secondListId], permittedLineListIds: [] },
+      'PATCH',
+    ), fixture.environment);
+    const listed = await app.fetch(
+      fixture.request('/api/organizations/organization-1/rules'),
+      fixture.environment,
+    );
+
+    expect(updated.status).toBe(200);
+    await expect(listed.json()).resolves.toMatchObject({ data: [{
+      id: ruleId,
+      permittedRecipientListIds: [secondListId],
+      permittedLineListIds: [],
+    }] });
+  });
+
+  it('creates, revises, lists, and deletes an Organization Prompt', async () => {
+    fixture = createTestApp();
+    const created = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/prompts',
+      { name: 'Event analyst', instructions: 'Read the Source Message.' },
+    ), fixture.environment);
+    const createdBody = await created.json() as { data: { id: string } };
+    const revised = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/prompts/${createdBody.data.id}`,
+      { instructions: 'Read the Source Message and report deadlines.' },
+      'PATCH',
+    ), fixture.environment);
+    const listed = await app.fetch(
+      fixture.request('/api/organizations/organization-1/prompts'),
+      fixture.environment,
+    );
+    const removed = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/prompts/${createdBody.data.id}`,
+      {},
+      'DELETE',
+    ), fixture.environment);
+    const afterRemoval = await app.fetch(
+      fixture.request('/api/organizations/organization-1/prompts'),
+      fixture.environment,
+    );
+
+    expect([created.status, revised.status, removed.status]).toEqual([201, 200, 200]);
+    await expect(revised.json()).resolves.toMatchObject({
+      data: { id: createdBody.data.id, revision: 2 },
+    });
+    await expect(listed.json()).resolves.toMatchObject({ data: [{
+      id: createdBody.data.id,
+      name: 'Event analyst',
+      instructions: 'Read the Source Message and report deadlines.',
+      revision: 2,
+    }] });
+    await expect(afterRemoval.json()).resolves.toEqual({ data: [] });
+  });
+
+  it('creates an Agent Rule for a Prompt and exposes only its three lifecycle states', async () => {
+    fixture = createTestApp();
+    const prompt = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/prompts',
+      { name: 'Event analyst', instructions: 'Read the Source Message.' },
+    ), fixture.environment);
+    const promptId = (await prompt.json() as { data: { id: string } }).data.id;
+    const rejectedDraft = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/agent-rules',
+      { name: 'Draft analyst', promptId, state: 'draft', selectionPolicy: {} },
+    ), fixture.environment);
+    const created = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/agent-rules',
+      { name: 'Trusted analyst', promptId, state: 'active', selectionPolicy: { domain: 'example.com' } },
+    ), fixture.environment);
+    const agentRuleId = (await created.json() as { data: { id: string } }).data.id;
+    const suspended = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/agent-rules/${agentRuleId}`,
+      { state: 'suspended' },
+      'PATCH',
+    ), fixture.environment);
+    const listed = await app.fetch(
+      fixture.request('/api/organizations/organization-1/agent-rules'),
+      fixture.environment,
+    );
+
+    expect(rejectedDraft.status).toBe(400);
+    expect([created.status, suspended.status]).toEqual([201, 200]);
+    await expect(listed.json()).resolves.toMatchObject({ data: [{
+      id: agentRuleId,
+      name: 'Trusted analyst',
+      promptId,
+      state: 'suspended',
+      selectionPolicy: { domain: 'example.com' },
+      revision: 1,
+    }] });
+  });
+
   it('creates, changes, imports, reads, and snapshots Recipient Profiles', async () => {
     fixture = createTestApp('operator');
     seedScheduledEvent(fixture.organization, { id: 'event-1' });

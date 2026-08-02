@@ -1,4 +1,4 @@
-import { convertAttachmentsForEventExtraction, type MarkdownConverter } from './attachment-conversion';
+import { convertAttachmentsForEventExtraction, type ConvertedAttachment, type MarkdownConverter } from './attachment-conversion';
 import type { AttachmentContent } from './normalization';
 
 export interface EventDetails {
@@ -72,8 +72,9 @@ interface AiResponseSchema {
 const aiAttachmentParts = async (
   attachments: AiAttachment[],
   markdown?: MarkdownConverter,
+  convertedAttachments?: ConvertedAttachment[],
 ): Promise<string[]> =>
-  (await convertAttachmentsForEventExtraction(attachments, markdown)).map((attachment) => {
+  (convertedAttachments ?? await convertAttachmentsForEventExtraction(attachments, markdown)).map((attachment) => {
     const filename = `Attachment filename: ${attachment.filename}`;
     return `${filename}\nOriginal MIME type: ${attachment.originalMimeType}\n${attachment.text}`;
   });
@@ -135,12 +136,12 @@ export const validatedMailExtraction = (
     const events = value.events.map((event) => validatedEventDetails(JSON.stringify(event)));
     const allowedRoleIds = new Set(taskRoles.map((role) => role.id));
     const tasks = value.tasks.map((task) => validatedTaskDetails(task, allowedRoleIds));
-    if (!events.length || events.some((event) => !event) || tasks.some((task) => !task)) return null;
+    if (events.some((event) => !event) || tasks.some((task) => !task)) return null;
     const validatedEvents = events as EventDetails[];
     const summary = typeof value.summary === 'string' && value.summary.trim()
       ? value.summary.trim()
-      : validatedEvents.map((event) => event.description.trim()).filter(Boolean).join(' ') || validatedEvents[0]!.title;
-    if (summary.length > 2_000) return null;
+      : validatedEvents.map((event) => event.description.trim()).filter(Boolean).join(' ') || validatedEvents[0]?.title;
+    if (!summary || summary.length > 2_000) return null;
     return {
       summary,
       events: validatedEvents,
@@ -157,6 +158,7 @@ export const buildAiEventDetailsRequest = async (input: {
   source: string;
   attachments?: AiAttachment[];
   markdown?: MarkdownConverter;
+  convertedAttachments?: ConvertedAttachment[];
   taskRoles?: TaskRoleDescription[];
 }): Promise<AiEventDetailsRequest> => {
   const taskRoles = [...(input.taskRoles ?? []), {
@@ -179,7 +181,7 @@ Allowed Operational Task Roles:
 ${roleGuidance}
 
 Use ISO 8601 date-times with the stated time zone for events. Keep titles and descriptions concise and factual.`;
-  const attachments = await aiAttachmentParts(input.attachments ?? [], input.markdown);
+  const attachments = await aiAttachmentParts(input.attachments ?? [], input.markdown, input.convertedAttachments);
   return {
     messages: [
       { role: 'system', content: instructions },
@@ -243,6 +245,7 @@ export const extractAiEventDetails = async (input: {
   model: string;
   source: string;
   attachments?: AiAttachment[];
+  convertedAttachments?: ConvertedAttachment[];
   markdown?: MarkdownConverter;
   taskRoles?: TaskRoleDescription[];
   fetch?: typeof fetch;
