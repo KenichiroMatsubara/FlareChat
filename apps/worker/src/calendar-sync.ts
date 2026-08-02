@@ -11,7 +11,7 @@ export const recordCalendarDeletion = async (database: D1Database, input: { even
       id: crypto.randomUUID(),
       sourceMessageId: input.sourceMessageId,
       code: 'calendar_event_deleted',
-      message: 'The organizer deleted this Calendar event; it was not recreated.',
+      message: 'The Automation Inbox owner deleted this Calendar event; it was not recreated.',
       state: 'open',
       createdAt: input.now,
     }),

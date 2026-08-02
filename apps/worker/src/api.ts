@@ -17,12 +17,13 @@ import { typedListRoutes } from './routes/typed-lists';
 import type { Bindings, ConnectionRow, SessionRow } from './types';
 import type { CipherEnvelope } from './cryptography';
 import { openAiChatCompletionsUrl, type EventDetails, type MailExtraction, type TaskDetails } from './event-details';
-import { createTaskWorkflow, type OperationalTaskRole } from './tasks';
+import { createTaskWorkflow } from './tasks';
 import { controlDatabase as drizzleControlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
 import { createOrganizationStore } from './storage/organization-store';
 import { identities, members, organizations, recoveryRequests } from './storage/control-schema';
 import {
   attendance,
+  automationWarnings,
   connections as organizationConnections,
   deliveries as organizationDeliveries,
   eventOverrides,
@@ -39,6 +40,7 @@ import {
   recipientProfiles,
   ruleRevisions,
   rules as organizationRules,
+  operationalTaskRoles,
   taskRoleAssignments,
 } from './storage/organization-schema';
 
@@ -124,7 +126,7 @@ const isTaskDetails = (value: unknown): value is TaskDetails => {
   const task = value as Partial<TaskDetails>;
   return typeof task.title === 'string' && Boolean(task.title.trim())
     && typeof task.deadline === 'string' && /^\d{4}-\d{2}-\d{2}$/u.test(task.deadline)
-    && (task.assigneeRole === 'organizer' || task.assigneeRole === 'treasurer')
+    && typeof task.assigneeRoleId === 'string' && Boolean(task.assigneeRoleId.trim())
     && typeof task.description === 'string' && Boolean(task.description.trim());
 };
 
@@ -133,7 +135,8 @@ const isMailExtraction = (value: unknown): value is MailExtraction => {
   const extraction = value as Partial<MailExtraction>;
   return typeof extraction.summary === 'string' && Boolean(extraction.summary.trim()) && extraction.summary.length <= 2_000
     && Array.isArray(extraction.events) && extraction.events.length > 0 && extraction.events.every(isEventDetails)
-    && Array.isArray(extraction.tasks) && extraction.tasks.every(isTaskDetails);
+    && Array.isArray(extraction.tasks) && extraction.tasks.every(isTaskDetails)
+    && Array.isArray(extraction.warnings);
 };
 
 const connectionContext = (organizationId: string, kind: 'line' | 'ai'): string => `organization-connection:${organizationId}:${kind}`;
@@ -377,7 +380,7 @@ app.post('/api/organizations/:organizationId/mail-tests/:messageId/ai-request', 
     const messageId = context.req.param('messageId');
     if (!/^[A-Za-z0-9_-]{1,200}$/u.test(messageId)) return failure(context, 'Gmail メッセージ ID が不正です。');
     const source = await createAutomation(context.env).mailboxTest.readSource({ organizationId, database: access.database, messageId });
-    const request = await createAutomation(context.env).mailboxTest.previewAiRequest({ source: source.source, attachments: source.attachments });
+    const request = await createAutomation(context.env).mailboxTest.previewAiRequest({ database: access.database, source: source.source, attachments: source.attachments });
     return json(context, { id: source.id, subject: source.subject, sender: source.sender, request });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'AI 送信内容の準備に失敗しました。';
@@ -543,6 +546,7 @@ app.get('/api/organizations/:organizationId/rules', async (context) => {
       state: row.status,
       selectionPolicy: JSON.parse(row.selectionPolicy) as Record<string, unknown>,
       routingPolicy: JSON.parse(row.routingPolicy) as Record<string, unknown>,
+      taskRoleIds: JSON.parse(row.taskRoleIds) as string[],
       priority: row.priority,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
@@ -557,17 +561,24 @@ app.post('/api/organizations/:organizationId/rules', async (context) => {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
     if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Rules can only be changed by an Owner or Admin.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
-    const input = await context.req.json<{ name?: string; state?: string; selectionPolicy?: Record<string, unknown>; routingPolicy?: Record<string, unknown>; priority?: number }>();
+    const input = await context.req.json<{ name?: string; state?: string; selectionPolicy?: Record<string, unknown>; routingPolicy?: Record<string, unknown>; taskRoleIds?: unknown; priority?: number }>();
     const name = input.name?.trim();
     const state = (input.state ?? 'draft') as 'draft' | 'active' | 'suspended' | 'archived';
     if (!name) return failure(context, 'Rule name is required.');
     if (!['draft', 'active', 'suspended', 'archived'].includes(state)) return failure(context, 'Unsupported Rule State.');
+    if (input.taskRoleIds !== undefined && (!Array.isArray(input.taskRoleIds) || input.taskRoleIds.some((id) => typeof id !== 'string' || !id.trim()))) return failure(context, 'Task role IDs must be an array of stable identifiers.');
     const id = crypto.randomUUID();
     const timestamp = now();
     const selectionPolicy = JSON.stringify(input.selectionPolicy ?? {});
     const routingPolicy = JSON.stringify(input.routingPolicy ?? {});
+    const taskRoleIds = [...new Set((input.taskRoleIds ?? []) as string[])];
     const priority = Number.isInteger(input.priority) ? input.priority : 0;
     const database = drizzleOrganizationDatabase(access.database);
+    if (taskRoleIds.length) {
+      const existingRoles = await database.select({ id: operationalTaskRoles.id }).from(operationalTaskRoles)
+        .where(inArray(operationalTaskRoles.id, taskRoleIds)).all();
+      if (existingRoles.length !== taskRoleIds.length) return failure(context, 'Every Task role selected by a Rule must belong to the Organization.', 409);
+    }
     await database.batch([
       database.insert(organizationRules).values({
         id,
@@ -576,6 +587,7 @@ app.post('/api/organizations/:organizationId/rules', async (context) => {
         status: state,
         selectionPolicy,
         routingPolicy,
+        taskRoleIds: JSON.stringify(taskRoleIds),
         priority,
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -586,10 +598,11 @@ app.post('/api/organizations/:organizationId/rules', async (context) => {
         revision: 1,
         selectionPolicy,
         routingPolicy,
+        taskRoleIds: JSON.stringify(taskRoleIds),
         createdAt: timestamp,
       }),
     ]);
-    return json(context, { id, organizationId: access.organization.id, name, state, selectionPolicy: input.selectionPolicy ?? {}, routingPolicy: input.routingPolicy ?? {}, priority, createdAt: timestamp, updatedAt: timestamp }, 201);
+    return json(context, { id, organizationId: access.organization.id, name, state, selectionPolicy: input.selectionPolicy ?? {}, routingPolicy: input.routingPolicy ?? {}, taskRoleIds, priority, createdAt: timestamp, updatedAt: timestamp }, 201);
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Rule could not be created.', 409);
   }
@@ -1170,14 +1183,65 @@ app.patch('/api/organizations/:organizationId/members/:identityId', async (conte
   }
 });
 
-app.put('/api/organizations/:organizationId/task-roles/:role', async (context) => {
+app.post('/api/organizations/:organizationId/task-roles', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Operational Task Roles can only be changed by an Owner or Admin.', 403);
+    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
+    const input = await context.req.json<{ displayName?: string; description?: string }>();
+    const displayName = input.displayName?.trim() ?? '';
+    const description = input.description?.trim() ?? '';
+    if (!displayName || displayName.length > 100) return failure(context, 'A role display name of at most 100 characters is required.');
+    if (!description || description.length > 500) return failure(context, 'A role description of at most 500 characters is required.');
+    const role = await createTaskWorkflow(drizzleOrganizationDatabase(access.database)).createRole({ displayName, description });
+    return json(context, role, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Operational Task Role could not be created.', 409);
+  }
+});
+
+app.patch('/api/organizations/:organizationId/task-roles/:roleId', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Operational Task Roles can only be changed by an Owner or Admin.', 403);
+    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
+    const input = await context.req.json<{ displayName?: string; description?: string }>();
+    const displayName = input.displayName?.trim();
+    const description = input.description?.trim();
+    if (displayName !== undefined && (!displayName || displayName.length > 100)) return failure(context, 'A role display name of at most 100 characters is required.');
+    if (description !== undefined && (!description || description.length > 500)) return failure(context, 'A role description of at most 500 characters is required.');
+    const role = await createTaskWorkflow(drizzleOrganizationDatabase(access.database)).updateRole(context.req.param('roleId'), {
+      ...(displayName === undefined ? {} : { displayName }),
+      ...(description === undefined ? {} : { description }),
+    });
+    if (!role) return failure(context, 'Operational Task Role was not found or no change was supplied.', 404);
+    return json(context, role);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Operational Task Role could not be updated.', 409);
+  }
+});
+
+app.delete('/api/organizations/:organizationId/task-roles/:roleId', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Operational Task Roles can only be changed by an Owner or Admin.', 403);
+    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
+    if (!await createTaskWorkflow(drizzleOrganizationDatabase(access.database)).deleteRole(context.req.param('roleId'))) return failure(context, 'Operational Task Role was not found.', 404);
+    return json(context, { id: context.req.param('roleId'), removed: true });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Operational Task Role could not be removed.', 409);
+  }
+});
+
+app.put('/api/organizations/:organizationId/task-roles/:roleId/assignment', async (context) => {
   try {
     const organizationId = context.req.param('organizationId');
     const access = await organizationForRequest(context.req.raw, context.env, organizationId);
     if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Operational task roles can only be changed by an Owner or Admin.', 403);
     if (!access.database) return failure(context, '組織DBに接続できません。', 503);
-    const role = context.req.param('role');
-    if (role !== 'organizer' && role !== 'treasurer') return failure(context, 'Unsupported operational task role.');
+    const roleId = context.req.param('roleId');
+    const database = drizzleOrganizationDatabase(access.database);
+    if (!await database.select({ id: operationalTaskRoles.id }).from(operationalTaskRoles).where(eq(operationalTaskRoles.id, roleId)).get()) return failure(context, 'Operational Task Role was not found.', 404);
     const input = await context.req.json<{ identityId?: string }>();
     if (!input.identityId) return failure(context, 'An active Organization member is required.');
     const member = await drizzleControlDatabase(context.env.CONTROL_DB).select({
@@ -1189,12 +1253,12 @@ app.put('/api/organizations/:organizationId/task-roles/:role', async (context) =
       eq(members.state, 'active'),
     )).get();
     if (!member) return failure(context, 'Task roles can only be assigned to an active Organization member.', 409);
-    await createTaskWorkflow(drizzleOrganizationDatabase(access.database)).assignRole({
-      role: role as OperationalTaskRole,
+    await createTaskWorkflow(database).assignRole({
+      roleId,
       identityId: member.identityId,
       displayName: member.displayName,
     });
-    return json(context, { role, ...member });
+    return json(context, { roleId, ...member });
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Operational task role could not be saved.', 409);
   }
@@ -1212,8 +1276,12 @@ app.get('/api/organizations/:organizationId/task-roles', async (context) => {
       eq(members.organizationId, organizationId),
       eq(members.state, 'active'),
     )).all();
-    const assignments = await drizzleOrganizationDatabase(access.database).select().from(taskRoleAssignments).all();
-    return json(context, { members: membersForTasks, assignments });
+    const database = drizzleOrganizationDatabase(access.database);
+    const [roles, assignments] = await Promise.all([
+      createTaskWorkflow(database).listRoles(),
+      database.select().from(taskRoleAssignments).all(),
+    ]);
+    return json(context, { members: membersForTasks, roles, assignments });
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Operational task roles could not be loaded.', 403);
   }
@@ -1223,14 +1291,26 @@ app.get('/api/organizations/:organizationId/tasks', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
     if (!access.database) return failure(context, '組織DBに接続できません。', 503);
-    const assigneeIdentityId = context.req.query('assignee')?.trim();
+    const assignee = context.req.query('assignee')?.trim();
     const event = context.req.query('event')?.trim();
     return json(context, await createTaskWorkflow(drizzleOrganizationDatabase(access.database)).list({
-      ...(assigneeIdentityId ? { assigneeIdentityId } : {}),
+      ...(assignee === 'unassigned' ? { unassigned: true } : assignee ? { assigneeIdentityId: assignee } : {}),
       ...(event ? { event } : {}),
     }));
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Tasks could not be loaded.', 403);
+  }
+});
+
+app.get('/api/organizations/:organizationId/automation-warnings', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
+    const rows = await drizzleOrganizationDatabase(access.database).select().from(automationWarnings)
+      .orderBy(desc(automationWarnings.createdAt)).limit(100).all();
+    return json(context, rows);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Automation Warnings could not be loaded.', 403);
   }
 });
 

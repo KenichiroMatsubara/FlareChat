@@ -164,7 +164,10 @@ interface OrganizationContextValue extends OrganizationRouteData {
   createCalendarEvent: () => void;
   createRule: (input: OrganizationRuleInput) => Promise<void>;
   updateTask: (taskId: string, input: { completed?: boolean; remarks?: string }) => void;
-  assignTaskRole: (role: 'organizer' | 'treasurer', identityId: string) => void;
+  createTaskRole: (input: { displayName: string; description: string }) => Promise<void>;
+  updateTaskRole: (roleId: string, input: { displayName?: string; description?: string }) => Promise<void>;
+  deleteTaskRole: (roleId: string) => Promise<void>;
+  assignTaskRole: (roleId: string, identityId: string) => void;
   createRecipient: (input: OrganizationRecipientInput) => Promise<OrganizationRecipient | null>;
   updateRecipient: (recipientId: string, input: Partial<Pick<OrganizationRecipient, 'name' | 'email' | 'tags' | 'state'>>) => Promise<void>;
   setLineDestination: (recipientId: string, input: RecipientLineDestinationInput) => Promise<void>;
@@ -284,9 +287,21 @@ export const OrganizationLayout = () => {
     const task = await api.updateOrganizationTask(data.organization.organizationId, taskId, input);
     setData((current) => ({ ...current, tasks: current.tasks.map((currentTask) => currentTask.id === task.id ? task : currentTask) }));
   }, setBusy);
-  const assignTaskRole = (role: 'organizer' | 'treasurer', identityId: string) => void withError(async () => {
-    const assignment = await api.assignOrganizationTaskRole(data.organization.organizationId, role, identityId);
-    setData((current) => ({ ...current, taskRoles: { ...current.taskRoles, assignments: [...current.taskRoles.assignments.filter((currentAssignment) => currentAssignment.role !== role), assignment] } }));
+  const createTaskRole = async (input: { displayName: string; description: string }): Promise<void> => withError(async () => {
+    const role = await api.createOrganizationTaskRole(data.organization.organizationId, input);
+    setData((current) => ({ ...current, taskRoles: { ...current.taskRoles, roles: [...current.taskRoles.roles, role] } }));
+  }, setBusy);
+  const updateTaskRole = async (roleId: string, input: { displayName?: string; description?: string }): Promise<void> => withError(async () => {
+    const role = await api.updateOrganizationTaskRole(data.organization.organizationId, roleId, input);
+    setData((current) => ({ ...current, taskRoles: { ...current.taskRoles, roles: current.taskRoles.roles.map((item) => item.id === role.id ? role : item) } }));
+  }, setBusy);
+  const deleteTaskRole = async (roleId: string): Promise<void> => withError(async () => {
+    await api.removeOrganizationTaskRole(data.organization.organizationId, roleId);
+    setData((current) => ({ ...current, taskRoles: { ...current.taskRoles, roles: current.taskRoles.roles.filter((role) => role.id !== roleId), assignments: current.taskRoles.assignments.filter((assignment) => assignment.roleId !== roleId) } }));
+  }, setBusy);
+  const assignTaskRole = (roleId: string, identityId: string) => void withError(async () => {
+    const assignment = await api.assignOrganizationTaskRole(data.organization.organizationId, roleId, identityId);
+    setData((current) => ({ ...current, taskRoles: { ...current.taskRoles, assignments: [...current.taskRoles.assignments.filter((currentAssignment) => currentAssignment.roleId !== roleId), assignment] } }));
   }, setBusy);
   const reloadRecipients = async (): Promise<void> => {
     const [recipients, lineDestinations] = await Promise.all([
@@ -333,7 +348,7 @@ export const OrganizationLayout = () => {
   const refreshRecipients = () => void withError(reloadRecipients, setMemberBusy);
   const logout = () => void withError(async () => { await api.logout(); navigate('/', { replace: true }); }, setBusy);
   const reauthenticate = () => void withError(async () => { window.location.assign((await api.reauthorizeAutomationInbox(data.organization.organizationId)).authorizationUrl); }, setBusy);
-  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateTask, assignTaskRole, createRecipient, updateRecipient, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshRecipients, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, aiTestBusy, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, lineSettingsBusy, aiSettingsBusy, ruleBusy, memberBusy, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
+  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, createRecipient, updateRecipient, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshRecipients, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, aiTestBusy, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, lineSettingsBusy, aiSettingsBusy, ruleBusy, memberBusy, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
   return <OrganizationContext.Provider value={value}><Outlet /></OrganizationContext.Provider>;
 };
 
@@ -391,8 +406,12 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     onCreateRule={value.createRule}
     organizationTasks={value.tasks}
     onUpdateTask={value.updateTask}
+    taskRoles={value.taskRoles.roles}
     taskRoleAssignments={value.taskRoles.assignments}
     taskMembers={value.taskRoles.members}
+    onCreateTaskRole={value.createTaskRole}
+    onUpdateTaskRole={value.updateTaskRole}
+    onDeleteTaskRole={value.deleteTaskRole}
     onAssignTaskRole={value.assignTaskRole}
     organizationRecipients={value.recipients}
     lineDestinations={value.lineDestinations}

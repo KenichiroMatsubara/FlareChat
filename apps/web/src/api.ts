@@ -70,6 +70,7 @@ export interface OrganizationRule {
   state: 'draft' | 'active' | 'suspended' | 'archived';
   selectionPolicy: Record<string, unknown>;
   routingPolicy: Record<string, unknown>;
+  taskRoleIds: string[];
   priority: number;
   createdAt: string;
   updatedAt: string;
@@ -80,6 +81,7 @@ export interface OrganizationRuleInput {
   state: 'draft' | 'active';
   selectionPolicy?: Record<string, unknown>;
   routingPolicy?: Record<string, unknown>;
+  taskRoleIds?: string[];
   priority?: number;
 }
 
@@ -112,7 +114,7 @@ export interface MailboxTestPreview extends MailboxTestMatch {
   tasks: Array<{
     title: string;
     deadline: string;
-    assigneeRole: 'organizer' | 'treasurer';
+    assigneeRoleId: string;
     description: string;
   }>;
   confirmationToken: string;
@@ -120,7 +122,7 @@ export interface MailboxTestPreview extends MailboxTestMatch {
 }
 
 export interface OrganizationTask {
-  id: string; title: string; deadline: string; assigneeRole: 'organizer' | 'treasurer'; assigneeIdentityId: string | null; assigneeName: string; sourceMessageSubject: string; description: string; remarks: string; completed: boolean; completedAt: string | null;
+  id: string; title: string; deadline: string; assigneeRoleId: string; assigneeRoleName: string; assigneeIdentityId: string | null; assigneeName: string; sourceMessageSubject: string; description: string; remarks: string; completed: boolean; completedAt: string | null;
 }
 
 export interface RecipientLineDestination {
@@ -162,8 +164,9 @@ export interface RecipientLineDestinationInput {
   displayName?: string;
 }
 
-export interface TaskRoleAssignment { role: 'organizer' | 'treasurer'; identityId: string; displayName: string; }
-export interface TaskRoleConfiguration { members: Array<{ identityId: string; displayName: string }>; assignments: TaskRoleAssignment[]; }
+export interface OperationalTaskRole { id: string; displayName: string; description: string; }
+export interface TaskRoleAssignment { roleId: string; identityId: string; displayName: string; }
+export interface TaskRoleConfiguration { members: Array<{ identityId: string; displayName: string }>; roles: OperationalTaskRole[]; assignments: TaskRoleAssignment[]; }
 
 /** The OpenAI-compatible JSON body prepared for review; credentials are never included. */
 export interface MailboxTestAiRequest extends MailboxTestMatch {
@@ -252,7 +255,10 @@ export const api = {
     method: 'DELETE',
   }),
   organizationTaskRoles: (organizationId: string): Promise<TaskRoleConfiguration> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles`),
-  assignOrganizationTaskRole: (organizationId: string, role: 'organizer' | 'treasurer', identityId: string): Promise<TaskRoleAssignment> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles/${role}`, { method: 'PUT', body: JSON.stringify({ identityId }) }),
+  createOrganizationTaskRole: (organizationId: string, input: { displayName: string; description: string }): Promise<OperationalTaskRole> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles`, { method: 'POST', body: JSON.stringify(input) }),
+  updateOrganizationTaskRole: (organizationId: string, roleId: string, input: { displayName?: string; description?: string }): Promise<OperationalTaskRole> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles/${encodeURIComponent(roleId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  removeOrganizationTaskRole: (organizationId: string, roleId: string): Promise<{ id: string; removed: boolean }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles/${encodeURIComponent(roleId)}`, { method: 'DELETE' }),
+  assignOrganizationTaskRole: (organizationId: string, roleId: string, identityId: string): Promise<TaskRoleAssignment> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles/${encodeURIComponent(roleId)}/assignment`, { method: 'PUT', body: JSON.stringify({ identityId }) }),
   updateOrganizationTask: (organizationId: string, taskId: string, input: { completed?: boolean; remarks?: string }): Promise<OrganizationTask> => request(`/api/organizations/${encodeURIComponent(organizationId)}/tasks/${encodeURIComponent(taskId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   createOrganizationRule: (organizationId: string, input: OrganizationRuleInput): Promise<OrganizationRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules`, {
     method: 'POST',

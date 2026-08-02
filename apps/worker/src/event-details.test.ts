@@ -2,9 +2,53 @@ import { readFile } from 'node:fs/promises';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { extractAiEventDetails, validatedEventDetails, validatedMailExtraction } from './event-details';
+import { buildAiEventDetailsRequest, extractAiEventDetails, validatedEventDetails, validatedMailExtraction } from './event-details';
 
 describe('OpenAI-compatible Event Details validation', () => {
+  it('builds the task role enum and semantic guidance from the roles allowed by the Organization Rule', async () => {
+    const request = await buildAiEventDetailsRequest({
+      source: '案内',
+      taskRoles: [
+        { id: 'role-registration', displayName: '参加登録担当', description: '出欠と申込期限を扱う' },
+        { id: 'role-payment', displayName: '支払担当', description: '請求と支払期限を扱う' },
+      ],
+    });
+    const taskSchema = request.response_format.json_schema.schema.properties?.tasks?.items;
+
+    expect(taskSchema?.properties?.assigneeRoleId?.enum).toEqual([
+      'role-registration',
+      'role-payment',
+      'unassigned',
+    ]);
+    expect(request.messages[0]?.content).toContain('role-registration: 参加登録担当 — 出欠と申込期限を扱う');
+    expect(request.messages[0]?.content).toContain('role-payment: 支払担当 — 請求と支払期限を扱う');
+    expect(request.messages[0]?.content).toContain('unassigned');
+  });
+
+  it('keeps the extraction and falls back only an unknown task role to unassigned with a warning', () => {
+    const extraction = validatedMailExtraction(JSON.stringify({
+      summary: '年次行事と二つの期限の案内です。',
+      events: [{
+        title: '年次行事', startsAt: '2026-09-01T10:00:00+09:00', endsAt: '2026-09-01T12:00:00+09:00',
+        timeZone: 'Asia/Tokyo', location: '会館', description: '年次行事',
+      }],
+      tasks: [
+        { title: '登録する', deadline: '2026-08-20', assigneeRoleId: 'role-registration', description: '参加登録を行う' },
+        { title: '資料を確認する', deadline: '2026-08-25', assigneeRoleId: 'role-removed', description: '資料を確認する' },
+      ],
+    }), [{ id: 'role-registration', displayName: '参加登録担当', description: '申込期限を扱う' }]);
+
+    expect(extraction).toMatchObject({
+      summary: '年次行事と二つの期限の案内です。',
+      events: [{ title: '年次行事' }],
+      tasks: [
+        { title: '登録する', assigneeRoleId: 'role-registration' },
+        { title: '資料を確認する', assigneeRoleId: 'unassigned' },
+      ],
+      warnings: [{ code: 'task_role_unmatched', requestedRoleId: 'role-removed' }],
+    });
+  });
+
   it('accepts one complete, explicitly timed Event Candidate and rejects unsafe output', () => {
     expect(validatedEventDetails(JSON.stringify({
       title: '例会',
@@ -203,13 +247,16 @@ describe('OpenAI-compatible Event Details validation', () => {
         { title: '30周年記念祝宴', startsAt: '2026-05-30T17:30:00+09:00', endsAt: '2026-05-30T19:30:00+09:00', timeZone: 'Asia/Tokyo', location: 'スノーピークカフェ', description: '祝宴' },
       ],
       tasks: [
-        { title: '出席登録を完了する', deadline: '2026-05-10', assigneeRole: 'organizer', description: '登録用紙を返信する' },
-        { title: '参加費を振り込む', deadline: '2026-05-15', assigneeRole: 'treasurer', description: '指定口座へ振込する' },
+        { title: '出席登録を完了する', deadline: '2026-05-10', assigneeRoleId: 'role-registration', description: '登録用紙を返信する' },
+        { title: '参加費を振り込む', deadline: '2026-05-15', assigneeRoleId: 'role-payment', description: '指定口座へ振込する' },
       ],
-    }))).toMatchObject({
+    }), [
+      { id: 'role-registration', displayName: '参加登録担当', description: '参加登録を扱う' },
+      { id: 'role-payment', displayName: '支払担当', description: '支払を扱う' },
+    ])).toMatchObject({
       summary: '30周年記念式典と祝宴の案内です。出席登録と参加費振込が必要です。',
       events: [{ title: '30周年記念式典' }, { title: '30周年記念祝宴' }],
-      tasks: [{ assigneeRole: 'organizer' }, { assigneeRole: 'treasurer' }],
+      tasks: [{ assigneeRoleId: 'role-registration' }, { assigneeRoleId: 'role-payment' }],
     });
   });
 });

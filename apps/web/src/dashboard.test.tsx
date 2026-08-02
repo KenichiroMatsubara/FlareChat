@@ -27,7 +27,7 @@ const dashboardProps = (): DashboardProps => ({
   onAiTestPromptChange: vi.fn(), onTestAi: vi.fn(), mailTestSubject: '', mailTestMatches: [], mailTestAiRequest: null,
   mailTestPreview: null, mailTestBusy: false, mailTestCreatedEventIds: [], onMailTestSubjectChange: vi.fn(), onSearchMailbox: vi.fn(),
   onPrepareMailbox: vi.fn(), onPreviewMailbox: vi.fn(), onCreateCalendarEvent: vi.fn(), organizationRules: [], ruleBusy: false,
-  onCreateRule: vi.fn(), organizationTasks: [], onUpdateTask: vi.fn(), taskRoleAssignments: [], taskMembers: [], onAssignTaskRole: vi.fn(),
+  onCreateRule: vi.fn(), organizationTasks: [], onUpdateTask: vi.fn(), taskRoles: [], taskRoleAssignments: [], taskMembers: [], onCreateTaskRole: vi.fn(), onUpdateTaskRole: vi.fn(), onDeleteTaskRole: vi.fn(), onAssignTaskRole: vi.fn(),
   organizationRecipients: [], lineDestinations: [], memberBusy: false, onCreateRecipient: vi.fn(), onUpdateRecipient: vi.fn(),
   onSetLineDestination: vi.fn(), onUnlinkLineDestination: vi.fn(), onRegisterLineDestination: vi.fn(), onRemoveLineDestination: vi.fn(), onRefreshRecipients: vi.fn(),
 });
@@ -58,6 +58,61 @@ describe('responsive dashboard shell', () => {
 
     expect(stylesheet).toContain('@media (max-width: 560px) {\n  .ai-request-heading { flex-direction: column; }');
     expect(stylesheet).toContain('.ai-request-heading .secondary { width: 100%; }');
+  });
+});
+
+describe('Operational Task Roles', () => {
+  it('offers Organization role CRUD, assignments, historical role names, and an unassigned filter', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/tasks']}>
+        <Dashboard
+          {...dashboardProps()}
+          page="tasks"
+          taskRoles={[{ id: 'role-registration', displayName: '参加登録担当', description: '出欠と申込期限を扱う' }]}
+          taskRoleAssignments={[{ roleId: 'role-registration', identityId: 'identity-1', displayName: 'Owner' }]}
+          taskMembers={[{ identityId: 'identity-1', displayName: 'Owner' }]}
+          organizationTasks={[{
+            id: 'task-1', title: '登録状況を確認する', deadline: '2026-08-20',
+            assigneeRoleId: 'role-registration', assigneeRoleName: '旧・参加登録担当',
+            assigneeIdentityId: 'identity-1', assigneeName: 'Owner', sourceMessageSubject: '年次行事',
+            description: '参加登録を取りまとめる', remarks: '', completed: false, completedAt: null,
+          }]}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('Operational Task Roleを追加');
+    expect(html).toContain('参加登録担当');
+    expect(html).toContain('出欠と申込期限を扱う');
+    expect(html).toContain('名前と説明を編集');
+    expect(html).toContain('roleを削除');
+    expect(html).toContain('旧・参加登録担当');
+    expect(html).toContain('<option value="unassigned">未割り当て</option>');
+  });
+
+  it('lets an Automation Rule select the Organization role subset it may assign', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/rules']}>
+        <Dashboard
+          {...dashboardProps()}
+          page="rules"
+          taskRoles={[
+            { id: 'role-registration', displayName: '参加登録担当', description: '申込期限を扱う' },
+            { id: 'role-payment', displayName: '支払担当', description: '支払期限を扱う' },
+          ]}
+          organizationRules={[{
+            id: 'rule-1', organizationId: 'org-1', name: '登録案内', state: 'active',
+            selectionPolicy: {}, routingPolicy: {}, taskRoleIds: ['role-registration'], priority: 0,
+            createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z',
+          }]}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('割り当て可能なOperational Task Roles');
+    expect(html).toContain('参加登録担当');
+    expect(html).toContain('支払担当');
+    expect(html).toContain('選択Role: 参加登録担当');
   });
 });
 

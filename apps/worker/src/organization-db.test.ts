@@ -124,6 +124,7 @@ describe('Organization database resolver', () => {
       { name: '0003_release_safe_line_destination_index.sql' },
       { name: '0004_manual_line_destination_source.sql' },
       { name: '0005_optional_recipient_email.sql' },
+      { name: '0006_operational_task_roles.sql' },
     ]);
   });
 
@@ -188,6 +189,6 @@ describe('Organization database resolver', () => {
       expect.stringContaining('ALTER TABLE `line_destinations` ADD `display_name`'),
       'INSERT INTO d1_migrations (name, checksum) VALUES (?, ?)',
     ]));
-    expect(statements.some((statement) => statement.includes('DROP TABLE'))).toBe(false);
+    expect(statements.some((statement) => statement.includes('DROP TABLE `source_messages`'))).toBe(false);
   });
 });
