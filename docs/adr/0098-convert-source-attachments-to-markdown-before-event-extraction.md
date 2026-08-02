@@ -6,12 +6,29 @@ Connection. The OpenAI-compatible API receives only the filename, original
 MIME type, and bounded event-relevant Markdown or plain text; it never
 receives an attachment's original bytes.
 
-The converter records Cloudflare's `ConversionResult.tokens` and admits at
-most 4,000 attachment tokens in total to a single Event Details extraction.
-For documents above that budget, it chunks the conversion and keeps only
-date, time, title, and location-bearing chunks with their immediate context.
-The Worker logs both the source conversion tokens and selected-token count so
-deployment observability can detect document growth and Workers AI failures.
+A converted attachment is admitted whole. There is no token budget and no
+chunk selection: a document that states its date once, in a sentence that
+reads like prose, is exactly the document a relevance filter discards, and an
+attachment silently reduced to its date-bearing fragments produces a
+confident extraction from material an Admin never saw. The Worker records
+Cloudflare's `ConversionResult.tokens` as the conversion estimate and a
+selected-token count measured from the text actually sent, so deployment
+observability can detect document growth and Workers AI failures.
+
+What is removed is the conversion's own by-products, never the document's
+contents. Mail Automation asks Workers AI to omit the PDF metadata section
+through `conversionOptions.pdf.metadata`, and independently strips a leading
+metadata section, the converter's echo of the filename, the contents heading,
+and blank-line padding from every conversion, including the local Office
+fallback. The metadata section is removed only when it opens the conversion
+and consists entirely of `key=value` entries, so a document whose own
+contents use that heading keeps them. Removal is deletion only: text is never
+reordered, rewritten, truncated, or summarized. The opt-out and the removal
+are deliberately redundant, because a conversion option that a future
+binding ignores would otherwise degrade silently.
+
+XLSX Markdown is additionally compacted to TSV, which is a change of
+representation rather than a selection of contents.
 
 PDF, DOCX, XLSX, and ordinary document conversion use the Workers AI Markdown
 service, which Cloudflare documents as free for most format conversions.
@@ -37,3 +54,4 @@ References:
 - [Cloudflare Markdown Conversion](https://developers.cloudflare.com/workers-ai/features/markdown-conversion/)
 - [Workers binding usage](https://developers.cloudflare.com/workers-ai/features/markdown-conversion/usage/binding/)
 - [Supported formats and image-cost note](https://developers.cloudflare.com/workers-ai/features/markdown-conversion/supported-formats/)
+- [Conversion options, including the PDF metadata opt-out](https://developers.cloudflare.com/workers-ai/features/markdown-conversion/conversion-options/)

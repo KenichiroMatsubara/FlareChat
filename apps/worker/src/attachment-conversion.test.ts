@@ -73,11 +73,65 @@ describe('attachment conversion for Event Details', () => {
       { attachmentId: 'second', filename: 'second.pdf', mimeType: 'application/pdf', size: 3, data: 'cGRm' },
     ], markdown);
 
-    expect(converted.reduce((total, attachment) => total + attachment.selectedTokens, 0)).toBe(6_000);
-    expect(converted.map((attachment) => attachment.text)).toEqual([
-      expect.stringContaining('詳細 詳細 詳細'),
-      expect.stringContaining('詳細 詳細 詳細'),
+    const contents = `日時: 2026-08-18 14:30\n${'詳細 '.repeat(5_000)}`.trim();
+    expect(converted.map((attachment) => attachment.text)).toEqual([contents, contents]);
+    expect(converted.map((attachment) => attachment.tokens)).toEqual([3_000, 3_000]);
+    expect(converted.map((attachment) => attachment.selectedTokens)).toEqual([
+      Math.ceil(contents.length / 4),
+      Math.ceil(contents.length / 4),
     ]);
+  });
+
+  it('asks Workers AI to omit PDF metadata and drops it when the option is ignored', async () => {
+    const source = [
+      '# 案内.pdf',
+      '## Metadata',
+      '- PDFFormatVersion=1.7',
+      '- Author=example author',
+      "- CreationDate=D:20260406221551+09'00'",
+      '- xmpmm:documentid=uuid:00000000-0000-4000-8000-000000000001',
+      '',
+      '',
+      '## Contents',
+      '### Page 1',
+      '',
+      '',
+      '日時: 2026年5月30日 13:00-16:00',
+    ].join('\n');
+    const toMarkdown = vi.fn().mockResolvedValue({
+      format: 'markdown', name: '案内.pdf', mimetype: 'application/pdf', tokens: 300, data: source,
+    });
+
+    const [converted] = await convertAttachmentsForEventExtraction([{
+      attachmentId: 'metadata-pdf', filename: '案内.pdf', mimeType: 'application/pdf', size: 3, data: 'cGRm',
+    }], { toMarkdown });
+
+    expect(toMarkdown).toHaveBeenCalledWith(
+      expect.objectContaining({ name: '案内.pdf' }),
+      { conversionOptions: { pdf: { metadata: false } } },
+    );
+    expect(converted?.text).toBe('### Page 1\n\n日時: 2026年5月30日 13:00-16:00');
+    expect(converted?.text).not.toContain('CreationDate');
+    expect(converted?.text).not.toContain('uuid:');
+    expect(converted?.tokens).toBe(300);
+    expect(converted?.selectedTokens).toBe(Math.ceil((converted?.text.length ?? 0) / 4));
+  });
+
+  it('removes the same conversion by-products from the local Office fallback', async () => {
+    const workbook = await readFile(new URL('../../../fixtures/ai-file-probe/event-invitation.xlsx', import.meta.url));
+
+    const [converted] = await convertAttachmentsForEventExtraction([{
+      attachmentId: 'attachment-xlsx',
+      filename: 'event-invitation.xlsx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      size: workbook.byteLength,
+      data: workbook.toString('base64'),
+    }], { toMarkdown: vi.fn().mockResolvedValue({ format: 'error', name: 'event-invitation.xlsx', mimetype: '', error: 'unavailable' }) });
+
+    expect(converted?.converter).toBe('local_office');
+    expect(converted?.text.startsWith('# event-invitation.xlsx')).toBe(false);
+    expect(converted?.text).not.toMatch(/\n{3}/u);
+    expect(converted?.selectedTokens).toBe(Math.ceil((converted?.text.length ?? 0) / 4));
   });
 
   it('retains registration and payment deadlines that are separated from event details', async () => {
