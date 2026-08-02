@@ -1260,6 +1260,13 @@ describe('Manual mailbox test', () => {
       mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       tokens: 32,
       data: [
+        '# 式典案内.xlsx',
+        '## Metadata',
+        '- Author=example author',
+        "- CreationDate=D:20260406221551+09'00'",
+        '',
+        '',
+        '## Contents',
         '# FILE-PROBE-001',
         '',
         '| __EMPTY_1 | 日時         | 時間         | 会場                                      | __EMPTY_2 |',
@@ -1289,8 +1296,14 @@ describe('Manual mailbox test', () => {
               { name: 'Subject', value: '名古屋名城RAC30周年記念式典のご案内' },
               { name: 'From', value: 'member@example.com' },
             ],
-            body: { data: gmailBody('詳しくは添付をご確認ください。') },
+            mimeType: 'multipart/mixed',
             parts: [{
+              mimeType: 'multipart/alternative',
+              parts: [
+                { mimeType: 'text/plain', body: { data: gmailBody('詳しくは添付をご確認ください。') } },
+                { mimeType: 'text/html', body: { data: gmailBody('<html><body><p>詳しくは添付をご確認ください。</p></body></html>') } },
+              ],
+            }, {
               filename: '式典案内.xlsx',
               mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
               body: { attachmentId: 'attachment-xlsx', size: xlsx.byteLength },
@@ -1348,6 +1361,10 @@ describe('Manual mailbox test', () => {
     expect(aiRequestPreview.data.request.messages?.[1]?.content).toContain('日時\t時間\t会場');
     expect(aiRequestPreview.data.request.messages?.[1]?.content).not.toContain('__EMPTY_1');
     expect(aiRequestPreview.data.request.messages?.[1]?.content).not.toContain('| ----------- |');
+    expect(aiRequestPreview.data.request.messages?.[1]?.content).not.toContain('## Metadata');
+    expect(aiRequestPreview.data.request.messages?.[1]?.content).not.toContain('CreationDate');
+    expect(aiRequestPreview.data.request.messages?.[1]?.content).not.toContain('## Contents');
+    expect(aiRequestPreview.data.request.messages?.[1]?.content?.match(/詳しくは添付をご確認ください。/gu)).toHaveLength(1);
     expect(aiRequest.messages).toBeUndefined();
 
     const previewResponse = await app.fetch(fixture.request(
