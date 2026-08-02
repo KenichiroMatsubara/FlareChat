@@ -23,7 +23,7 @@ const dashboardProps = (): DashboardProps => ({
   organizations: [{ organizationId: 'org-1', name: 'Example', role: 'owner', status: 'active' }],
   canManage: true, connections: null, lineChannelAccessToken: '', lineChannelSecret: '', aiApiKey: '', aiModel: 'test-model', aiBaseUrl: 'https://ai.example.com/v1',
   onLineChannelAccessTokenChange: vi.fn(), onLineChannelSecretChange: vi.fn(), onAiApiKeyChange: vi.fn(), onAiModelChange: vi.fn(), onAiBaseUrlChange: vi.fn(),
-  settingsBusy: false, onSaveConnections: vi.fn(), aiTestPrompt: '', aiTestResult: '', aiTestBusy: false,
+  lineSettingsBusy: false, aiSettingsBusy: false, onSaveLineConnection: vi.fn(), onSaveAiConnection: vi.fn(), aiTestPrompt: '', aiTestResult: '', aiTestBusy: false,
   onAiTestPromptChange: vi.fn(), onTestAi: vi.fn(), mailTestSubject: '', mailTestMatches: [], mailTestAiRequest: null,
   mailTestPreview: null, mailTestBusy: false, mailTestCreatedEventIds: [], onMailTestSubjectChange: vi.fn(), onSearchMailbox: vi.fn(),
   onPrepareMailbox: vi.fn(), onPreviewMailbox: vi.fn(), onCreateCalendarEvent: vi.fn(), organizationRules: [], ruleBusy: false,
@@ -72,7 +72,7 @@ describe('member roster', () => {
             organizationId: 'org-1',
             organizationName: 'Example',
             ai: { apiKeyConfigured: false, model: '', baseUrl: '' },
-            line: { channelAccessTokenConfigured: true, channelSecretConfigured: true },
+            line: { channelAccessTokenConfigured: true, channelSecretConfigured: true, webhookUrl: 'https://app.example.com/api/public/organizations/org-1/line/webhook' },
           }}
           organizationRecipients={[{
             id: 'recipient-1',
@@ -126,7 +126,7 @@ describe('member roster', () => {
             organizationId: 'org-1',
             organizationName: 'Example',
             ai: { apiKeyConfigured: false, model: '', baseUrl: '' },
-            line: { channelAccessTokenConfigured: true, channelSecretConfigured: true },
+            line: { channelAccessTokenConfigured: true, channelSecretConfigured: true, webhookUrl: 'https://app.example.com/api/public/organizations/org-1/line/webhook' },
           }}
           organizationRecipients={[]}
           lineDestinations={[
@@ -171,7 +171,7 @@ describe('member roster', () => {
             organizationId: 'org-1',
             organizationName: 'Example',
             ai: { apiKeyConfigured: false, model: '', baseUrl: '' },
-            line: { channelAccessTokenConfigured: true, channelSecretConfigured: true },
+            line: { channelAccessTokenConfigured: true, channelSecretConfigured: true, webhookUrl: 'https://app.example.com/api/public/organizations/org-1/line/webhook' },
           }}
           organizationRecipients={[{
             id: 'recipient-1',
@@ -293,7 +293,7 @@ describe('mailbox test prerequisites', () => {
               model: 'test-model',
               baseUrl: 'https://ai.example.com/v1',
             },
-            line: { channelAccessTokenConfigured: false, channelSecretConfigured: false },
+            line: { channelAccessTokenConfigured: false, channelSecretConfigured: false, webhookUrl: 'https://app.example.com/api/public/organizations/org-1/line/webhook' },
           }}
           mailTestAiRequest={{
             id: 'message-1',
@@ -320,5 +320,54 @@ describe('mailbox test prerequisites', () => {
     expect(html).toContain('Base URL');
     expect(html).toContain('placeholder="https://api.openai.com/v1"');
     expect(html).toContain('placeholder="例: gpt-4.1-mini"');
+  });
+
+  it('lets each external connection be saved independently', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/connections']}>
+        <Dashboard
+          {...dashboardProps()}
+          page="connections"
+          lineChannelAccessToken="line-token"
+          lineChannelSecret="line-secret"
+          aiApiKey=""
+          aiModel=""
+          aiBaseUrl=""
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toMatch(/<button[^>]*>.*?LINE設定を保存<\/button>/su);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*?AI設定を保存<\/button>/su);
+    expect(html).not.toContain('接続設定を保存');
+  });
+
+  it('shows a copyable LINE webhook URL and its setup instructions', () => {
+    const webhookUrl = 'https://app.example.com/api/public/organizations/org-1/line/webhook';
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/connections']}>
+        <Dashboard
+          {...dashboardProps()}
+          page="connections"
+          connections={{
+            organizationId: 'org-1',
+            organizationName: 'Example',
+            ai: { apiKeyConfigured: false, model: '', baseUrl: '' },
+            line: {
+              channelAccessTokenConfigured: true,
+              channelSecretConfigured: true,
+              webhookUrl,
+            },
+          }}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('Webhook URL');
+    expect(html).toContain(`value="${webhookUrl}"`);
+    expect(html).toContain('aria-label="Webhook URLをコピー"');
+    expect(html).toContain('LINE Developers');
+    expect(html).toContain('Webhookの利用をオン');
+    expect(html).toContain('保留中のLINE連絡先');
   });
 });

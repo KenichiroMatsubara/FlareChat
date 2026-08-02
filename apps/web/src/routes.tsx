@@ -155,7 +155,8 @@ interface OrganizationContextValue extends OrganizationRouteData {
   summary: AutomationSummary | null;
   setEnabled: (enabled: boolean) => void;
   run: () => void;
-  saveConnections: () => void;
+  saveLineConnection: () => void;
+  saveAiConnection: () => void;
   testAi: () => void;
   searchMailbox: () => void;
   prepareMailbox: (messageId: string) => void;
@@ -185,7 +186,8 @@ interface OrganizationContextValue extends OrganizationRouteData {
   mailTestPreview: MailboxTestPreview | null;
   mailTestBusy: boolean;
   mailTestCreatedEventIds: string[];
-  settingsBusy: boolean;
+  lineSettingsBusy: boolean;
+  aiSettingsBusy: boolean;
   ruleBusy: boolean;
   memberBusy: boolean;
   setLineChannelAccessToken: (value: string) => void;
@@ -212,7 +214,8 @@ export const OrganizationLayout = () => {
   const [data, setData] = useState(initial);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [settingsBusy, setSettingsBusy] = useState(false);
+  const [lineSettingsBusy, setLineSettingsBusy] = useState(false);
+  const [aiSettingsBusy, setAiSettingsBusy] = useState(false);
   const [ruleBusy, setRuleBusy] = useState(false);
   const [memberBusy, setMemberBusy] = useState(false);
   const [summary, setSummary] = useState<AutomationSummary | null>(null);
@@ -249,10 +252,24 @@ export const OrganizationLayout = () => {
   };
   const run = () => void withError(async () => { const value = await api.runAutomation(data.organization.organizationId); const automation = await api.currentAutomation(data.organization.organizationId); setSummary(value); setData((current) => ({ ...current, automation })); }, setBusy);
   const setEnabled = (enabled: boolean) => void withError(async () => { await api.setEnabled(data.organization.organizationId, enabled); const automation = await api.currentAutomation(data.organization.organizationId); setData((current) => ({ ...current, automation })); }, setBusy);
-  const saveConnections = () => void withError(async () => {
-    const connections = await api.saveOrganizationConnections(data.organization.organizationId, { line: { channelAccessToken: lineChannelAccessToken || undefined, channelSecret: lineChannelSecret || undefined }, ai: { apiKey: aiApiKey || undefined, model: aiModel, baseUrl: aiBaseUrl } });
-    setData((current) => ({ ...current, connections })); setLineChannelAccessToken(''); setLineChannelSecret(''); setAiApiKey('');
-  }, setSettingsBusy);
+  const saveLineConnection = () => void withError(async () => {
+    const line = await api.saveOrganizationLineConnection(data.organization.organizationId, {
+      channelAccessToken: lineChannelAccessToken || undefined,
+      channelSecret: lineChannelSecret || undefined,
+    });
+    setData((current) => ({ ...current, connections: { ...current.connections, line } }));
+    setLineChannelAccessToken('');
+    setLineChannelSecret('');
+  }, setLineSettingsBusy);
+  const saveAiConnection = () => void withError(async () => {
+    const ai = await api.saveOrganizationAiConnection(data.organization.organizationId, {
+      apiKey: aiApiKey || undefined,
+      model: aiModel,
+      baseUrl: aiBaseUrl,
+    });
+    setData((current) => ({ ...current, connections: { ...current.connections, ai } }));
+    setAiApiKey('');
+  }, setAiSettingsBusy);
   const testAi = () => void withError(async () => { const result = await api.testAiConnection(data.organization.organizationId, aiTestPrompt); setAiTestResult(result.text); }, setAiTestBusy);
   const searchMailbox = () => void withError(async () => { setMailTestAiRequest(null); setMailTestPreview(null); setMailTestCreatedEventIds([]); setMailTestMatches((await api.searchMailboxForTest(data.organization.organizationId, mailTestSubject.trim())).messages); }, setMailTestBusy);
   const prepareMailbox = (messageId: string) => void withError(async () => { setMailTestAiRequest(await api.prepareMailboxTestAiRequest(data.organization.organizationId, messageId)); setMailTestPreview(null); setMailTestCreatedEventIds([]); }, setMailTestBusy);
@@ -316,7 +333,7 @@ export const OrganizationLayout = () => {
   const refreshRecipients = () => void withError(reloadRecipients, setMemberBusy);
   const logout = () => void withError(async () => { await api.logout(); navigate('/', { replace: true }); }, setBusy);
   const reauthenticate = () => void withError(async () => { window.location.assign((await api.reauthorizeAutomationInbox(data.organization.organizationId)).authorizationUrl); }, setBusy);
-  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveConnections, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateTask, assignTaskRole, createRecipient, updateRecipient, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshRecipients, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, aiTestBusy, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, settingsBusy, ruleBusy, memberBusy, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
+  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateTask, assignTaskRole, createRecipient, updateRecipient, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshRecipients, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, aiTestBusy, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, lineSettingsBusy, aiSettingsBusy, ruleBusy, memberBusy, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
   return <OrganizationContext.Provider value={value}><Outlet /></OrganizationContext.Provider>;
 };
 
@@ -349,8 +366,10 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     onAiApiKeyChange={value.setAiApiKey}
     onAiModelChange={value.setAiModel}
     onAiBaseUrlChange={value.setAiBaseUrl}
-    settingsBusy={value.settingsBusy}
-    onSaveConnections={value.saveConnections}
+    lineSettingsBusy={value.lineSettingsBusy}
+    aiSettingsBusy={value.aiSettingsBusy}
+    onSaveLineConnection={value.saveLineConnection}
+    onSaveAiConnection={value.saveAiConnection}
     aiTestPrompt={value.aiTestPrompt}
     aiTestResult={value.aiTestResult}
     aiTestBusy={value.aiTestBusy}

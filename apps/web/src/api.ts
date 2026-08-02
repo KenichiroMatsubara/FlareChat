@@ -46,6 +46,7 @@ export interface OrganizationConnections {
   line: {
     channelAccessTokenConfigured: boolean;
     channelSecretConfigured: boolean;
+    webhookUrl: string;
   };
   ai: {
     apiKeyConfigured: boolean;
@@ -257,14 +258,18 @@ export const api = {
     body: JSON.stringify(input),
   }),
   organizationConnections: (organizationId: string): Promise<OrganizationConnections> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections`),
-  saveOrganizationConnections: (organizationId: string, input: {
-    line: { channelAccessToken?: string | undefined; channelSecret?: string | undefined };
-    ai: {
-      apiKey?: string | undefined;
-      model?: string | undefined;
-      baseUrl?: string | undefined;
-    };
-  }): Promise<OrganizationConnections> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections`, {
+  saveOrganizationLineConnection: (organizationId: string, input: {
+    channelAccessToken?: string | undefined;
+    channelSecret?: string | undefined;
+  }): Promise<OrganizationConnections['line']> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections/line`, {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  }),
+  saveOrganizationAiConnection: (organizationId: string, input: {
+    apiKey?: string | undefined;
+    model?: string | undefined;
+    baseUrl?: string | undefined;
+  }): Promise<OrganizationConnections['ai']> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections/ai`, {
     method: 'PUT',
     body: JSON.stringify(input),
   }),
