@@ -1,5 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 
+import { ensureBaselineSchemaRule } from './baseline-automation';
 import { createOrganizationKey, decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
 import { fleetMigration } from './fleet-migration';
 import { provisionOrganizationDatabase } from './organization-db';
@@ -59,6 +60,7 @@ export const provisionOrganization = async (
       applicationKey: provisioning.provisioningKey,
     });
   }
+  await ensureBaselineSchemaRule(organization, provisioning.organizationId);
   const keyRecord = await control.select({
     masterKeyVersion: organizationKeys.masterKeyVersion,
     wrappedKeyEnvelope: organizationKeys.wrappedKeyEnvelope,
@@ -88,7 +90,7 @@ export const provisionOrganization = async (
     grantedScopes: provisioning.grantedScopes,
     tokenEnvelope: JSON.stringify(tokenEnvelope),
     gmailHistoryId: provisioning.historyId,
-    enabled: true,
+    enabled: false,
     status: 'active',
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -99,7 +101,7 @@ export const provisionOrganization = async (
       grantedScopes: provisioning.grantedScopes,
       tokenEnvelope: JSON.stringify(tokenEnvelope),
       gmailHistoryId: provisioning.historyId,
-      enabled: true,
+      enabled: false,
       status: 'active',
       lastError: null,
       updatedAt: timestamp,

@@ -7,7 +7,6 @@ import { extractAiEventDetails, type EventDetails } from './event-details';
 import {
   createAutomation,
   decodedBody,
-  extractEventCandidate,
   receivedAtOf,
   runEnabledAutomations,
   runOrganizationAutomation,
@@ -33,30 +32,17 @@ const gmailBody = (value: string): string =>
     .replaceAll('/', '_')
     .replace(/=+$/u, '');
 
-const sourceMessageResponse = (): Response => new Response(JSON.stringify({
+const sourceMessageResponse = (input: { subject?: string; body?: string } = {}): Response => new Response(JSON.stringify({
   payload: {
     headers: [
-      { name: 'Subject', value: '例会のお知らせ' },
+      { name: 'Subject', value: input.subject ?? '例会のお知らせ' },
       { name: 'From', value: 'member@example.com' },
     ],
-    body: { data: gmailBody('日時: 2026年8月3日 19:00〜21:30') },
+    body: { data: gmailBody(input.body ?? '日時: 2026年8月3日 19:00〜21:30') },
   },
 }), { status: 200 });
 
-describe('Source Message event extraction', () => {
-  it('extracts an explicitly dated Japanese time range', () => {
-    expect(extractEventCandidate('例会のお知らせ', '日時: 2026年8月3日 19:00〜21:30')).toEqual({
-      title: '例会のお知らせ',
-      startsAt: '2026-08-03T19:00:00+09:00',
-      endsAt: '2026-08-03T21:30:00+09:00',
-    });
-  });
-
-  it('withholds a Source Message that omits a date or an end time', () => {
-    expect(extractEventCandidate('お知らせ', '来週の19時から集まりましょう')).toBeNull();
-    expect(extractEventCandidate('お知らせ', '2026/08/03 に集まりましょう')).toBeNull();
-  });
-
+describe('Source Message processing primitives', () => {
   it('selects the highest-priority matching active Automation Rule', () => {
     expect(selectActiveRule([
       { id: 'rule-low', priority: 1, selectionPolicy: { domain: 'example.com' } },
@@ -119,6 +105,176 @@ describe('Source Message event extraction', () => {
 });
 
 describe('Organization Automation Inbox scheduling', () => {
+  it('repairs a rule-less Organization with a catch-all Schema Rule and sends ordinary mail through AI', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    fixture.organization.execute('DELETE FROM rules');
+    const requests: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      requests.push(url);
+      if (url.includes('/history')) return Response.json({
+        historyId: 'history-after-rule-repair',
+        history: [{ messagesAdded: [{ message: { id: 'ordinary-message' } }] }],
+      });
+      if (url.includes('/messages/ordinary-message')) return sourceMessageResponse({
+        subject: '次回例会について',
+        body: '詳細は添付の案内をご確認ください。',
+      });
+      if (url.includes('ai.example.com')) return Response.json({ choices: [{ message: { content: JSON.stringify({
+        summary: '次回例会の案内です。',
+        events: [{
+          title: '次回例会', startsAt: '2026-08-10T19:00:00+09:00', endsAt: '2026-08-10T21:00:00+09:00',
+          timeZone: 'Asia/Tokyo', location: '', description: '詳細は案内を参照',
+        }],
+        tasks: [],
+      }) } }] });
+      return Response.json({ id: 'calendar-event-rule-repair' });
+    }));
+
+    await expect(runOrganizationAutomation(
+      fixture.environment,
+      'organization-1',
+      fixture.organization.binding,
+    )).resolves.toEqual({ scanned: 1, created: 1, skipped: 0, exceptions: 0 });
+
+    expect(requests.some((url) => url.includes('ai.example.com'))).toBe(true);
+    expect(fixture.organization.rows<{ name: string; status: string }>('SELECT name, status FROM rules')).toEqual([
+      { name: 'All incoming mail', status: 'active' },
+    ]);
+  });
+
+  it('keeps selective rules while adding a lower-priority catch-all for otherwise unmatched mail', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    fixture.organization.execute("UPDATE rules SET selection_policy = '{\"sender\":\"trusted@example.com\"}' WHERE id = 'rule-1'");
+    const requests: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      requests.push(url);
+      if (url.includes('/history')) return Response.json({
+        historyId: 'history-after-selective-rule',
+        history: [{ messagesAdded: [{ message: { id: 'unmatched-ordinary-message' } }] }],
+      });
+      if (url.includes('/messages/unmatched-ordinary-message')) return sourceMessageResponse({
+        subject: '一般のお知らせ', body: '今月のお知らせです。',
+      });
+      if (url.includes('ai.example.com')) return Response.json({ choices: [{ message: { content: JSON.stringify({
+        summary: '今月のお知らせです。', events: [], tasks: [],
+      }) } }] });
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    await expect(runOrganizationAutomation(
+      fixture.environment,
+      'organization-1',
+      fixture.organization.binding,
+    )).resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 0 });
+    expect(requests.some((url) => url.includes('ai.example.com'))).toBe(true);
+    expect(fixture.organization.rows<{ name: string; priority: number }>(
+      'SELECT name, priority FROM rules ORDER BY priority DESC',
+    )).toEqual([
+      { name: 'All dated Source Messages', priority: 0 },
+      { name: 'All incoming mail', priority: -1 },
+    ]);
+  });
+
+  it('reprocesses messages that legacy Automation previously marked as skipped', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    fixture.organization.execute(
+      `INSERT INTO source_messages
+        (id, gmail_message_id, gmail_history_id, sender, subject, received_at, processed_at, state)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'skipped')`,
+      'source-previously-skipped',
+      'previously-skipped-message',
+      'history-before-connection',
+      'member@example.com',
+      '会員向けのお知らせ',
+      '2026-08-01T00:00:00.000Z',
+      '2026-08-01T00:00:00.000Z',
+    );
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/messages/previously-skipped-message')) return sourceMessageResponse({
+        subject: '会員向けのお知らせ', body: '今月のお知らせです。',
+      });
+      if (url.includes('ai.example.com')) return Response.json({ choices: [{ message: { content: JSON.stringify({
+        summary: '今月のお知らせです。', events: [], tasks: [],
+      }) } }] });
+      if (url.includes('/history')) return Response.json({ historyId: 'history-after-repair' });
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    await expect(runOrganizationAutomation(
+      fixture.environment,
+      'organization-1',
+      fixture.organization.binding,
+    )).resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 0 });
+    expect(fixture.organization.row<{ state: string }>(
+      "SELECT state FROM source_messages WHERE id = 'source-previously-skipped'",
+    )).toEqual({ state: 'processed' });
+    const baseline = fixture.organization.row<{ value: string }>(
+      "SELECT value FROM settings WHERE key = 'baseline-schema-rule:v1'",
+    );
+    expect(JSON.parse(baseline?.value ?? '{}')).toMatchObject({ repairSkipped: false });
+  });
+
+  it('does not silently use literal date parsing when an AI Connection is missing', async () => {
+    fixture = await createAutomationTestApp();
+    const requests: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      requests.push(url);
+      if (url.includes('/history')) return Response.json({
+        historyId: 'history-after-missing-ai',
+        history: [{ messagesAdded: [{ message: { id: 'dated-message-without-ai' } }] }],
+      });
+      if (url.includes('/messages/dated-message-without-ai')) return sourceMessageResponse();
+      return Response.json({ id: 'calendar-event-should-not-exist' });
+    }));
+
+    await expect(runOrganizationAutomation(
+      fixture.environment,
+      'organization-1',
+      fixture.organization.binding,
+    )).rejects.toThrow('自動化を実行する前に OpenAI 互換 API を設定してください。');
+    await runEnabledAutomations(fixture.environment);
+    expect(requests).toEqual([]);
+    expect(fixture.organization.rows('SELECT * FROM source_messages')).toEqual([]);
+    expect(fixture.organization.row<{ status: string; last_error: string }>(
+      "SELECT status, last_error FROM google_connections WHERE kind = 'automation_inbox'",
+    )).toEqual({
+      status: 'active',
+      last_error: '自動化を実行する前に OpenAI 互換 API を設定してください。',
+    });
+  });
+
+  it('continues past a Gmail history entry whose message was deleted and persists the new boundary', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/history')) return Response.json({
+        historyId: 'history-after-deleted-message',
+        history: [{ messagesAdded: [
+          { message: { id: 'deleted-message' } },
+          { message: { id: 'ordinary-message-after-delete' } },
+        ] }],
+      });
+      if (url.includes('/messages/deleted-message')) return Response.json({
+        error: { code: 404, message: 'Requested entity was not found.', status: 'NOT_FOUND' },
+      }, { status: 404 });
+      if (url.includes('/messages/ordinary-message-after-delete')) return sourceMessageResponse({
+        subject: '会員向けのお知らせ', body: '今月のお知らせです。',
+      });
+      if (url.includes('ai.example.com')) return Response.json({ choices: [{ message: { content: JSON.stringify({
+        summary: '今月のお知らせです。', events: [], tasks: [],
+      }) } }] });
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    await expect(runOrganizationAutomation(
+      fixture.environment,
+      'organization-1',
+      fixture.organization.binding,
+    )).resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 0 });
+    expect(fixture.organization.row<{ gmail_history_id: string }>(
+      "SELECT gmail_history_id FROM google_connections WHERE kind = 'automation_inbox'",
+    )).toEqual({ gmail_history_id: 'history-after-deleted-message' });
+  });
+
   it('executes an unattended Agent Rule LINE write once and records a failed delivery without retry work', async () => {
     fixture = await createAutomationTestApp({ ai: true, lineSecret: 'line-secret' });
     fixture.organization.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");
@@ -284,6 +440,9 @@ describe('Organization Automation Inbox scheduling', () => {
         throw new Error(`Unexpected Google request: ${url}`);
       } },
       agent: { complete },
+      ai: {
+        extract: async () => ({ summary: '例会のお知らせです。', events: [], tasks: [], warnings: [] }),
+      },
     });
 
     await expect(automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding }))
@@ -586,7 +745,7 @@ describe('Organization Automation Inbox scheduling', () => {
   });
 
   it('creates a Scheduled Event through the Automation interface with an injected Google adapter', async () => {
-    fixture = await createAutomationTestApp();
+    fixture = await createAutomationTestApp({ ai: true });
     const automation = createAutomation(fixture.environment, {
       google: {
         request: async <T>(_accessToken: string, url: string): Promise<T> => {
@@ -607,6 +766,17 @@ describe('Organization Automation Inbox scheduling', () => {
           return { id: 'calendar-event-port' } as T;
         },
       },
+      ai: {
+        extract: async () => ({
+          summary: '例会のお知らせです。',
+          events: [{
+            title: '例会', startsAt: '2026-08-03T19:00:00+09:00', endsAt: '2026-08-03T21:30:00+09:00',
+            timeZone: 'Asia/Tokyo', location: '', description: '例会です。',
+          }],
+          tasks: [],
+          warnings: [],
+        }),
+      },
     });
 
     await expect(automation.runOrganization({
@@ -621,7 +791,7 @@ describe('Organization Automation Inbox scheduling', () => {
   });
 
   it('runs an Automation Inbox only after an authorized member enables it', async () => {
-    fixture = await createAutomationTestApp({ enabled: false });
+    fixture = await createAutomationTestApp({ enabled: false, ai: true });
     const requests: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       requests.push(url);
@@ -641,7 +811,7 @@ describe('Organization Automation Inbox scheduling', () => {
   });
 
   it('resumes each Gmail read from the last successfully persisted history boundary', async () => {
-    fixture = await createAutomationTestApp();
+    fixture = await createAutomationTestApp({ ai: true });
     const boundaries: Array<string | null> = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       const parsed = new URL(url);
@@ -664,7 +834,7 @@ describe('Organization Automation Inbox scheduling', () => {
   });
 
   it('turns one newly discovered dated Source Message into one upcoming Scheduled Event', async () => {
-    fixture = await createAutomationTestApp();
+    fixture = await createAutomationTestApp({ ai: true });
     const requests: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       requests.push(url);
@@ -675,6 +845,14 @@ describe('Organization Automation Inbox scheduling', () => {
         }), { status: 200 });
       }
       if (url.includes('/messages/gmail-message-1')) return sourceMessageResponse();
+      if (url.includes('ai.example.com')) return Response.json({ choices: [{ message: { content: JSON.stringify({
+        summary: '例会のお知らせです。',
+        events: [{
+          title: '例会', startsAt: '2026-08-03T19:00:00+09:00', endsAt: '2026-08-03T21:30:00+09:00',
+          timeZone: 'Asia/Tokyo', location: '', description: '例会です。',
+        }],
+        tasks: [],
+      }) } }] });
       return new Response(JSON.stringify({ id: 'calendar-event-1' }), { status: 200 });
     }));
 
@@ -722,7 +900,7 @@ describe('Organization Automation Inbox scheduling', () => {
       fixture.environment,
       'organization-1',
       fixture.organization.binding,
-    )).resolves.toEqual({ scanned: 1, created: 0, skipped: 1, exceptions: 0 });
+    )).resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 0 });
 
     const emailRequests = upstreamRequests.filter(({ url }) => url.includes('/messages/send'));
     expect(emailRequests).toHaveLength(1);
@@ -824,7 +1002,7 @@ describe('Organization Automation Inbox scheduling', () => {
       fixture.environment,
       'organization-1',
       fixture.organization.binding,
-    )).resolves.toEqual({ scanned: 1, created: 0, skipped: 1, exceptions: 0 });
+    )).resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 0 });
     expect(upstreamRequests.some((url) => url.includes('/messages/send') || url.includes('api.line.me'))).toBe(false);
   });
 
@@ -1130,7 +1308,11 @@ describe('Organization Automation Inbox scheduling', () => {
   });
 
   it('keeps the Calendar event as a draft when Drive publication fails', async () => {
-    fixture = await createAutomationTestApp();
+    fixture = await createAutomationTestApp({ ai: true });
+    const markdown = { toMarkdown: vi.fn().mockResolvedValue({
+      format: 'markdown', name: '式次第.pdf', mimetype: 'application/pdf', tokens: 4, data: '例会の式次第',
+    }) };
+    (fixture.environment as unknown as { AI: typeof markdown }).AI = markdown;
     let calendarRequest: { attachments?: unknown[] } = {};
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes('/history')) {
@@ -1159,6 +1341,14 @@ describe('Organization Automation Inbox scheduling', () => {
       if (url.includes('upload/drive')) {
         return new Response(JSON.stringify({ error: { message: 'Drive upload failed' } }), { status: 503 });
       }
+      if (url.includes('ai.example.com')) return Response.json({ choices: [{ message: { content: JSON.stringify({
+        summary: '例会のお知らせです。',
+        events: [{
+          title: '例会', startsAt: '2026-08-03T19:00:00+09:00', endsAt: '2026-08-03T21:30:00+09:00',
+          timeZone: 'Asia/Tokyo', location: '', description: '例会です。',
+        }],
+        tasks: [],
+      }) } }] });
       if (url.includes('/calendar/v3/calendars/primary/events') && init?.method === 'POST') {
         calendarRequest = JSON.parse(init.body as string) as typeof calendarRequest;
         return new Response(JSON.stringify({ id: 'calendar-event-draft' }), { status: 200 });

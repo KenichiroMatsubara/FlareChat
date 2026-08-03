@@ -17,10 +17,10 @@ export const AutomationPage = (props: DashboardProps) => <section className="pag
   <div className="page-title"><p>GMAIL TO CALENDAR</p><h1>自動化</h1><span>{props.automation ? `${props.automation.email} の Gmail と primary Calendar を接続中` : 'Googleアカウントを接続してください'}</span></div>
   {props.automation ? <>
     <section className="hero-status"><div><span className={props.automation.enabled ? 'status-light on' : 'status-light'} /><p>{props.automation.enabled ? '自動化は有効です' : '自動化は停止中です'}</p><small>前回の確認: {formatted(props.automation.lastSyncedAt)}</small></div><label className="switch"><input type="checkbox" checked={props.automation.enabled} onChange={(event) => props.onSetEnabled(event.target.checked)} disabled={props.busy} /><span /></label></section>
-    <section className="action-panel"><div><h2>メールを今すぐ確認</h2><p>新着メールだけを確認し、予定として認識できる内容を Calendar に登録します。</p></div><button className="primary" onClick={props.onRun} disabled={props.busy || !props.automation.enabled}>{props.busy ? <RefreshCw className="spin" size={18} /> : <Play size={18} />}{props.busy ? '確認中…' : '今すぐ確認'}</button></section>
-    {props.summary && <p className="dashboard-success"><CheckCircle2 size={17} />今回: {props.summary.created}件を予定化、{props.summary.skipped}件を保留、{props.summary.exceptions}件でエラー</p>}
-    <section className="metrics-row"><div><b>{props.automation.created}</b><span>予定を作成</span></div><div><b>{props.automation.skipped}</b><span>書式不足</span></div><div><b>{props.automation.exceptions}</b><span>エラー</span></div></section>
-    <section className="info-panel"><CalendarDays size={20} /><div><strong>予定として認識する書式</strong><p>件名または本文に <code>2026/08/03 19:00-21:00</code> のような日付と開始・終了時刻を含めてください。</p></div></section>
+    <section className="action-panel"><div><h2>メールを今すぐ確認</h2><p>すべての新着メールを確認し、AI が予定・タスク・お知らせを判定します。</p></div><button className="primary" onClick={props.onRun} disabled={props.busy || !props.automation.enabled}>{props.busy ? <RefreshCw className="spin" size={18} /> : <Play size={18} />}{props.busy ? '確認中…' : '今すぐ確認'}</button></section>
+    {props.summary && <p className="dashboard-success"><CheckCircle2 size={17} />今回: {props.summary.scanned}件をAI判定、{props.summary.created}件を予定化、{props.summary.skipped}件を対象外、{props.summary.exceptions}件でエラー</p>}
+    <section className="metrics-row"><div><b>{props.automation.created}</b><span>予定を作成</span></div><div><b>{props.automation.skipped}</b><span>処理対象外</span></div><div><b>{props.automation.exceptions}</b><span>エラー</span></div></section>
+    <section className="info-panel"><CalendarDays size={20} /><div><strong>AI がメール内容を判定します</strong><p>固定の日付書式は不要です。本文や添付ファイルから予定、タスク、お知らせを抽出します。</p></div></section>
   </> : <section className="empty-page"><Mail size={30} /><h2>Googleアカウントを接続してください</h2><p>接続後、このページから自動化を操作できます。</p></section>}
 </section>;
 
