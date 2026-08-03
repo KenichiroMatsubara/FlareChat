@@ -493,6 +493,7 @@ describe('mailbox test prerequisites', () => {
             events: [{
               title: '例会', startsAt: '2026-08-03T19:00:00+09:00', endsAt: '2026-08-03T21:00:00+09:00',
               timeZone: 'Asia/Tokyo', location: '会館', description: '月例会',
+              summary: '毎月の例会です。会費は当日徴収します。',
             }],
             tasks: [], confirmationToken: 'token', expiresAt: '2026-08-03T00:00:00.000Z',
           }}
@@ -502,6 +503,7 @@ describe('mailbox test prerequisites', () => {
 
     expect(html).toContain('メールの要約');
     expect(html).toContain('8月3日の例会案内です。7月31日までに出席登録が必要です。');
+    expect(html).toContain('毎月の例会です。会費は当日徴収します。');
   });
 
   it('configures an OpenAI-compatible endpoint without a fixed provider or model', () => {

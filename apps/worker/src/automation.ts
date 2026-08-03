@@ -4,6 +4,7 @@ import { decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptograp
 import { completeBaselineSkippedRepair, ensureBaselineSchemaRule } from './baseline-automation';
 import { fromBase64Url } from './encoding';
 import { buildAiEventDetailsRequest, type AiEventDetailsRequest, type EventDetails, type MailExtraction, type TaskRoleDescription } from './event-details';
+import { calendarEventDescription } from './event-description';
 import { createTaskWorkflow } from './tasks';
 import { deliverLineBatch, deliverSourceMessageEmail, recordDeliveryAttempt } from './delivery';
 import type { SourceAttachmentContent } from './drive-attachments';
@@ -742,6 +743,9 @@ const createMailboxTestCalendarEventsWithGoogle = async (
   if (publications.some(({ publication }) => publication.outcome === 'failed')) {
     throw new Error('添付ファイルを公開できなかったため、テスト予定を作成しませんでした。');
   }
+  const attachmentLinks = publications.flatMap(({ attachment, publication }) => publication.publicUrl
+    ? [{ filename: attachment.filename, url: publication.publicUrl }]
+    : []);
   const calendarUrl = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
   if (publications.length) calendarUrl.searchParams.set('supportsAttachments', 'true');
   const created = await Promise.all(input.events.map(async (details) => {
@@ -749,7 +753,11 @@ const createMailboxTestCalendarEventsWithGoogle = async (
       method: 'POST',
       body: JSON.stringify({
         summary: details.title,
-        description: `${details.description}\n\nMail Automation の手動テストで Gmail メッセージ ${input.messageId} から作成しました。`.trim(),
+        description: calendarEventDescription({
+          summary: details.summary,
+          attachments: attachmentLinks,
+          attribution: `Mail Automation の手動テストで Gmail メッセージ ${input.messageId} から作成しました。`,
+        }),
         location: details.location,
         start: { dateTime: details.startsAt, timeZone: details.timeZone },
         end: { dateTime: details.endsAt, timeZone: details.timeZone },
@@ -1011,7 +1019,7 @@ const processOrganizationMessage = async (
     subject: `Message Summary: ${subject}`,
     body: extraction.summary,
   });
-  const candidates = extraction.events.map((event) => ({ title: event.title, startsAt: event.startsAt, endsAt: event.endsAt }));
+  const candidates = extraction.events;
   if (extraction.tasks.length) {
     await createTaskWorkflow(db).createFromSourceMessage({
       organizationId,
@@ -1030,7 +1038,9 @@ const processOrganizationMessage = async (
     publication: await dependencies.attachments.publish({ accessToken, attachment }),
   })));
   const publicationFailed = publications.some(({ publication }) => publication.outcome === 'failed');
-  const publicUrls = publications.flatMap(({ publication }) => publication.publicUrl ? [publication.publicUrl] : []);
+  const attachmentLinks = publications.flatMap(({ attachment, publication }) => publication.publicUrl
+    ? [{ filename: attachment.filename, url: publication.publicUrl }]
+    : []);
   const calendarAttachments = publications.flatMap(({ attachment, publication }) => publication.publicUrl ? [{
     fileUrl: publication.publicUrl,
     title: attachment.filename,
@@ -1043,7 +1053,11 @@ const processOrganizationMessage = async (
       method: 'POST',
       body: JSON.stringify({
         summary: candidate.title,
-        description: `Mail Automation が Gmail メッセージ ${gmailMessageId} から作成しました。${publicUrls.length ? `\n\n添付ファイル:\n${publicUrls.join('\n')}` : ''}`,
+        description: calendarEventDescription({
+          summary: candidate.summary,
+          attachments: attachmentLinks,
+          attribution: `Mail Automation が Gmail メッセージ ${gmailMessageId} から作成しました。`,
+        }),
         start: { dateTime: candidate.startsAt, timeZone: 'Asia/Tokyo' },
         end: { dateTime: candidate.endsAt, timeZone: 'Asia/Tokyo' },
         attachments: calendarAttachments,
