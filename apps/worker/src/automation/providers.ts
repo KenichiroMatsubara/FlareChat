@@ -6,6 +6,18 @@ export interface GoogleAutomationPort {
   request<T>(accessToken: string, url: string, init?: RequestInit): Promise<T>;
 }
 
+export class GoogleApiError extends Error {
+  readonly status: number;
+  readonly url: string;
+
+  constructor(message: string, status: number, url: string) {
+    super(message);
+    this.name = 'GoogleApiError';
+    this.status = status;
+    this.url = url;
+  }
+}
+
 export interface AutomationDependencies {
   google: GoogleAutomationPort;
   attachments: {
@@ -31,7 +43,7 @@ export const productionGoogleAutomationPort: GoogleAutomationPort = {
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', ...init?.headers },
     });
     const body = await response.json() as T & { error?: { message?: string } };
-    if (!response.ok) throw new Error(body.error?.message ?? 'Google API request failed.');
+    if (!response.ok) throw new GoogleApiError(body.error?.message ?? 'Google API request failed.', response.status, url);
     return body;
   },
 };

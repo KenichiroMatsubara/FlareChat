@@ -41,4 +41,19 @@ describe('Organization Automation routes', () => {
       },
     });
   });
+
+  it('does not enable Automation until an AI Connection is configured', async () => {
+    fixture = createTestApp();
+    fixture.organization.execute("UPDATE google_connections SET enabled = 0 WHERE kind = 'automation_inbox'");
+
+    const response = await automationRoutes.fetch(
+      fixture.jsonRequest('/organizations/organization-1/automation/enabled', { enabled: true }),
+      fixture.environment,
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: { message: '自動化を有効にする前に OpenAI 互換 API を設定してください。' },
+    });
+  });
 });

@@ -64,7 +64,7 @@ describe('Organization provisioning', () => {
     ), fixture.environment);
 
     await expect(automation.json()).resolves.toMatchObject({
-      data: { email: 'owner@example.com', enabled: true },
+      data: { email: 'owner@example.com', enabled: false },
     });
     await expect(membership.json()).resolves.toMatchObject({
       data: {

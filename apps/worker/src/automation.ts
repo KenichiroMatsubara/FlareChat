@@ -1,6 +1,7 @@
 import { and, count, eq, inArray, isNotNull } from 'drizzle-orm';
 
 import { decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
+import { completeBaselineSkippedRepair, ensureBaselineSchemaRule } from './baseline-automation';
 import { fromBase64Url } from './encoding';
 import { buildAiEventDetailsRequest, type AiEventDetailsRequest, type EventDetails, type MailExtraction, type TaskRoleDescription } from './event-details';
 import { createTaskWorkflow } from './tasks';
@@ -8,6 +9,7 @@ import { deliverLineBatch, deliverSourceMessageEmail, recordDeliveryAttempt } fr
 import type { SourceAttachmentContent } from './drive-attachments';
 import type { GoogleTokenSet } from './google';
 import { productionAutomationDependencies } from './automation/providers';
+import { GoogleApiError } from './automation/providers';
 import type { AutomationDependencies, GoogleAutomationPort } from './automation/providers';
 import { AGENT_TRANSCRIPT_RETENTION_DAYS, AgentRunFailure, expireProposedActions, runAgent, writeAgentRunTranscript } from './agent-runs';
 import type { AgentExecutionMode, AgentWritePort } from './agent-runs';
@@ -80,12 +82,6 @@ export interface AutomationSummary {
 }
 
 export const LEGACY_AI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai';
-
-interface EventCandidate {
-  title: string;
-  startsAt: string;
-  endsAt: string;
-}
 
 export interface MailboxTestMatch {
   id: string;
@@ -162,6 +158,19 @@ export const decodedBody = (part: GmailPart | undefined): string => {
   return bodyTextParts(part).join('\n').replace(/\s+/gu, ' ').trim();
 };
 
+class AutomationConfigurationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AutomationConfigurationError';
+  }
+}
+
+const requireActiveAiConnection = async (database: D1Database): Promise<void> => {
+  const connection = await drizzleOrganizationDatabase(database).select({ id: connections.id }).from(connections)
+    .where(and(eq(connections.kind, 'ai'), eq(connections.status, 'active'))).limit(1).get();
+  if (!connection) throw new AutomationConfigurationError('自動化を実行する前に OpenAI 互換 API を設定してください。');
+};
+
 /**
  * States when the Source Message arrived, in the time zone this product schedules
  * in, so the AI can resolve a date that omits its year. Gmail reports epoch
@@ -196,32 +205,6 @@ const subjectOf = (part: GmailPart | undefined): string =>
 
 const senderOf = (part: GmailPart | undefined): string =>
   part?.headers?.find((header) => header.name?.toLowerCase() === 'from')?.value?.trim() ?? '';
-
-const padded = (value: number): string => String(value).padStart(2, '0');
-
-const japanDateTime = (year: number, month: number, day: number, hour: number, minute: number): string =>
-  `${year}-${padded(month)}-${padded(day)}T${padded(hour)}:${padded(minute)}:00+09:00`;
-
-/** Extracts an event only when the message states both a date and a time range. */
-export const extractEventCandidate = (subject: string, body: string, current = new Date()): EventCandidate | null => {
-  const text = `${subject}\n${body}`;
-  const date = text.match(/(?:(\d{4})\s*(?:年|[/-]))?\s*(\d{1,2})\s*(?:月|[/-])\s*(\d{1,2})\s*日?/u);
-  const time = text.match(/(?:^|\s)(\d{1,2})(?::(\d{2}))?\s*(?:時)?\s*(?:-|〜|～|to)\s*(\d{1,2})(?::(\d{2}))?\s*(?:時)?/iu);
-  if (!date || !time) return null;
-  const year = date[1] ? Number(date[1]) : current.getFullYear();
-  const month = Number(date[2]);
-  const day = Number(date[3]);
-  const startHour = Number(time[1]);
-  const startMinute = Number(time[2] ?? '0');
-  const endHour = Number(time[3]);
-  const endMinute = Number(time[4] ?? '0');
-  if (month < 1 || month > 12 || day < 1 || day > 31 || startHour > 23 || endHour > 23 || startMinute > 59 || endMinute > 59) return null;
-  return {
-    title: subject.replace(/^(?:re|fw|fwd)\s*:\s*/iu, '').trim() || 'メールから作成した予定',
-    startsAt: japanDateTime(year, month, day, startHour, startMinute),
-    endsAt: japanDateTime(year, month, day, endHour, endMinute),
-  };
-};
 
 const ruleMatches = (rule: Pick<ActiveRule, 'selectionPolicy'>, source: RuleSource): boolean => {
   const sender = source.sender.trim().toLowerCase();
@@ -798,25 +781,36 @@ const processOrganizationMessage = async (
   accessToken: string,
   gmailHistoryId: string,
   gmailMessageId: string,
+  reprocessSkipped = false,
 ): Promise<void> => {
   const db = drizzleOrganizationDatabase(database);
-  const known = await db.select({ id: sourceMessages.id }).from(sourceMessages)
+  const known = await db.select({ id: sourceMessages.id, state: sourceMessages.state }).from(sourceMessages)
     .where(eq(sourceMessages.gmailMessageId, gmailMessageId)).get();
-  if (known) return;
+  if (known && !(reprocessSkipped && known.state === 'skipped')) return;
   const message = await dependencies.google.request<GmailMessage>(accessToken, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(gmailMessageId)}?format=full`);
   const subject = subjectOf(message.payload);
-  const sourceMessageId = crypto.randomUUID();
+  const sourceMessageId = known?.id ?? crypto.randomUUID();
   const timestamp = now();
-  await db.insert(sourceMessages).values({
-    id: sourceMessageId,
-    gmailMessageId,
-    gmailHistoryId,
-    sender: senderOf(message.payload),
-    subject,
-    receivedAt: timestamp,
-    processedAt: timestamp,
-    state: 'processing',
-  }).run();
+  if (known) {
+    await db.update(sourceMessages).set({
+      gmailHistoryId,
+      sender: senderOf(message.payload),
+      subject,
+      processedAt: timestamp,
+      state: 'processing',
+    }).where(eq(sourceMessages.id, sourceMessageId)).run();
+  } else {
+    await db.insert(sourceMessages).values({
+      id: sourceMessageId,
+      gmailMessageId,
+      gmailHistoryId,
+      sender: senderOf(message.payload),
+      subject,
+      receivedAt: timestamp,
+      processedAt: timestamp,
+      state: 'processing',
+    }).run();
+  }
   const body = decodedBody(message.payload) || (message.snippet ?? '');
   const [activeRules, activeAgentRuleRows] = await Promise.all([
     db.select({
@@ -971,6 +965,19 @@ const processOrganizationMessage = async (
   const allowedRoleIds = new Set(rule.taskRoleIds ?? []);
   const allowedTaskRoles = organizationRoles.filter((role) => allowedRoleIds.has(role.id));
   const extraction = await aiExtraction(env, organizationId, database, `${subject}\n${body}`, attachmentContents, sharedConvertedAttachments, allowedTaskRoles, receivedAtOf(message.internalDate), dependencies);
+  if (extraction === undefined) {
+    await db.insert(automationExceptions).values({
+      id: crypto.randomUUID(),
+      sourceMessageId,
+      code: 'ai_connection_missing',
+      message: 'An active AI Connection is required to analyze incoming mail.',
+      state: 'open',
+      createdAt: now(),
+    }).run();
+    await db.update(sourceMessages).set({ state: 'exception', processedAt: now() })
+      .where(eq(sourceMessages.id, sourceMessageId)).run();
+    return;
+  }
   if (extraction === null) {
     await db.insert(automationExceptions).values({
       id: crypto.randomUUID(),
@@ -1004,20 +1011,19 @@ const processOrganizationMessage = async (
     subject: `Message Summary: ${subject}`,
     body: extraction.summary,
   });
-  const fallbackCandidate = extractEventCandidate(subject, body);
-  const candidates = extraction?.events.map((event) => ({ title: event.title, startsAt: event.startsAt, endsAt: event.endsAt })) ?? (fallbackCandidate ? [fallbackCandidate] : []);
-  if (!candidates.length) {
-    await db.update(sourceMessages).set({ state: agentFailed ? 'exception' : 'skipped', processedAt: now() })
-      .where(eq(sourceMessages.id, sourceMessageId)).run();
-    return;
-  }
-  if (extraction?.tasks.length) {
+  const candidates = extraction.events.map((event) => ({ title: event.title, startsAt: event.startsAt, endsAt: event.endsAt }));
+  if (extraction.tasks.length) {
     await createTaskWorkflow(db).createFromSourceMessage({
       organizationId,
       sourceMessageId,
       sourceMessageSubject: subject,
       extractedTasks: extraction.tasks,
     });
+  }
+  if (!candidates.length) {
+    await db.update(sourceMessages).set({ state: agentFailed ? 'exception' : 'processed', processedAt: now() })
+      .where(eq(sourceMessages.id, sourceMessageId)).run();
+    return;
   }
   const publications = await Promise.all(attachmentContents.map(async (attachment) => ({
     attachment,
@@ -1105,8 +1111,39 @@ const runOrganizationInbox = async (
   organizationId: string,
   database: D1Database,
   inbox: AutomationInbox,
-): Promise<void> => {
+  reprocessSkipped = false,
+): Promise<{ reprocessed: number }> => {
   const accessToken = await accessTokenForInbox(env, organizationId, database, inbox, dependencies);
+  const db = drizzleOrganizationDatabase(database);
+  let reprocessed = 0;
+  if (reprocessSkipped) {
+    const skippedMessages = await db.select({
+      id: sourceMessages.id,
+      gmailMessageId: sourceMessages.gmailMessageId,
+      gmailHistoryId: sourceMessages.gmailHistoryId,
+    }).from(sourceMessages).where(eq(sourceMessages.state, 'skipped')).all();
+    for (const skipped of skippedMessages) {
+      try {
+        await processOrganizationMessage(
+          dependencies,
+          env,
+          database,
+          organizationId,
+          accessToken,
+          skipped.gmailHistoryId,
+          skipped.gmailMessageId,
+          true,
+        );
+      } catch (error) {
+        if (!(error instanceof GoogleApiError)
+          || error.status !== 404
+          || !error.url.includes(`/messages/${encodeURIComponent(skipped.gmailMessageId)}`)) throw error;
+        await db.update(sourceMessages).set({ state: 'processed', processedAt: now() })
+          .where(eq(sourceMessages.id, skipped.id)).run();
+      }
+      reprocessed += 1;
+    }
+  }
   let pageToken: string | undefined;
   let historyId = inbox.gmailHistoryId;
   do {
@@ -1117,17 +1154,25 @@ const runOrganizationInbox = async (
     const history = await dependencies.google.request<GmailHistory>(accessToken, query.toString());
     for (const entry of history.history ?? []) {
       for (const message of entry.messagesAdded ?? []) {
-        if (message.message?.id) await processOrganizationMessage(dependencies, env, database, organizationId, accessToken, inbox.gmailHistoryId, message.message.id);
+        const messageId = message.message?.id;
+        if (!messageId) continue;
+        try {
+          await processOrganizationMessage(dependencies, env, database, organizationId, accessToken, inbox.gmailHistoryId, messageId);
+        } catch (error) {
+          if (error instanceof GoogleApiError && error.status === 404 && error.url.includes(`/messages/${encodeURIComponent(messageId)}`)) continue;
+          throw error;
+        }
       }
     }
     historyId = history.historyId ?? historyId;
     pageToken = history.nextPageToken;
   } while (pageToken);
   const syncedAt = now();
-  await drizzleOrganizationDatabase(database).update(googleConnections)
+  await db.update(googleConnections)
     .set({ gmailHistoryId: historyId, lastSyncedAt: syncedAt, lastError: null, updatedAt: syncedAt })
     .where(eq(googleConnections.id, inbox.id))
     .run();
+  return { reprocessed };
 };
 
 const automationCounts = async (database: D1Database): Promise<{ scanned: number; created: number; skipped: number; exceptions: number }> => {
@@ -1159,14 +1204,17 @@ const runOrganizationAutomationWithGoogle = async (
     eq(googleConnections.enabled, true),
   )).limit(1).get();
   if (!inbox) throw new Error('有効な Automation Inbox が見つかりません。');
+  await requireActiveAiConnection(database);
+  const baseline = await ensureBaselineSchemaRule(db, organizationId);
   await expireProposedActions(database);
   const before = await automationCounts(database);
-  await runOrganizationInbox(dependencies, env, organizationId, database, inbox);
+  const run = await runOrganizationInbox(dependencies, env, organizationId, database, inbox, baseline.repairSkipped);
+  await completeBaselineSkippedRepair(db);
   const after = await automationCounts(database);
   return {
-    scanned: after.scanned - before.scanned,
+    scanned: after.scanned - before.scanned + run.reprocessed,
     created: after.created - before.created,
-    skipped: after.skipped - before.skipped,
+    skipped: Math.max(0, after.skipped - before.skipped),
     exceptions: after.exceptions - before.exceptions,
   };
 };
@@ -1196,13 +1244,16 @@ const runEnabledAutomationsWithDependencies = async (env: Bindings, dependencies
     )).all();
     for (const inbox of inboxes) {
       try {
-        await runOrganizationInbox(dependencies, env, organization.id, database.raw, inbox);
+        await requireActiveAiConnection(database.raw);
+        const baseline = await ensureBaselineSchemaRule(orgDb, organization.id);
+        await runOrganizationInbox(dependencies, env, organization.id, database.raw, inbox, baseline.repairSkipped);
+        await completeBaselineSkippedRepair(orgDb);
       } catch (error) {
-        await orgDb.update(googleConnections).set({
-          status: 'reauthentication_required',
-          lastError: error instanceof Error ? error.message : 'Automation Inbox failed.',
-          updatedAt: now(),
-        }).where(eq(googleConnections.id, inbox.id)).run();
+        const lastError = error instanceof Error ? error.message : 'Automation Inbox failed.';
+        await orgDb.update(googleConnections).set(error instanceof AutomationConfigurationError
+          ? { lastError, updatedAt: now() }
+          : { status: 'reauthentication_required', lastError, updatedAt: now() })
+          .where(eq(googleConnections.id, inbox.id)).run();
       }
     }
   }

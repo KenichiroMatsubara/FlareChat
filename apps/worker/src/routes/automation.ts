@@ -1,3 +1,4 @@
+import { and, eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 
 import { beginGoogleEntry, entryConfigurationError } from '../entry';
@@ -7,6 +8,7 @@ import { createRequestContext } from './request-context';
 import type { Bindings } from '../types';
 import { organizationDatabase } from '../storage/database';
 import { createOrganizationStore } from '../storage/organization-store';
+import { connections } from '../storage/organization-schema';
 
 export const automationRoutes = new Hono<{ Bindings: Bindings }>();
 
@@ -59,7 +61,15 @@ automationRoutes.post('/organizations/:organizationId/automation/enabled', async
     if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Automation can only be changed by an Owner, Admin, or Operator.', 403);
     const input = await context.req.json<{ enabled?: boolean }>();
     if (typeof input.enabled !== 'boolean') return failure(context, 'enabled must be a boolean.');
-    const updated = await createOrganizationStore(organizationDatabase(access.database)).setAutomationEnabled(input.enabled, now());
+    const database = organizationDatabase(access.database);
+    if (input.enabled) {
+      const ai = await database.select({ id: connections.id }).from(connections).where(and(
+        eq(connections.kind, 'ai'),
+        eq(connections.status, 'active'),
+      )).limit(1).get();
+      if (!ai) return failure(context, '自動化を有効にする前に OpenAI 互換 API を設定してください。', 409);
+    }
+    const updated = await createOrganizationStore(database).setAutomationEnabled(input.enabled, now());
     if (!updated) return failure(context, 'Automation Inbox が見つかりません。', 404);
     return json(context, { enabled: input.enabled });
   } catch (error) {
