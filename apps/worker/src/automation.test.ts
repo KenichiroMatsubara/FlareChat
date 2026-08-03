@@ -771,7 +771,7 @@ describe('Organization Automation Inbox scheduling', () => {
           summary: '例会のお知らせです。',
           events: [{
             title: '例会', startsAt: '2026-08-03T19:00:00+09:00', endsAt: '2026-08-03T21:30:00+09:00',
-            timeZone: 'Asia/Tokyo', location: '', description: '例会です。',
+            timeZone: 'Asia/Tokyo', location: '', description: '例会です。', summary: '毎月の例会です。',
           }],
           tasks: [],
           warnings: [],
@@ -1185,7 +1185,10 @@ describe('Organization Automation Inbox scheduling', () => {
       .replace(/=+$/u, '');
     let aiRequest: { messages?: Array<{ role?: string; content?: string }> } = {};
     let calendarUrl = '';
-    let calendarRequest: { attachments?: Array<{ fileUrl?: string; title?: string; mimeType?: string }> } = {};
+    let calendarRequest: {
+      description?: string;
+      attachments?: Array<{ fileUrl?: string; title?: string; mimeType?: string }>;
+    } = {};
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes('/history')) {
         return new Response(JSON.stringify({
@@ -1233,6 +1236,7 @@ describe('Organization Automation Inbox scheduling', () => {
             timeZone: 'Asia/Tokyo',
             location: '名古屋',
             description: '添付DOCXから抽出',
+            summary: '式典の案内です。受付は開始30分前からです。',
           }) } }],
         }), { status: 200 });
       }
@@ -1263,6 +1267,12 @@ describe('Organization Automation Inbox scheduling', () => {
       title: '式典案内.docx',
       mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     }]);
+    expect(calendarRequest.description).toBe([
+      '式典の案内です。受付は開始30分前からです。',
+      '<br><br>添付ファイル:',
+      '<br><a href="https://drive.example/docx">式典案内.docx</a>',
+      '<br><br>Mail Automation が Gmail メッセージ gmail-message-docx から作成しました。',
+    ].join(''));
     const dashboard = await app.fetch(
       fixture.request('/api/organizations/organization-1/dashboard'),
       fixture.environment,

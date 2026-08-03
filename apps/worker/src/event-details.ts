@@ -8,6 +8,8 @@ export interface EventDetails {
   timeZone: string;
   location: string;
   description: string;
+  /** The Event Summary: what this one Scheduled Event is, written for the Calendar description. */
+  summary: string;
 }
 
 /** A deadline task is scoped to the Source Message, never duplicated per Event. */
@@ -87,6 +89,7 @@ export const validatedEventDetails = (text: string): EventDetails | null => {
     const startsAt = Date.parse(value.startsAt);
     const endsAt = Date.parse(value.endsAt);
     if (!Number.isFinite(startsAt) || !Number.isFinite(endsAt) || startsAt >= endsAt) return null;
+    if (value.summary !== undefined && typeof value.summary !== 'string') return null;
     return {
       title: value.title.trim(),
       startsAt: value.startsAt,
@@ -94,6 +97,7 @@ export const validatedEventDetails = (text: string): EventDetails | null => {
       timeZone: value.timeZone.trim(),
       location: value.location,
       description: value.description,
+      summary: value.summary?.trim() || value.description.trim() || value.title.trim(),
     };
   } catch {
     return null;
@@ -181,6 +185,8 @@ export const buildAiEventDetailsRequest = async (input: {
 
 Write summary as a concise Japanese plain-text summary of the entire email and its accepted attachments. Include the purpose and important facts such as dates, deadlines, fees, and required actions when stated. Do not invent missing facts.
 
+Write each event's summary as a concise Japanese plain-text summary of that one event alone, in one to three sentences. State what the event is, who it is for, and the facts a participant needs, such as the venue, fee, what to bring, and required preparation, only when the invitation states them for that event. Do not restate the date and time already carried by startsAt and endsAt, do not summarize the other events, and do not invent missing facts. Keep description as the short factual line about the event and summary as the readable account of it.
+
 Create one item in events for each independently scheduled program. For example, a ceremony and its banquet/reception are separate events when each has an explicit date, start time, and end time. Do not merge them. Do not create an event when any of its date, start time, or end time is absent; do not guess, calculate, or copy times from another program. Deduplicate the same program when it appears in both the email and an attachment.
 
 Create tasks only for explicit administrative deadlines in the whole invitation, not once per event. Choose assigneeRoleId from the allowed Operational Task Roles below by using each display name and description as its semantic meaning. Choose unassigned when no defined role fits. Use exactly one task for each unique kind and calendar date, even when multiple events share it. deadline must be a complete date as YYYY-MM-DD. Never invent, guess, or calculate a date the invitation does not state. Omit tasks whose deadline date is not stated. Set tasks to [] when there are none.
@@ -219,8 +225,9 @@ Use ISO 8601 date-times with the stated time zone for events. Keep titles and de
                 timeZone: { type: 'string' },
                 location: { type: 'string' },
                 description: { type: 'string' },
+                summary: { type: 'string', maxLength: 1000 },
               },
-              required: ['title', 'startsAt', 'endsAt', 'timeZone', 'location', 'description'],
+              required: ['title', 'startsAt', 'endsAt', 'timeZone', 'location', 'description', 'summary'],
             },
           },
           tasks: {
