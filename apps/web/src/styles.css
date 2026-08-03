@@ -200,7 +200,7 @@ svg { flex: none; }
 
 .member-directory { overflow: hidden; }
 .member-directory-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 21px clamp(18px, 3.6vw, 26px) 14px; }
-.member-directory-heading > span { padding: 5px 9px; color: #466b53; background: #edf4ee; border-radius: 11px; font-size: 10px; }
+.member-directory-heading > span { flex: none; padding: 5px 9px; color: #466b53; background: #edf4ee; border-radius: 11px; font-size: 10px; white-space: nowrap; }
 .member-filters { display: flex; gap: 10px; padding: 0 clamp(18px, 3.6vw, 26px) 17px; }
 .member-search { position: relative; flex: 1; min-width: 0; }
 .member-search svg { position: absolute; top: 50%; left: 12px; color: #78847a; transform: translateY(-50%); }
@@ -229,7 +229,7 @@ svg { flex: none; }
 .member-line-details strong { overflow: hidden; color: #3c4b40; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .member-line-details code { overflow: hidden; color: #667168; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .member-line-empty { display: flex; align-items: center; gap: 7px; padding: 10px; color: #899189; background: #f7f8f6; border: 1px dashed #d9ddd7; border-radius: 9px; font-size: 10px; }
-.member-edit-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 34px; padding: 0 10px; color: #53675a; background: white; border: 1px solid #d9dfd9; border-radius: 8px; font-size: 10px; }
+.member-edit-button { display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 5px; min-height: 34px; padding: 0 12px; color: #53675a; background: white; border: 1px solid #d9dfd9; border-radius: 8px; font-size: 10px; white-space: nowrap; }
 .member-edit-button:hover { color: #2d6747; border-color: #a9c4b0; background: #f5faf6; }
 .member-edit-form { grid-column: 2 / -1; display: grid; gap: 12px; }
 .member-edit-grid { display: grid; grid-template-columns: 1fr 1.2fr 1fr 120px; gap: 10px; }
@@ -347,7 +347,16 @@ svg { flex: none; }
   .member-create-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .member-line-select { grid-column: 1 / -1; }
   .member-create-form .primary { align-self: stretch; }
-  .member-card { grid-template-columns: 46px minmax(160px, .8fr) minmax(230px, 1.2fr) auto; }
+  .member-card { grid-template-columns: 46px minmax(0, .85fr) minmax(0, 1.15fr) auto; }
+}
+
+/* Member cards stack: identity beside the avatar, LINE details indented on the next row. */
+@media (max-width: 780px) {
+  .member-card { grid-template-columns: 40px minmax(0, 1fr) auto; align-items: start; gap: 12px 14px; }
+  .member-avatar { grid-column: 1; grid-row: 1; width: 40px; height: 40px; }
+  .member-identity { grid-column: 2; grid-row: 1; }
+  .member-edit-button { grid-column: 3; grid-row: 1; }
+  .member-line-details { grid-column: 2 / -1; grid-row: 2; }
 }
 
 @media (pointer: coarse) {
@@ -378,12 +387,10 @@ svg { flex: none; }
   .member-create-form .primary { width: 100%; }
   .member-filters { display: grid; }
   .member-filters select { width: 100%; }
-  .member-card { grid-template-columns: 42px minmax(0, 1fr) auto; align-items: start; gap: 12px; }
-  .member-avatar { width: 40px; height: 40px; }
-  .member-line-details { grid-column: 2 / -1; }
-  .member-line-details > div:not(.member-line-empty) { grid-template-columns: auto minmax(0, 1fr); }
-  .member-line-details code { grid-column: 1 / 3; grid-row: 2; white-space: normal; overflow-wrap: anywhere; }
-  .member-edit-form { grid-column: 2 / -1; }
+  .member-card { grid-template-columns: 40px minmax(0, 1fr); }
+  .member-edit-button { grid-column: 2 / -1; grid-row: 3; justify-self: start; }
+  .member-line-details > div:not(.member-line-empty) { grid-template-columns: auto minmax(0, 1fr); gap: 5px 9px; }
+  .member-line-details code { grid-column: 1 / -1; grid-row: 2; white-space: normal; overflow-wrap: anywhere; }
   .member-edit-grid { grid-template-columns: minmax(0, 1fr); }
   .member-edit-line-manual { flex-direction: column; align-items: stretch; }
   .member-edit-line-manual label:nth-child(2) { flex: 1 1 auto; }

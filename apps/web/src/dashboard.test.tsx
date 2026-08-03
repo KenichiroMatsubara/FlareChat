@@ -372,7 +372,9 @@ describe('member roster', () => {
 
     expect(stylesheet).toContain('.member-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }');
     expect(stylesheet).toContain('.member-create-form { grid-template-columns: minmax(0, 1fr); }');
-    expect(stylesheet).toContain('.member-line-details code { grid-column: 1 / 3; grid-row: 2;');
+    expect(stylesheet).toContain('.member-line-details code { grid-column: 1 / -1; grid-row: 2;');
+    expect(stylesheet).toContain('.member-card { grid-template-columns: 40px minmax(0, 1fr); }');
+    expect(stylesheet).toContain('.member-edit-button { grid-column: 2 / -1; grid-row: 3; justify-self: start; }');
   });
 });
 
