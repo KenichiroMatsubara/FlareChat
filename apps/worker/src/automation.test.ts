@@ -15,6 +15,7 @@ import {
   sourceAttachmentSizes,
 } from './automation';
 import { createAutomationTestApp, type AutomationTestApp } from '../test/automation';
+import { encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
 import { createMemoryR2, seedAttendanceRegistration, seedScheduledEvent } from '../test/seed';
 import { AGENT_TOKEN_CEILING, MAX_AGENT_TOOL_CALLS } from './agent-runs';
 import { GoogleApiError } from './automation/providers';
@@ -1850,5 +1851,147 @@ describe('the Event Refresh exit', () => {
     expect(publish).not.toHaveBeenCalled();
     expect(patchedDescription).toContain('https://drive.example/existing');
     expect(patchedDescription).toContain('案内.pdf');
+  });
+});
+
+describe('unattended Automation Inbox health', () => {
+  const inboxHealth = (): { status: string; last_error: string | null; failing_since: string | null; alerted_at: string | null } | null =>
+    fixture?.organization.row<{ status: string; last_error: string | null; failing_since: string | null; alerted_at: string | null }>(
+      "SELECT status, last_error, failing_since, alerted_at FROM google_connections WHERE kind = 'automation_inbox'",
+    ) ?? null;
+
+  const setInboxTokenExpiry = async (expiresAt: string): Promise<void> => {
+    const keyRecord = fixture?.control.row<{ master_key_version: string; wrapped_key_envelope: string }>(
+      "SELECT master_key_version, wrapped_key_envelope FROM organization_keys WHERE organization_id = 'organization-1'",
+    );
+    const organizationKey = await unwrapOrganizationKey({
+      masterKeyVersion: keyRecord?.master_key_version ?? '',
+      envelope: JSON.parse(keyRecord?.wrapped_key_envelope ?? '{}'),
+    }, await masterKey(fixture?.environment.CREDENTIAL_MASTER_KEY ?? ''), 'organization-1');
+    const envelope = await encrypt(JSON.stringify({
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      expiresAt,
+      scopes: [],
+      tokenType: 'Bearer',
+    }), organizationKey, 'google-connection:organization-1:automation-inbox');
+    fixture?.organization.execute(
+      "UPDATE google_connections SET token_envelope = ? WHERE kind = 'automation_inbox'",
+      JSON.stringify(envelope),
+    );
+  };
+
+  const sentNotices = (calls: Array<{ raw: string }>): string[] =>
+    calls.map(({ raw }) => new TextDecoder().decode(Uint8Array.from(
+      atob(raw.replaceAll('-', '+').replaceAll('_', '/')),
+      (character) => character.charCodeAt(0),
+    )));
+
+  it('keeps an Automation Inbox connected through a Gmail outage so the next scheduled run retries', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/history')) return Response.json({ error: { code: 503, message: 'Backend Error' } }, { status: 503 });
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    await runEnabledAutomations(fixture.environment);
+
+    expect(inboxHealth()).toMatchObject({ status: 'active', last_error: 'Backend Error', alerted_at: null });
+    expect(inboxHealth()?.failing_since).toEqual(expect.any(String));
+  });
+
+  it('suspends an Automation Inbox whose grant Google rejected and mails every Administrator', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    await setInboxTokenExpiry(new Date(Date.now() + 10 * 60 * 1_000).toISOString());
+    const notices: Array<{ raw: string }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === 'https://oauth2.googleapis.com/token') {
+        return Response.json({ error: 'invalid_grant', error_description: 'Token has been expired or revoked.' }, { status: 400 });
+      }
+      if (url.includes('/messages/send')) {
+        notices.push(JSON.parse(String(init?.body)) as { raw: string });
+        return Response.json({ id: 'administrator-notice' });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    await runEnabledAutomations(fixture.environment);
+
+    expect(inboxHealth()).toMatchObject({
+      status: 'reauthentication_required',
+      last_error: 'Token has been expired or revoked.',
+    });
+    expect(inboxHealth()?.alerted_at).toEqual(expect.any(String));
+    expect(sentNotices(notices)).toHaveLength(1);
+    expect(sentNotices(notices)[0]).toContain('To: owner@example.com');
+    expect(sentNotices(notices)[0]).toContain('Token has been expired or revoked.');
+  });
+
+  it('mails the Administrators once a day of unattended retries has failed and keeps the Inbox connected', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    fixture.organization.execute(
+      "UPDATE google_connections SET failing_since = ?, last_error = 'Backend Error' WHERE kind = 'automation_inbox'",
+      new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000).toISOString(),
+    );
+    const notices: Array<{ raw: string }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes('/history')) return Response.json({ error: { code: 503, message: 'Backend Error' } }, { status: 503 });
+      if (url.includes('/messages/send')) {
+        notices.push(JSON.parse(String(init?.body)) as { raw: string });
+        return Response.json({ id: 'administrator-notice' });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    await runEnabledAutomations(fixture.environment);
+
+    expect(inboxHealth()).toMatchObject({ status: 'active', last_error: 'Backend Error' });
+    expect(inboxHealth()?.alerted_at).toEqual(expect.any(String));
+    expect(sentNotices(notices)[0]).toContain('To: owner@example.com');
+  });
+
+  it('keeps sweeping the fleet when one Organization database cannot be opened', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    fixture.control.execute(
+      `INSERT INTO organizations (id, name, status, database_id, binding_name, created_at, updated_at)
+       VALUES ('organization-unbound', 'Unbound', 'active', 'database-unbound', 'ORG_UNBOUND', ?, ?)`,
+      '2026-01-01T00:00:00.000Z',
+      '2026-01-01T00:00:00.000Z',
+    );
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/history')) return Response.json({ historyId: 'history-after-unbound-peer' });
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    await runEnabledAutomations(fixture.environment);
+
+    expect(fixture.organization.row<{ gmail_history_id: string }>(
+      "SELECT gmail_history_id FROM google_connections WHERE kind = 'automation_inbox'",
+    )).toEqual({ gmail_history_id: 'history-after-unbound-peer' });
+    expect(inboxHealth()).toMatchObject({ status: 'active', last_error: null });
+  });
+
+  it('clears a recorded failure as soon as one scheduled run succeeds again', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    fixture.organization.execute(
+      "UPDATE google_connections SET failing_since = ?, alerted_at = ?, last_error = 'Backend Error' WHERE kind = 'automation_inbox'",
+      '2026-07-01T00:00:00.000Z',
+      '2026-07-02T00:00:00.000Z',
+    );
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/history')) return Response.json({ historyId: 'history-after-recovery' });
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    await runEnabledAutomations(fixture.environment);
+
+    expect(inboxHealth()).toEqual({
+      status: 'active',
+      last_error: null,
+      failing_since: null,
+      alerted_at: null,
+    });
   });
 });

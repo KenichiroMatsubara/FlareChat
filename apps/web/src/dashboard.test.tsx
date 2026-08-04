@@ -74,7 +74,7 @@ describe('Automation Inbox processing guidance', () => {
           {...dashboardProps()}
           automation={{
             email: 'owner@example.com', displayName: 'Owner', enabled: true, status: 'active',
-            lastSyncedAt: null, lastError: null, created: 0, skipped: 0, exceptions: 0,
+            lastSyncedAt: null, lastError: null, failingSince: null, created: 0, skipped: 0, exceptions: 0,
           }}
         />
       </MemoryRouter>,
@@ -84,6 +84,25 @@ describe('Automation Inbox processing guidance', () => {
     expect(html).toContain('固定の日付書式は不要です');
     expect(html).not.toContain('2026/08/03 19:00-21:00');
     expect(html).not.toContain('書式不足');
+  });
+
+  it('reports a still-connected Inbox whose scheduled runs keep failing without asking for reauthentication', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/automation']}>
+        <Dashboard
+          {...dashboardProps()}
+          automation={{
+            email: 'owner@example.com', displayName: 'Owner', enabled: true, status: 'active',
+            lastSyncedAt: '2026-08-01T00:00:00.000Z', lastError: 'Backend Error',
+            failingSince: '2026-08-02T00:00:00.000Z', created: 0, skipped: 0, exceptions: 0,
+          }}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('自動処理に失敗しています');
+    expect(html).toContain('Backend Error');
+    expect(html).not.toContain('Google に再接続してください');
   });
 });
 
@@ -425,6 +444,7 @@ describe('mailbox test prerequisites', () => {
             status: 'active',
             lastSyncedAt: null,
             lastError: null,
+            failingSince: null,
             created: 0,
             skipped: 0,
             exceptions: 0,
@@ -449,6 +469,7 @@ describe('mailbox test prerequisites', () => {
             status: 'active',
             lastSyncedAt: null,
             lastError: null,
+            failingSince: null,
             created: 0,
             skipped: 0,
             exceptions: 0,
@@ -482,6 +503,7 @@ describe('mailbox test prerequisites', () => {
             status: 'active',
             lastSyncedAt: null,
             lastError: null,
+            failingSince: null,
             created: 0,
             skipped: 0,
             exceptions: 0,
@@ -518,7 +540,7 @@ describe('mailbox test prerequisites', () => {
           page="mail-test"
           automation={{
             email: 'owner@example.com', displayName: 'Owner', enabled: true, status: 'active',
-            lastSyncedAt: null, lastError: null, created: 0, skipped: 0, exceptions: 0,
+            lastSyncedAt: null, lastError: null, failingSince: null, created: 0, skipped: 0, exceptions: 0,
           }}
           mailTestPreview={{
             id: 'message-1', subject: '例会のお知らせ', sender: 'sender@example.com',

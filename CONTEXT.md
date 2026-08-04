@@ -46,6 +46,8 @@ A durable Job row in the owning Organization D1 database is the source of truth 
 
 The initial private deployment uses one Google OAuth application configured as `External / In production` without completed verification. It accepts Google's unverified-app warning and lifetime user cap to avoid Testing-mode refresh-token expiry. Organization creation requires the complete Automation Inbox grant before provisioning; broader public onboarding requires verification and any applicable security assessment.
 
+Automation runs unattended for as long as its grant holds, without anyone signing into the administration GUI. Only `invalid_grant` from Google suspends an Automation Inbox for reauthentication; every other failed run is recorded and retried on the next schedule. A rejected grant is mailed to every active Admin through the Automation Inbox immediately, and any other continuing failure is mailed after a full day of failed retries and repeated at most weekly until it clears.
+
 Organization connection credentials are encrypted with an Organization-specific data-encryption key. That key is wrapped by a versioned deployment master key held as a Worker Secret, allowing stored credentials to be rewrapped during key rotation without exposing plaintext in D1.
 
 A Scheduled Event's Calendar description states its Event Summary first, then each Public Attachment as a link labelled with its filename, then the sentence naming the Source Message it came from. Google Calendar renders a small HTML subset, so untrusted extracted text and filenames are escaped and only absolute http(s) links are written.

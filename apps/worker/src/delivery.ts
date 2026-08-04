@@ -45,6 +45,18 @@ const base64 = (value: string): string => {
 const base64Url = (value: string): string =>
   base64(value).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '');
 
+/** Builds the single UTF-8 plain-text message body that the Gmail send endpoint accepts. */
+export const gmailRawMessage = (input: { destination: string; subject: string; body: string }): string =>
+  base64Url([
+    `To: ${input.destination}`,
+    `Subject: =?UTF-8?B?${base64(input.subject)}?=`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: 8bit',
+    '',
+    input.body,
+  ].join('\r\n'));
+
 /** Sends one Source Message notice through the Automation Inbox and records the effect independently of Events. */
 export const deliverSourceMessageEmail = async (input: {
   database: D1Database;
@@ -58,15 +70,7 @@ export const deliverSourceMessageEmail = async (input: {
   let outcome: DeliveryAttempt['outcome'] = 'failed';
   let externalId: string | null = null;
   try {
-    const raw = base64Url([
-      `To: ${input.destination}`,
-      `Subject: =?UTF-8?B?${base64(input.subject)}?=`,
-      'MIME-Version: 1.0',
-      'Content-Type: text/plain; charset=UTF-8',
-      'Content-Transfer-Encoding: 8bit',
-      '',
-      input.body,
-    ].join('\r\n'));
+    const raw = gmailRawMessage({ destination: input.destination, subject: input.subject, body: input.body });
     const sent = await input.google.request<{ id?: string }>(
       input.accessToken,
       'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',

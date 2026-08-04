@@ -73,6 +73,25 @@ export const googleAuthorizationUrl = (input: {
   return url.toString();
 };
 
+/**
+ * Google rejected the stored grant itself, so no retry can succeed and only a
+ * new authorization restores automation. Every other token endpoint failure —
+ * a 5xx, a rate limit, a network fault, a misconfigured deployment client — is
+ * a plain Error, because retrying it later is the correct response.
+ */
+export class GoogleGrantRejectedError extends Error {
+  readonly code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = 'GoogleGrantRejectedError';
+    this.code = code;
+  }
+}
+
+/** `invalid_grant` is Google's single answer for a revoked, expired, or unknown refresh token. */
+const REJECTED_GRANT_ERROR = 'invalid_grant';
+
 interface GoogleTokenResponse {
   access_token?: string;
   refresh_token?: string;
@@ -132,7 +151,9 @@ export const refreshGoogleToken = async (input: {
   });
   const body = await response.json() as GoogleTokenResponse;
   if (!response.ok || !body.access_token || !body.expires_in) {
-    throw new Error(body.error_description ?? body.error ?? 'Google token refresh failed.');
+    const message = body.error_description ?? body.error ?? 'Google token refresh failed.';
+    if (body.error === REJECTED_GRANT_ERROR) throw new GoogleGrantRejectedError(body.error, message);
+    throw new Error(message);
   }
   return {
     accessToken: body.access_token,

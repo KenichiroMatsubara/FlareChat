@@ -292,6 +292,10 @@ export const googleConnections = sqliteTable('google_connections', {
   status: text('status', { enum: ['active', 'reauthentication_required', 'disconnected'] }).notNull(),
   lastSyncedAt: text('last_synced_at'),
   lastError: text('last_error'),
+  /** Start of the current uninterrupted automation failure, cleared by the next successful run. */
+  failingSince: text('failing_since'),
+  /** Last moment the Administrators were told that automation stopped working. */
+  alertedAt: text('alerted_at'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [

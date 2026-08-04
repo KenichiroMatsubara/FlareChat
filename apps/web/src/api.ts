@@ -56,6 +56,8 @@ export interface AutomationStatus {
   status: 'active' | 'reauthentication_required' | 'disconnected';
   lastSyncedAt: string | null;
   lastError: string | null;
+  /** Set while scheduled runs keep failing; the Worker keeps retrying until it clears. */
+  failingSince: string | null;
   created: number;
   skipped: number;
   exceptions: number;

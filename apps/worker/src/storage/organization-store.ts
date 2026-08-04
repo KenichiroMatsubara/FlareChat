@@ -9,6 +9,7 @@ export interface AutomationStatus {
   status: 'active' | 'reauthentication_required' | 'disconnected';
   lastSyncedAt: string | null;
   lastError: string | null;
+  failingSince: string | null;
   created: number;
   skipped: number;
   exceptions: number;
@@ -31,6 +32,7 @@ export const createOrganizationStore = (database: OrganizationDatabase): Organiz
       status: googleConnections.status,
       lastSyncedAt: googleConnections.lastSyncedAt,
       lastError: googleConnections.lastError,
+      failingSince: googleConnections.failingSince,
     }).from(googleConnections)
       .where(and(
         eq(googleConnections.kind, 'automation_inbox'),

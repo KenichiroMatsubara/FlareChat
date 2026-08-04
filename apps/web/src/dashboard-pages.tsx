@@ -1,4 +1,4 @@
-import { CalendarDays, CheckCircle2, Copy, Eye, EyeOff, Mail, MessageCircle, Pencil, Play, RefreshCw, Save, Search, Settings, SlidersHorizontal, UserPlus, UsersRound, X } from 'lucide-react';
+import { CalendarDays, CheckCircle2, CircleAlert, Copy, Eye, EyeOff, Mail, MessageCircle, Pencil, Play, RefreshCw, Save, Search, Settings, SlidersHorizontal, UserPlus, UsersRound, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -18,6 +18,7 @@ export const AutomationPage = (props: DashboardProps) => <section className="pag
   {props.automation ? <>
     <section className="hero-status"><div><span className={props.automation.enabled ? 'status-light on' : 'status-light'} /><p>{props.automation.enabled ? '自動化は有効です' : '自動化は停止中です'}</p><small>前回の確認: {formatted(props.automation.lastSyncedAt)}</small></div><label className="switch"><input type="checkbox" checked={props.automation.enabled} onChange={(event) => props.onSetEnabled(event.target.checked)} disabled={props.busy} /><span /></label></section>
     <section className="action-panel"><div><h2>メールを今すぐ確認</h2><p>すべての新着メールを確認し、AI が予定・タスク・お知らせを判定します。</p></div><button className="primary" onClick={props.onRun} disabled={props.busy || !props.automation.enabled}>{props.busy ? <RefreshCw className="spin" size={18} /> : <Play size={18} />}{props.busy ? '確認中…' : '今すぐ確認'}</button></section>
+    {props.automation.failingSince && props.automation.status === 'active' && <p className="dashboard-error"><CircleAlert size={17} />{formatted(props.automation.failingSince)}から自動処理に失敗しています。復旧すると自動的に再開します。{props.automation.lastError ? `（${props.automation.lastError}）` : ''}</p>}
     {props.summary && <p className="dashboard-success"><CheckCircle2 size={17} />今回: {props.summary.scanned}件をAI判定、{props.summary.created}件を予定化、{props.summary.skipped}件を対象外、{props.summary.exceptions}件でエラー</p>}
     <section className="metrics-row"><div><b>{props.automation.created}</b><span>予定を作成</span></div><div><b>{props.automation.skipped}</b><span>処理対象外</span></div><div><b>{props.automation.exceptions}</b><span>エラー</span></div></section>
     <section className="info-panel"><CalendarDays size={20} /><div><strong>AI がメール内容を判定します</strong><p>固定の日付書式は不要です。本文や添付ファイルから予定、タスク、お知らせを抽出します。</p></div></section>
