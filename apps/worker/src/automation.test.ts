@@ -695,9 +695,13 @@ describe('Organization Automation Inbox scheduling', () => {
       displayName: '参加登録担当', description: '出欠と申込期限を扱う',
     }), fixture.environment);
     const roleId = (await createdRole.json() as { data: { id: string } }).data.id;
+    const createdMember = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/members', {
+      name: '山田花子', email: 'hanako@example.com',
+    }), fixture.environment);
+    const memberId = (await createdMember.json() as { data: { id: string } }).data.id;
     const assignment = await app.fetch(fixture.jsonRequest(
       `/api/organizations/organization-1/task-roles/${roleId}/assignment`,
-      { identityId: 'identity-1' },
+      { memberId },
       'PUT',
     ), fixture.environment);
     expect(assignment.status).toBe(200);
@@ -742,7 +746,7 @@ describe('Organization Automation Inbox scheduling', () => {
       data: [{
         title: '出席を取りまとめる',
         deadline: '2026-07-31',
-        assigneeName: 'Owner',
+        assigneeName: '山田花子',
         completed: false,
         sourceMessageSubject: '例会のお知らせ',
       }],

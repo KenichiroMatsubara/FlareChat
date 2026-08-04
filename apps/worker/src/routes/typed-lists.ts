@@ -9,7 +9,6 @@ import { listItems, lists } from '../storage/organization-schema';
 
 export const typedListRoutes = new Hono<{ Bindings: Bindings }>();
 const now = (): string => new Date().toISOString();
-const canManage = (role: string): boolean => role === 'owner' || role === 'admin';
 
 typedListRoutes.get('/organizations/:organizationId/lists', async (context) => {
   try {
@@ -25,7 +24,6 @@ typedListRoutes.get('/organizations/:organizationId/lists', async (context) => {
 typedListRoutes.post('/organizations/:organizationId/lists', async (context) => {
   try {
     const access = await createRequestContext(context.req.raw, context.env).organization(context.req.param('organizationId'));
-    if (!canManage(access.role)) return failure(context, 'Typed Lists can only be changed by an Owner or Admin.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ kind?: string; name?: string; description?: string }>();
     const kind = input.kind?.trim() as 'source' | 'recipient' | 'line' | undefined;
@@ -44,7 +42,6 @@ typedListRoutes.post('/organizations/:organizationId/lists', async (context) => 
 typedListRoutes.post('/organizations/:organizationId/lists/:listId/items', async (context) => {
   try {
     const access = await createRequestContext(context.req.raw, context.env).organization(context.req.param('organizationId'));
-    if (!canManage(access.role)) return failure(context, 'List Items can only be changed by an Owner or Admin.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ value?: string; label?: string }>();
     const value = input.value?.trim();
@@ -60,7 +57,6 @@ typedListRoutes.post('/organizations/:organizationId/lists/:listId/items', async
 typedListRoutes.patch('/organizations/:organizationId/lists/:listId/items/:itemId', async (context) => {
   try {
     const access = await createRequestContext(context.req.raw, context.env).organization(context.req.param('organizationId'));
-    if (!canManage(access.role)) return failure(context, 'List Items can only be changed by an Owner or Admin.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ enabled?: boolean }>();
     if (typeof input.enabled !== 'boolean') return failure(context, 'enabled must be a boolean.');

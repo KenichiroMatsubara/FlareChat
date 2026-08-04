@@ -2,7 +2,7 @@ import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
 import { and, asc, count, desc, eq, gt, gte, inArray, isNull, max, ne } from 'drizzle-orm';
 
-import { canUpdateAttendance, discoveredLineDestinations, displayLineDestinationId, displayRecipientIdentifier, verifyLineWebhookSignature } from '@mail/domain';
+import { canUpdateAttendance, discoveredLineDestinations, displayLineDestinationId, verifyLineWebhookSignature } from '@mail/domain';
 
 import { agentWritePortForApproval, createAutomation, LEGACY_AI_BASE_URL } from './automation';
 import { decrypt, encrypt } from './cryptography';
@@ -122,7 +122,6 @@ app.get('/api/presets', async (context) => {
 app.post('/api/organizations/:organizationId/presets/:presetId/apply', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Presets can only be applied by an Owner or Admin.', 403);
     if (!access.database) return failure(context, 'Organization database is not available.', 503);
     const input = await context.req.json<{ conflictPolicy?: unknown }>();
     if (input.conflictPolicy !== undefined && input.conflictPolicy !== 'duplicate') return failure(context, 'Unsupported Preset conflict policy.');
@@ -313,7 +312,6 @@ app.put('/api/organizations/:organizationId/connections/line', async (context) =
   try {
     const organizationId = context.req.param('organizationId');
     const access = await organizationForRequest(context.req.raw, context.env, organizationId);
-    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'LINE接続を変更できる権限がありません。', 403);
     if (!access.database) return failure(context, '組織DBに接続できません。LINE接続は保存されていません。', 503);
     const db = drizzleOrganizationDatabase(access.database);
     const input = await context.req.json<LineConnectionInput>();
@@ -338,7 +336,6 @@ app.put('/api/organizations/:organizationId/connections/ai', async (context) => 
   try {
     const organizationId = context.req.param('organizationId');
     const access = await organizationForRequest(context.req.raw, context.env, organizationId);
-    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'AI接続を変更できる権限がありません。', 403);
     if (!access.database) return failure(context, '組織DBに接続できません。AI接続は保存されていません。', 503);
     const db = drizzleOrganizationDatabase(access.database);
     const input = await context.req.json<AiConnectionInput>();
@@ -398,7 +395,6 @@ app.post('/api/organizations/:organizationId/mail-tests/search', async (context)
   try {
     const organizationId = context.req.param('organizationId');
     const access = await organizationForRequest(context.req.raw, context.env, organizationId);
-    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'メールの手動テストを実行できる権限がありません。', 403);
     if (!access.database) return failure(context, '組織DBに接続できません。', 503);
     const input = await context.req.json<{ subject?: string }>();
     const subject = input.subject?.trim() ?? '';
@@ -417,7 +413,6 @@ app.post('/api/organizations/:organizationId/mail-tests/:messageId/ai-request', 
   try {
     const organizationId = context.req.param('organizationId');
     const access = await organizationForRequest(context.req.raw, context.env, organizationId);
-    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'メールの手動テストを実行できる権限がありません。', 403);
     if (!access.database) return failure(context, '組織DBに接続できません。接続設定は保存されていません。', 503);
     const messageId = context.req.param('messageId');
     if (!/^[A-Za-z0-9_-]{1,200}$/u.test(messageId)) return failure(context, 'Gmail メッセージ ID が不正です。');
@@ -439,7 +434,6 @@ app.post('/api/organizations/:organizationId/mail-tests/:messageId/preview', asy
   try {
     const organizationId = context.req.param('organizationId');
     const access = await organizationForRequest(context.req.raw, context.env, organizationId);
-    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'メールの手動テストを実行できる権限がありません。', 403);
     if (!access.database) return failure(context, '組織DBに接続できません。接続設定は保存されていません。', 503);
     const messageId = context.req.param('messageId');
     if (!/^[A-Za-z0-9_-]{1,200}$/u.test(messageId)) return failure(context, 'Gmail メッセージ ID が不正です。');
@@ -465,7 +459,6 @@ app.post('/api/organizations/:organizationId/mail-tests/calendar', async (contex
   try {
     const organizationId = context.req.param('organizationId');
     const access = await organizationForRequest(context.req.raw, context.env, organizationId);
-    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'テスト予定を作成できる権限がありません。', 403);
     if (!access.database) return failure(context, '組織DBに接続できません。', 503);
     const input = await context.req.json<{ confirmationToken?: string }>();
     if (!input.confirmationToken || input.confirmationToken.length > 10_000) return failure(context, '確認用トークンがありません。先に AI 抽出を実行してください。');
@@ -508,7 +501,6 @@ app.get('/api/organizations/:organizationId/lists', async (context) => {
 app.post('/api/organizations/:organizationId/lists', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Typed Lists can only be changed by an Owner or Admin.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ kind?: string; name?: string; description?: string }>();
     const kind = input.kind?.trim() as 'source' | 'recipient' | 'line' | undefined;
@@ -544,7 +536,6 @@ app.post('/api/organizations/:organizationId/lists', async (context) => {
 app.post('/api/organizations/:organizationId/lists/:listId/items', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'List Items can only be changed by an Owner or Admin.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ value?: string; label?: string }>();
     const value = input.value?.trim();
@@ -566,7 +557,6 @@ app.post('/api/organizations/:organizationId/lists/:listId/items', async (contex
 app.patch('/api/organizations/:organizationId/lists/:listId/items/:itemId', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'List Items can only be changed by an Owner or Admin.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ enabled?: boolean }>();
     if (typeof input.enabled !== 'boolean') return failure(context, 'enabled must be a boolean.');
@@ -604,7 +594,6 @@ app.get('/api/organizations/:organizationId/prompts', async (context) => {
 app.post('/api/organizations/:organizationId/prompts', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Prompts can only be changed by an Owner or Admin.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ name?: string; instructions?: string }>();
     const name = input.name?.trim() ?? '';
@@ -627,7 +616,6 @@ app.post('/api/organizations/:organizationId/prompts', async (context) => {
 app.patch('/api/organizations/:organizationId/prompts/:promptId', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Prompts can only be changed by an Owner or Admin.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ name?: string; instructions?: string }>();
     const name = input.name?.trim();
@@ -654,7 +642,6 @@ app.patch('/api/organizations/:organizationId/prompts/:promptId', async (context
 app.delete('/api/organizations/:organizationId/prompts/:promptId', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Prompts can only be changed by an Owner or Admin.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const promptId = context.req.param('promptId');
     const removed = await drizzleOrganizationDatabase(access.database).delete(prompts).where(eq(prompts.id, promptId))
@@ -707,7 +694,6 @@ app.get('/api/organizations/:organizationId/agent-rules', async (context) => {
 app.post('/api/organizations/:organizationId/agent-rules', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Agent Rules can only be changed by an Owner or Admin.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ name?: string; promptId?: string; state?: string; executionMode?: string; selectionPolicy?: Record<string, unknown>; permittedRecipientListIds?: unknown; permittedLineListIds?: unknown; priority?: number }>();
     const name = input.name?.trim() ?? '';
@@ -754,7 +740,6 @@ app.post('/api/organizations/:organizationId/agent-rules', async (context) => {
 app.patch('/api/organizations/:organizationId/agent-rules/:agentRuleId', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Agent Rules can only be changed by an Owner or Admin.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ name?: string; promptId?: string; state?: string; executionMode?: string; selectionPolicy?: Record<string, unknown>; permittedRecipientListIds?: unknown; permittedLineListIds?: unknown; priority?: number }>();
     if (input.state !== undefined && !['active', 'suspended', 'archived'].includes(input.state)) return failure(context, 'Unsupported Agent Rule State.');
@@ -889,7 +874,6 @@ app.get('/api/organizations/:organizationId/agent-runs/:runId/proposed-actions',
 const proposedActionDecision = async (context: Context<{ Bindings: Bindings }>, decision: 'approve' | 'reject') => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId') ?? '');
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Proposed Actions can only be decided by an Owner, Admin, or Operator.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const actionId = context.req.param('actionId') ?? '';
     const action = await drizzleOrganizationDatabase(access.database).select().from(proposedActions).where(eq(proposedActions.id, actionId)).get();
@@ -912,7 +896,6 @@ app.post('/api/organizations/:organizationId/agent-runs/:runId/proposed-actions/
     const decision = context.req.param('decision');
     if (decision !== 'approve' && decision !== 'reject') return failure(context, 'Unsupported Proposed Action decision.');
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Proposed Actions can only be decided by an Owner, Admin, or Operator.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const runId = context.req.param('runId');
     const run = await drizzleOrganizationDatabase(access.database).select({ sourceMessageId: agentRuns.sourceMessageId, agentRuleId: agentRuns.agentRuleId }).from(agentRuns).where(eq(agentRuns.id, runId)).get();
@@ -968,7 +951,6 @@ app.get('/api/organizations/:organizationId/rules', async (context) => {
 app.post('/api/organizations/:organizationId/rules', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Rules can only be changed by an Owner or Admin.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ name?: string; state?: string; selectionPolicy?: Record<string, unknown>; routingPolicy?: Record<string, unknown>; taskRoleIds?: unknown; permittedRecipientListIds?: unknown; permittedLineListIds?: unknown; priority?: number }>();
     const name = input.name?.trim();
@@ -1034,7 +1016,6 @@ app.post('/api/organizations/:organizationId/rules', async (context) => {
 app.patch('/api/organizations/:organizationId/rules/:ruleId', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Rules can only be changed by an Owner or Admin.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ state?: string; permittedRecipientListIds?: unknown; permittedLineListIds?: unknown }>();
     if (input.state !== undefined && !['draft', 'active', 'suspended', 'archived'].includes(input.state)) return failure(context, 'Unsupported Rule State.');
@@ -1133,9 +1114,7 @@ app.get('/api/organizations/:organizationId/members', async (context) => {
         id: row.id,
         organizationId: access.organization.id,
         name: row.name,
-        email: row.email
-          ? displayRecipientIdentifier(access.role as 'owner' | 'admin' | 'operator' | 'viewer', row.email)
-          : '',
+        email: row.email,
         state: row.state,
         tags: JSON.parse(row.tags) as string[],
         createdAt: row.createdAt,
@@ -1188,7 +1167,6 @@ app.get('/api/organizations/:organizationId/line-destinations', async (context) 
 app.post('/api/organizations/:organizationId/line-destinations', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'LINE Destinations can only be changed by an Owner, Admin, or Operator.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ destinationId?: string; kind?: string; displayName?: string }>();
     const destinationId = input.destinationId?.trim() ?? '';
@@ -1258,7 +1236,6 @@ app.post('/api/organizations/:organizationId/line-destinations', async (context)
 app.delete('/api/organizations/:organizationId/line-destinations/:lineDestinationId', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'LINE Destinations can only be changed by an Owner, Admin, or Operator.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const lineDestinationId = context.req.param('lineDestinationId');
     const database = drizzleOrganizationDatabase(access.database);
@@ -1293,7 +1270,6 @@ app.get('/api/organizations/:organizationId/members/export', async (context) => 
 app.post('/api/organizations/:organizationId/members', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Members can only be changed by an Owner, Admin, or Operator.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ name?: string; email?: string; tags?: unknown; lineDestinationId?: string }>();
     const name = input.name?.trim();
@@ -1371,7 +1347,6 @@ app.post('/api/organizations/:organizationId/members', async (context) => {
 app.patch('/api/organizations/:organizationId/members/:memberId', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Members can only be changed by an Owner, Admin, or Operator.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ name?: string; email?: string; tags?: unknown; state?: string }>();
     const updates: Partial<typeof members.$inferInsert> = {};
@@ -1416,7 +1391,6 @@ app.patch('/api/organizations/:organizationId/members/:memberId', async (context
 app.post('/api/organizations/:organizationId/members/:memberId/line-links', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Member Links can only be issued by an Owner, Admin, or Operator.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const token = randomToken(24);
     const timestamp = now();
@@ -1449,7 +1423,6 @@ app.post('/api/organizations/:organizationId/members/:memberId/line-links', asyn
 app.put('/api/organizations/:organizationId/members/:memberId/line-destination', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'LINE Destinations can only be changed by an Owner, Admin, or Operator.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ destinationId?: string; kind?: string; displayName?: string }>();
     const destinationId = input.destinationId?.trim() ?? '';
@@ -1530,7 +1503,6 @@ app.put('/api/organizations/:organizationId/members/:memberId/line-destination',
 app.delete('/api/organizations/:organizationId/members/:memberId/line-destination/:lineDestinationId', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'LINE Destinations can only be changed by an Owner, Admin, or Operator.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const memberId = context.req.param('memberId');
     const lineDestinationId = context.req.param('lineDestinationId');
@@ -1562,7 +1534,6 @@ app.delete('/api/organizations/:organizationId/members/:memberId/line-destinatio
 app.post('/api/organizations/:organizationId/members/import/preview', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Member imports can only be previewed by an Owner, Admin, or Operator.', 403);
     const input = await context.req.json<{ csv?: string }>();
     if (typeof input.csv !== 'string') return failure(context, 'CSV content is required.');
     return json(context, previewMemberCsv(input.csv));
@@ -1574,7 +1545,6 @@ app.post('/api/organizations/:organizationId/members/import/preview', async (con
 app.post('/api/organizations/:organizationId/members/import', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Member imports can only be confirmed by an Owner, Admin, or Operator.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ csv?: string }>();
     if (typeof input.csv !== 'string') return failure(context, 'CSV content is required.');
@@ -1623,32 +1593,9 @@ app.get('/api/organizations/:organizationId/dashboard', async (context) => {
   }
 });
 
-app.patch('/api/organizations/:organizationId/admins/:identityId', async (context) => {
-  try {
-    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (access.role !== 'owner') return failure(context, 'Only an Owner can change member roles.', 403);
-    const input = await context.req.json<{ role?: string; state?: string }>();
-    if (input.role !== undefined && !['owner', 'admin', 'operator', 'viewer'].includes(input.role)) return failure(context, 'Unsupported member role.');
-    if (input.state !== undefined && !['active', 'suspended'].includes(input.state)) return failure(context, 'Unsupported member state.');
-    if (input.role === undefined && input.state === undefined) return failure(context, 'A member role or state is required.');
-    const updates: Partial<typeof admins.$inferInsert> = { updatedAt: now() };
-    if (input.role !== undefined) updates.role = input.role as 'owner' | 'admin' | 'operator' | 'viewer';
-    if (input.state !== undefined) updates.state = input.state as 'active' | 'suspended';
-    const updated = await drizzleControlDatabase(context.env.CONTROL_DB).update(admins).set(updates).where(and(
-      eq(admins.organizationId, access.organization.id),
-      eq(admins.identityId, context.req.param('identityId')),
-    )).returning({ identityId: admins.identityId }).get();
-    if (!updated) return failure(context, 'Member was not found.', 404);
-    return json(context, { identityId: context.req.param('identityId'), ...(input.role === undefined ? {} : { role: input.role }), ...(input.state === undefined ? {} : { state: input.state }) });
-  } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Member could not be updated.', 409);
-  }
-});
-
 app.post('/api/organizations/:organizationId/task-roles', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Operational Task Roles can only be changed by an Owner or Admin.', 403);
     if (!access.database) return failure(context, '組織DBに接続できません。', 503);
     const input = await context.req.json<{ displayName?: string; description?: string }>();
     const displayName = input.displayName?.trim() ?? '';
@@ -1665,7 +1612,6 @@ app.post('/api/organizations/:organizationId/task-roles', async (context) => {
 app.patch('/api/organizations/:organizationId/task-roles/:roleId', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Operational Task Roles can only be changed by an Owner or Admin.', 403);
     if (!access.database) return failure(context, '組織DBに接続できません。', 503);
     const input = await context.req.json<{ displayName?: string; description?: string }>();
     const displayName = input.displayName?.trim();
@@ -1686,7 +1632,6 @@ app.patch('/api/organizations/:organizationId/task-roles/:roleId', async (contex
 app.delete('/api/organizations/:organizationId/task-roles/:roleId', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Operational Task Roles can only be changed by an Owner or Admin.', 403);
     if (!access.database) return failure(context, '組織DBに接続できません。', 503);
     if (!await createTaskWorkflow(drizzleOrganizationDatabase(access.database)).deleteRole(context.req.param('roleId'))) return failure(context, 'Operational Task Role was not found.', 404);
     return json(context, { id: context.req.param('roleId'), removed: true });
@@ -1699,25 +1644,18 @@ app.put('/api/organizations/:organizationId/task-roles/:roleId/assignment', asyn
   try {
     const organizationId = context.req.param('organizationId');
     const access = await organizationForRequest(context.req.raw, context.env, organizationId);
-    if (access.role !== 'owner' && access.role !== 'admin') return failure(context, 'Operational task roles can only be changed by an Owner or Admin.', 403);
     if (!access.database) return failure(context, '組織DBに接続できません。', 503);
     const roleId = context.req.param('roleId');
     const database = drizzleOrganizationDatabase(access.database);
     if (!await database.select({ id: operationalTaskRoles.id }).from(operationalTaskRoles).where(eq(operationalTaskRoles.id, roleId)).get()) return failure(context, 'Operational Task Role was not found.', 404);
-    const input = await context.req.json<{ identityId?: string }>();
-    if (!input.identityId) return failure(context, 'An active Organization member is required.');
-    const member = await drizzleControlDatabase(context.env.CONTROL_DB).select({
-      identityId: admins.identityId,
-      displayName: identities.displayName,
-    }).from(admins).innerJoin(identities, eq(identities.id, admins.identityId)).where(and(
-      eq(admins.organizationId, organizationId),
-      eq(admins.identityId, input.identityId),
-      eq(admins.state, 'active'),
-    )).get();
-    if (!member) return failure(context, 'Task roles can only be assigned to an active Organization member.', 409);
+    const input = await context.req.json<{ memberId?: string }>();
+    if (!input.memberId) return failure(context, 'An active Member is required.');
+    const member = await database.select({ memberId: members.id, displayName: members.name })
+      .from(members).where(and(eq(members.id, input.memberId), eq(members.state, 'active'))).get();
+    if (!member) return failure(context, 'Operational Task Roles can only be assigned to an active Member.', 409);
     await createTaskWorkflow(database).assignRole({
       roleId,
-      identityId: member.identityId,
+      memberId: member.memberId,
       displayName: member.displayName,
     });
     return json(context, { roleId, ...member });
@@ -1731,19 +1669,14 @@ app.get('/api/organizations/:organizationId/task-roles', async (context) => {
     const organizationId = context.req.param('organizationId');
     const access = await organizationForRequest(context.req.raw, context.env, organizationId);
     if (!access.database) return failure(context, '組織DBに接続できません。', 503);
-    const membersForTasks = await drizzleControlDatabase(context.env.CONTROL_DB).select({
-      identityId: admins.identityId,
-      displayName: identities.displayName,
-    }).from(admins).innerJoin(identities, eq(identities.id, admins.identityId)).where(and(
-      eq(admins.organizationId, organizationId),
-      eq(admins.state, 'active'),
-    )).all();
     const database = drizzleOrganizationDatabase(access.database);
-    const [roles, assignments] = await Promise.all([
+    const [assignable, roles, assignments] = await Promise.all([
+      database.select({ memberId: members.id, displayName: members.name }).from(members)
+        .where(eq(members.state, 'active')).orderBy(asc(members.name)).all(),
       createTaskWorkflow(database).listRoles(),
       database.select().from(taskRoleAssignments).all(),
     ]);
-    return json(context, { members: membersForTasks, roles, assignments });
+    return json(context, { members: assignable, roles, assignments });
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Operational task roles could not be loaded.', 403);
   }
@@ -1756,7 +1689,7 @@ app.get('/api/organizations/:organizationId/tasks', async (context) => {
     const assignee = context.req.query('assignee')?.trim();
     const event = context.req.query('event')?.trim();
     return json(context, await createTaskWorkflow(drizzleOrganizationDatabase(access.database)).list({
-      ...(assignee === 'unassigned' ? { unassigned: true } : assignee ? { assigneeIdentityId: assignee } : {}),
+      ...(assignee === 'unassigned' ? { unassigned: true } : assignee ? { assigneeMemberId: assignee } : {}),
       ...(event ? { event } : {}),
     }));
   } catch (error) {
@@ -1779,7 +1712,6 @@ app.get('/api/organizations/:organizationId/automation-warnings', async (context
 app.patch('/api/organizations/:organizationId/tasks/:taskId', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (access.role === 'viewer') return failure(context, 'Viewers cannot update Tasks.', 403);
     if (!access.database) return failure(context, '組織DBに接続できません。', 503);
     const input = await context.req.json<{ completed?: unknown; remarks?: unknown }>();
     if (input.completed !== undefined && typeof input.completed !== 'boolean') return failure(context, 'Completed must be a boolean.');
@@ -1798,7 +1730,6 @@ app.patch('/api/organizations/:organizationId/tasks/:taskId', async (context) =>
 app.post('/api/organizations/:organizationId/recovery-requests', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (access.role !== 'owner') return failure(context, 'Only an Owner can request recovery.', 403);
     const input = await context.req.json<{ idempotencyKey?: string }>();
     const idempotencyKey = input.idempotencyKey?.trim();
     if (!idempotencyKey) return failure(context, 'A recovery receipt idempotency key is required.');
@@ -1815,46 +1746,6 @@ app.post('/api/organizations/:organizationId/recovery-requests', async (context)
     return json(context, { id, organizationId: access.organization.id, idempotencyKey, state: 'requested', createdAt: timestamp }, 201);
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Recovery request could not be created.', 409);
-  }
-});
-
-app.post('/api/organizations/:organizationId/recovery-requests/:requestId/execute', async (context) => {
-  try {
-    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (access.role !== 'operator') return failure(context, 'Only an Operator can execute an Owner recovery request.', 403);
-    if (!access.database) throw new Error('Organization database is not available.');
-    const control = drizzleControlDatabase(context.env.CONTROL_DB);
-    const request = await control.select({
-      id: recoveryRequests.id,
-      idempotencyKey: recoveryRequests.idempotencyKey,
-    }).from(recoveryRequests).where(and(
-      eq(recoveryRequests.id, context.req.param('requestId')),
-      eq(recoveryRequests.organizationId, access.organization.id),
-      eq(recoveryRequests.state, 'requested'),
-    )).get();
-    if (!request) return failure(context, 'Recovery request was not found or is no longer pending.', 404);
-    const claimed = await control.update(recoveryRequests).set({
-      state: 'executing',
-      executedByIdentityId: access.session.identity_id,
-    }).where(and(eq(recoveryRequests.id, request.id), eq(recoveryRequests.state, 'requested')))
-      .returning({ id: recoveryRequests.id }).get();
-    if (!claimed) return failure(context, 'Recovery request is already being executed.', 409);
-    try {
-      const organizationKey = await organizationKeyForRequest(context.env, access.organization.id);
-      const receipt = await readRecoveryReceipt({ bucket: context.env.RECOVERY_RECEIPTS, organizationKey, organizationId: access.organization.id, idempotencyKey: request.idempotencyKey });
-      if (!receipt) throw new Error('The requested recovery receipt no longer exists.');
-      await restoreDeliveryRecordFromReceipt(access.database, receipt);
-      await control.update(recoveryRequests).set({ state: 'completed', executedAt: now(), errorMessage: null })
-        .where(eq(recoveryRequests.id, request.id)).run();
-      return json(context, { id: request.id, state: 'completed' });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Recovery execution failed.';
-      await control.update(recoveryRequests).set({ state: 'failed', errorMessage: message, executedAt: now() })
-        .where(eq(recoveryRequests.id, request.id)).run();
-      return failure(context, message, 409);
-    }
-  } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Recovery execution could not be started.', 409);
   }
 });
 
@@ -1910,7 +1801,6 @@ app.get('/api/public/organizations/:organizationId/attendance/:token', async (co
 app.patch('/api/organizations/:organizationId/events/:eventId', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Events can only be changed by an Owner, Admin, or Operator.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ title?: string; startsAt?: string; endsAt?: string; location?: string; description?: string; status?: string; reason?: string }>();
     const changeSet = {
@@ -1954,7 +1844,6 @@ app.patch('/api/organizations/:organizationId/events/:eventId', async (context) 
 app.post('/api/organizations/:organizationId/events/:eventId/attendance-links', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Attendance links can only be issued by an Owner, Admin, or Operator.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ recipientItemId?: string }>();
     if (!input.recipientItemId?.trim()) return failure(context, 'A Recipient is required.');
@@ -1987,7 +1876,6 @@ app.post('/api/organizations/:organizationId/events/:eventId/attendance-links', 
 app.post('/api/organizations/:organizationId/events/:eventId/recipient-snapshots', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Recipient snapshots can only be created by an Owner, Admin, or Operator.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ memberIds?: unknown }>();
     if (!Array.isArray(input.memberIds) || !input.memberIds.length || input.memberIds.some((id) => typeof id !== 'string' || !id.trim())) return failure(context, 'At least one Member is required.');
@@ -2029,7 +1917,7 @@ app.get('/api/organizations/:organizationId/audit/deliveries', async (context) =
       channel: row.channel,
       destination: row.channel === 'line'
         ? displayLineDestinationId(row.destination)
-        : displayRecipientIdentifier(access.role as 'owner' | 'admin' | 'operator' | 'viewer', row.destination),
+        : row.destination,
       outcome: row.outcome,
       externalId: row.externalId,
       createdAt: row.createdAt,
@@ -2056,7 +1944,6 @@ app.get('/api/organizations/:organizationId/operations/exceptions', async (conte
 app.patch('/api/organizations/:organizationId/operations/exceptions/:exceptionId', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Only an Owner, Admin, or Operator can change Exceptions.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ action?: string }>();
     const database = drizzleOrganizationDatabase(access.database);
@@ -2177,13 +2064,12 @@ app.patch('/api/organizations/:organizationId/suspension', async (context) => {
     const membership = await control.select({
       id: organizations.id,
       status: organizations.status,
-      role: admins.role,
     }).from(admins).innerJoin(organizations, eq(organizations.id, admins.organizationId)).where(and(
       eq(admins.identityId, session.identity_id),
       eq(admins.organizationId, organizationId),
       eq(admins.state, 'active'),
     )).get();
-    if (!membership || membership.role !== 'owner') return failure(context, 'Only an Owner can suspend or resume an Organization.', 403);
+    if (!membership) return failure(context, 'この組織へのアクセス権がありません。', 403);
     const input = await context.req.json<{ suspended?: boolean }>();
     if (typeof input.suspended !== 'boolean') return failure(context, 'A suspension state is required.');
     const status = input.suspended ? 'suspended' : 'active';

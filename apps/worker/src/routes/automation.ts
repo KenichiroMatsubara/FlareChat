@@ -43,7 +43,6 @@ automationRoutes.post('/organizations/:organizationId/automation/run', async (co
 automationRoutes.post('/organizations/:organizationId/automation/reauthorize', async (context) => {
   try {
     const access = await createRequestContext(context.req.raw, context.env).organization(context.req.param('organizationId'));
-    if (!['owner', 'admin'].includes(access.role)) return failure(context, 'Automation Inbox can only be reconnected by an Owner or Admin.', 403);
     const invalid = entryConfigurationError(context.env);
     if (invalid) return failure(context, invalid, 503);
     return json(context, {
@@ -60,7 +59,6 @@ automationRoutes.post('/organizations/:organizationId/automation/enabled', async
   try {
     const access = await createRequestContext(context.req.raw, context.env).organization(context.req.param('organizationId'));
     if (!access.database) throw new Error('Organization database is not available.');
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Automation can only be changed by an Owner, Admin, or Operator.', 403);
     const input = await context.req.json<{ enabled?: boolean }>();
     if (typeof input.enabled !== 'boolean') return failure(context, 'enabled must be a boolean.');
     const database = organizationDatabase(access.database);
@@ -100,7 +98,6 @@ automationRoutes.put('/organizations/:organizationId/attachment-folder', async (
   try {
     const access = await createRequestContext(context.req.raw, context.env).organization(context.req.param('organizationId'));
     if (!access.database) throw new Error('Organization database is not available.');
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'The Attachment Folder Path can only be changed by an Owner, Admin, or Operator.', 403);
     const input = await context.req.json<{ path?: unknown }>();
     if (typeof input.path !== 'string') return failure(context, '保存先を入力してください。');
     const read = readAttachmentFolderPath(input.path);

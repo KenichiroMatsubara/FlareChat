@@ -130,7 +130,7 @@ export const MembersPage = (props: DashboardProps) => {
       <div><span className="member-metric-icon violet"><UserPlus size={18} /></span><p><b>{unassignedDestinations.length}</b><small>未登録のLINE</small></p></div>
     </section>
 
-    {props.canManage && <section className="member-onboarding">
+    {<section className="member-onboarding">
       <div className="member-onboarding-copy">
         <span className="line-mark">LINE</span>
         <div><p>LINEからメンバーを追加</p><h2>{unassignedDestinations.length ? `${unassignedDestinations.length}件のLINEアカウントが登録待ちです` : 'LINEアカウントの受信を待っています'}</h2><span>公式アカウントにメッセージが届くと、表示名とIDを自動取得します。手動でも登録できます。</span></div>
@@ -207,7 +207,7 @@ export const MembersPage = (props: DashboardProps) => {
             <div className="member-line-details">
               {member.lineDestinations.length ? member.lineDestinations.map((destination) => <div key={destination.id}><span className="line-badge"><MessageCircle size={13} />LINE {destinationKindLabel(destination.kind)}{destination.source === 'manual' ? '・手動' : ''}</span><strong>{destination.displayName || member.name}</strong><code title="LINE IDは先頭5文字のみ表示しています">{destination.destinationId}</code></div>) : <div className="member-line-empty"><MessageCircle size={15} /><span>LINE未連携</span></div>}
             </div>
-            {props.canManage && <button type="button" className="member-edit-button" onClick={() => beginEdit(member)}><Pencil size={15} />編集</button>}
+            {<button type="button" className="member-edit-button" onClick={() => beginEdit(member)}><Pencil size={15} />編集</button>}
           </>}
         </article>)}
         {visibleMembers.length === 0 && <div className="member-empty"><UsersRound size={28} /><h3>{props.organizationMembers.length ? '条件に一致するメンバーがいません' : 'メンバーはまだ登録されていません'}</h3><p>{props.organizationMembers.length ? '検索条件を変更してください。' : 'LINEアカウントと氏名だけで追加できます。メールアドレスやタグは後から編集できます。'}</p></div>}
@@ -237,9 +237,9 @@ export const TasksPage = (props: DashboardProps) => {
   };
   return <section className="page-layout tasks-page">
     <div className="page-title"><p>ORGANIZATION TASKS</p><h1>タスク</h1><span>Source Message から抽出された期限タスクを、担当者ごとに管理します。</span></div>
-    {props.canManage && <section className="task-role-management">
+    {<section className="task-role-management">
       <form onSubmit={(submit) => void createRole(submit)}><strong>Operational Task Roleを追加</strong><label>名前<input value={roleName} onChange={(change) => setRoleName(change.target.value)} maxLength={100} required /></label><label>説明<textarea value={roleDescription} onChange={(change) => setRoleDescription(change.target.value)} maxLength={500} required /></label><button className="primary" disabled={props.busy}>roleを追加</button></form>
-      <div className="task-role-list">{props.taskRoles.map((role) => <article key={role.id}><strong>{role.displayName}</strong><p>{role.description}</p><details><summary>名前と説明を編集</summary><label>名前<input defaultValue={role.displayName} onBlur={(change) => { const displayName = change.target.value.trim(); if (displayName && displayName !== role.displayName) void props.onUpdateTaskRole(role.id, { displayName }); }} /></label><label>説明<textarea defaultValue={role.description} onBlur={(change) => { const description = change.target.value.trim(); if (description && description !== role.description) void props.onUpdateTaskRole(role.id, { description }); }} /></label></details><label>現在の担当者<select value={props.taskRoleAssignments.find((assignment) => assignment.roleId === role.id)?.identityId ?? ''} onChange={(change) => { if (change.target.value) props.onAssignTaskRole(role.id, change.target.value); }}><option value="">未割り当て</option>{props.taskMembers.map((member) => <option key={member.identityId} value={member.identityId}>{member.displayName}</option>)}</select></label><button type="button" className="secondary" onClick={() => void props.onDeleteTaskRole(role.id)} disabled={props.busy}>roleを削除</button></article>)}</div>
+      <div className="task-role-list">{props.taskRoles.map((role) => <article key={role.id}><strong>{role.displayName}</strong><p>{role.description}</p><details><summary>名前と説明を編集</summary><label>名前<input defaultValue={role.displayName} onBlur={(change) => { const displayName = change.target.value.trim(); if (displayName && displayName !== role.displayName) void props.onUpdateTaskRole(role.id, { displayName }); }} /></label><label>説明<textarea defaultValue={role.description} onBlur={(change) => { const description = change.target.value.trim(); if (description && description !== role.description) void props.onUpdateTaskRole(role.id, { description }); }} /></label></details><label>現在の担当者<select value={props.taskRoleAssignments.find((assignment) => assignment.roleId === role.id)?.memberId ?? ''} onChange={(change) => { if (change.target.value) props.onAssignTaskRole(role.id, change.target.value); }}><option value="">未割り当て</option>{props.taskMembers.map((member) => <option key={member.memberId} value={member.memberId}>{member.displayName}</option>)}</select></label><button type="button" className="secondary" onClick={() => void props.onDeleteTaskRole(role.id)} disabled={props.busy}>roleを削除</button></article>)}</div>
     </section>}
     <section className="task-filters"><label>担当者<select value={assignee} onChange={(change) => setAssignee(change.target.value)}><option value="">すべて</option><option value="unassigned">未割り当て</option>{assignees.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label><label>イベント<select value={event} onChange={(change) => setEvent(change.target.value)}><option value="">すべて</option>{events.map((name) => <option key={name} value={name}>{name}</option>)}</select></label><button className="secondary" onClick={() => { setAssignee(''); setEvent(''); }}>フィルターをリセット</button></section>
     <section className="tasks-table-wrap"><table className="tasks-table"><thead><tr><th>完了</th><th>期限</th><th>Role</th><th>担当者</th><th>イベント名</th><th>内容</th><th>備考</th></tr></thead><tbody>{visible.map((task) => <tr key={task.id} className={task.completed ? 'completed' : task.deadline < today ? 'overdue' : task.deadline <= near ? 'near-deadline' : ''}><td><input aria-label={`${task.title}を完了`} type="checkbox" checked={task.completed} disabled={props.busy} onChange={(change) => props.onUpdateTask(task.id, { completed: change.target.checked })} /></td><td>{task.deadline}</td><td>{task.assigneeRoleName}</td><td>{task.assigneeName}</td><td>{task.sourceMessageSubject}</td><td><strong>{task.title}</strong><small>{task.description}</small></td><td><textarea aria-label={`${task.title}の備考`} defaultValue={task.remarks} onBlur={(change) => props.onUpdateTask(task.id, { remarks: change.target.value })} maxLength={10_000} /></td></tr>)}</tbody></table>{visible.length === 0 && <p className="rules-empty">表示するタスクはありません。</p>}</section>
@@ -248,7 +248,7 @@ export const TasksPage = (props: DashboardProps) => {
 
 export const ConnectionsPage = (props: DashboardProps) => {
   const [webhookCopied, setWebhookCopied] = useState(false);
-  const settingsReady = Boolean(props.organization && props.canManage);
+  const settingsReady = Boolean(props.organization);
   const hasAiApi = Boolean(props.connections?.ai.apiKeyConfigured);
   const hasLineAccessToken = Boolean(props.connections?.line.channelAccessTokenConfigured);
   const hasLineSecret = Boolean(props.connections?.line.channelSecretConfigured);
@@ -327,7 +327,7 @@ export const PresetSettings = ({ presets, hasConfiguration, busy, onApply }: {
 };
 
 export const MailboxTestPage = (props: DashboardProps) => {
-  const settingsReady = Boolean(props.organization && props.canManage);
+  const settingsReady = Boolean(props.organization);
   const hasConfiguredAiApi = Boolean(props.connections?.ai.apiKeyConfigured);
   const [aiRequestCopied, setAiRequestCopied] = useState(false);
   const [copyFeedbackId, setCopyFeedbackId] = useState(0);
@@ -418,7 +418,7 @@ const AgentRunHistory = (props: DashboardProps) => {
 };
 
 export const RulesPage = (props: DashboardProps) => {
-  const settingsReady = Boolean(props.organization && props.canManage);
+  const settingsReady = Boolean(props.organization);
   const [ruleName, setRuleName] = useState('');
   const [ruleSender, setRuleSender] = useState('');
   const [ruleDomain, setRuleDomain] = useState('');

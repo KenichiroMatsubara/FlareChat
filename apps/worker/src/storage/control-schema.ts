@@ -26,14 +26,12 @@ export const identities = sqliteTable('identities', {
 export const admins = sqliteTable('admins', {
   organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
   identityId: text('identity_id').notNull().references(() => identities.id, { onDelete: 'cascade' }),
-  role: text('role', { enum: ['owner', 'admin', 'operator', 'viewer'] }).notNull(),
-  state: text('state', { enum: ['pending', 'active', 'suspended', 'removed'] }).notNull(),
+  state: text('state', { enum: ['active', 'suspended', 'removed'] }).notNull(),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
   primaryKey({ columns: [table.organizationId, table.identityId] }),
-  check('admins_role_check', sql`${table.role} in ('owner', 'admin', 'operator', 'viewer')`),
-  check('admins_state_check', sql`${table.state} in ('pending', 'active', 'suspended', 'removed')`),
+  check('admins_state_check', sql`${table.state} in ('active', 'suspended', 'removed')`),
   index('admins_identity_idx').on(table.identityId, table.state),
 ]);
 

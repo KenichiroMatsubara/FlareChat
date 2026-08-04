@@ -43,10 +43,9 @@ export interface DashboardProps {
   onSetEnabled: (enabled: boolean) => void;
   onLogout: () => void;
   onReauthenticate: () => void;
-  organization: { name: string; role: string } | null;
+  organization: { name: string } | null;
   organizationId?: string;
   organizations?: OrganizationMembership[];
-  canManage: boolean;
   connections: OrganizationConnections | null;
   lineChannelAccessToken: string;
   lineChannelSecret: string;
@@ -105,11 +104,11 @@ export interface DashboardProps {
   onUpdateTask: (taskId: string, input: { completed?: boolean; remarks?: string }) => void;
   taskRoles: OperationalTaskRole[];
   taskRoleAssignments: TaskRoleAssignment[];
-  taskMembers: Array<{ identityId: string; displayName: string }>;
+  taskMembers: Array<{ memberId: string; displayName: string }>;
   onCreateTaskRole: (input: { displayName: string; description: string }) => Promise<void>;
   onUpdateTaskRole: (roleId: string, input: { displayName?: string; description?: string }) => Promise<void>;
   onDeleteTaskRole: (roleId: string) => Promise<void>;
-  onAssignTaskRole: (roleId: string, identityId: string) => void;
+  onAssignTaskRole: (roleId: string, memberId: string) => void;
   organizationMembers: OrganizationMember[];
   lineDestinations: OrganizationLineDestination[];
   memberBusy: boolean;

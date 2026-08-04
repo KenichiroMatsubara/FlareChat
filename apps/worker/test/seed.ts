@@ -169,8 +169,7 @@ export const seedOrganizationMember = (
     organizationId?: string;
     identityId: string;
     email: string;
-    role: 'owner' | 'admin' | 'operator' | 'viewer';
-    state?: 'pending' | 'active' | 'suspended' | 'removed';
+    state?: 'active' | 'suspended' | 'removed';
     sessionId?: string;
   },
 ): void => {
@@ -184,10 +183,9 @@ export const seedOrganizationMember = (
     CREATED_AT,
   );
   control.execute(
-    'INSERT INTO admins (organization_id, identity_id, role, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+    'INSERT INTO admins (organization_id, identity_id, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
     input.organizationId ?? 'organization-1',
     input.identityId,
-    input.role,
     input.state ?? 'active',
     CREATED_AT,
     CREATED_AT,

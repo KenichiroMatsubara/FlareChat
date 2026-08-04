@@ -50,7 +50,13 @@ const tableNames = (kind: 'control' | 'organization'): string[] => {
 
 describe('canonical D1 schemas', () => {
   it('has one Drizzle-generated initial migration per database kind', () => {
-    expect(migrations('control')).toEqual(['0000_initial.sql', '0001_schema_release.sql', '0002_preset_selection.sql', '0003_admins.sql']);
+    expect(migrations('control')).toEqual([
+      '0000_initial.sql',
+      '0001_schema_release.sql',
+      '0002_preset_selection.sql',
+      '0003_admins.sql',
+      '0004_single_admin_role.sql',
+    ]);
     expect(migrations('organization')).toEqual([
       '0000_initial.sql',
       '0001_tasks.sql',
@@ -68,6 +74,7 @@ describe('canonical D1 schemas', () => {
       '0013_agent_rule_writes.sql',
       '0014_members.sql',
       '0015_attachment_folders.sql',
+      '0016_member_task_assignments.sql',
     ]);
   });
 

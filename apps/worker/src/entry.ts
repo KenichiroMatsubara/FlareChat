@@ -191,7 +191,6 @@ export const completeGoogleEntry = async (
         eq(admins.organizationId, recoveryOrganizationId),
         eq(admins.identityId, owner.id),
         eq(admins.state, 'active'),
-        inArray(admins.role, ['owner', 'admin']),
         eq(organizations.status, 'active'),
       )).get();
       if (!authorizedOrganization) throw new Error('この Automation Inbox を再接続する権限がありません。');

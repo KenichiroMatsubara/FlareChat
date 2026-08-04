@@ -57,7 +57,7 @@ describe('Schema Lifecycle', () => {
 
     expect(receipt).toMatchObject({
       kind: 'organization',
-      currentMigration: '0015_attachment_folders.sql',
+      currentMigration: '0016_member_task_assignments.sql',
       appliedMigrations: [
         '0001_tasks.sql',
         '0002_line_destination_roster.sql',
@@ -74,6 +74,7 @@ describe('Schema Lifecycle', () => {
         '0013_agent_rule_writes.sql',
         '0014_members.sql',
         '0015_attachment_folders.sql',
+        '0016_member_task_assignments.sql',
       ],
     });
     expect(database.rows<{ display_name: string }>(
@@ -109,7 +110,7 @@ describe('Schema Lifecycle', () => {
       kind: 'organization',
       database: database.binding,
     })).resolves.toMatchObject({
-      currentMigration: '0015_attachment_folders.sql',
+      currentMigration: '0016_member_task_assignments.sql',
     });
   });
 
@@ -140,7 +141,7 @@ describe('Schema Lifecycle', () => {
     await expect(schemaLifecycle.ensureCurrent({
       kind: 'organization',
       database: database.binding,
-    })).resolves.toMatchObject({ currentMigration: '0015_attachment_folders.sql' });
+    })).resolves.toMatchObject({ currentMigration: '0016_member_task_assignments.sql' });
   });
 
   it('migrates existing Tasks into Organization-owned role records and unassigns the Control identities they named', async () => {
@@ -154,10 +155,10 @@ describe('Schema Lifecycle', () => {
     expect(database.rows<{ id: string; display_name: string }>('SELECT id, display_name FROM operational_task_roles')).toEqual([
       { id: 'legacy-registration', display_name: 'legacy-registration' },
     ]);
-    expect(database.rows<{ assignee_role_id: string; assignee_role_name: string; assignee_name: string; assignee_identity_id: string | null }>('SELECT assignee_role_id, assignee_role_name, assignee_name, assignee_identity_id FROM tasks')).toEqual([
-      { assignee_role_id: 'legacy-registration', assignee_role_name: 'legacy-registration', assignee_name: '未割り当て', assignee_identity_id: null },
+    expect(database.rows<{ assignee_role_id: string; assignee_role_name: string; assignee_name: string; assignee_member_id: string | null }>('SELECT assignee_role_id, assignee_role_name, assignee_name, assignee_member_id FROM tasks')).toEqual([
+      { assignee_role_id: 'legacy-registration', assignee_role_name: 'legacy-registration', assignee_name: '未割り当て', assignee_member_id: null },
     ]);
-    expect(database.rows('SELECT role_id FROM task_role_assignments')).toEqual([]);
+    expect(database.rows('SELECT role_id, member_id FROM task_role_assignments')).toEqual([]);
     expect(database.rows('PRAGMA foreign_key_check')).toEqual([]);
   });
 
@@ -240,8 +241,8 @@ describe('Schema Lifecycle', () => {
     ]);
 
     expect(receipts).toEqual([
-      expect.objectContaining({ currentMigration: '0015_attachment_folders.sql' }),
-      expect.objectContaining({ currentMigration: '0015_attachment_folders.sql' }),
+      expect.objectContaining({ currentMigration: '0016_member_task_assignments.sql' }),
+      expect.objectContaining({ currentMigration: '0016_member_task_assignments.sql' }),
     ]);
   });
 });

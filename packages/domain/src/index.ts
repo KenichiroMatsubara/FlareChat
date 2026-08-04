@@ -119,8 +119,6 @@ export interface ApiResult<T> {
   data: T;
 }
 
-export type OrganizationRole = 'owner' | 'admin' | 'operator' | 'viewer';
-
 export type ProvisioningPhase =
   | 'allocating_database'
   | 'applying_schema'
@@ -135,7 +133,6 @@ export interface AppIdentity {
 
 export interface AppMembership {
   organizationId: string;
-  role: 'owner' | 'admin' | 'operator' | 'viewer';
   name: string;
   status: string;
 }
@@ -203,4 +200,4 @@ export { ATTENDANCE_REMINDER_DAYS, shouldSendAttendanceReminder } from './remind
 export { classifyEventChange } from './event-changes';
 export type { EventChangeKind } from './event-changes';
 export { shouldWriteRecoveryReceipt } from './recovery';
-export { displayLineDestinationId, displayRecipientIdentifier } from './privacy';
+export { displayLineDestinationId } from './privacy';

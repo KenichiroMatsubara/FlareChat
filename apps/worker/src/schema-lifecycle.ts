@@ -14,6 +14,7 @@ import organizationEventAgentOwnersMigration from '../migrations/organization/00
 import organizationAgentRuleWritesMigration from '../migrations/organization/0013_agent_rule_writes.sql';
 import organizationMembersMigration from '../migrations/organization/0014_members.sql';
 import organizationAttachmentFoldersMigration from '../migrations/organization/0015_attachment_folders.sql';
+import organizationMemberTaskAssignmentsMigration from '../migrations/organization/0016_member_task_assignments.sql';
 
 type SchemaKind = 'organization';
 
@@ -57,6 +58,7 @@ const ORGANIZATION_MIGRATIONS: readonly SchemaMigration[] = [
   { name: '0013_agent_rule_writes.sql', sql: organizationAgentRuleWritesMigration },
   { name: '0014_members.sql', sql: organizationMembersMigration },
   { name: '0015_attachment_folders.sql', sql: organizationAttachmentFoldersMigration },
+  { name: '0016_member_task_assignments.sql', sql: organizationMemberTaskAssignmentsMigration },
 ];
 const LEGACY_MIGRATION_CHECKSUMS = new Map<string, ReadonlySet<string>>([
   ['0001_tasks.sql', new Set(['4b2f3889191d0eafbbe45b78103db7139c7ce2b937c02cbbb6824f5131d7429f'])],

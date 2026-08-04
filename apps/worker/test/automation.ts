@@ -14,7 +14,7 @@ export interface AutomationTestApp extends TestApp {
 export const createAutomationTestApp = async (
   options: { ai?: boolean; enabled?: boolean; lineSecret?: string } = {},
 ): Promise<AutomationTestApp> => {
-  const fixture = createTestApp('owner', { includeAutomationInbox: false });
+  const fixture = createTestApp({ includeAutomationInbox: false });
   const deploymentKey = await masterKey(MASTER_KEY_MATERIAL);
   const wrapped = await createOrganizationKey(deploymentKey, 'v1', 'organization-1');
   const organizationKey = await unwrapOrganizationKey(wrapped, deploymentKey, 'organization-1');

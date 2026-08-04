@@ -94,7 +94,6 @@ entryRoutes.get('/auth/me', async (context) => {
   if (!session) return failure(context, 'Authentication is required.', 401);
   const memberships = await controlDatabase(context.env.CONTROL_DB).select({
     organizationId: admins.organizationId,
-    role: admins.role,
     name: organizations.name,
     status: organizations.status,
   }).from(admins).innerJoin(organizations, eq(organizations.id, admins.organizationId))

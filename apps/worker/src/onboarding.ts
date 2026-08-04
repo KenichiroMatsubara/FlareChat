@@ -111,8 +111,7 @@ const beginProvisioning = async (
     control.insert(admins).values({
       organizationId,
       identityId: setup.ownerIdentityId,
-      role: 'owner',
-      state: 'pending',
+      state: 'active',
       createdAt,
       updatedAt: createdAt,
     }),
@@ -204,7 +203,6 @@ export const applicationState = async (env: Bindings, session: SessionRow): Prom
   const control = controlDatabase(env.CONTROL_DB);
   const memberships = await control.select({
     organizationId: admins.organizationId,
-    role: admins.role,
     name: organizations.name,
     status: organizations.status,
     databaseId: organizations.databaseId,
@@ -231,7 +229,7 @@ export const applicationState = async (env: Bindings, session: SessionRow): Prom
     return {
       kind: 'ready',
       identity,
-      organizations: memberships.map(({ organizationId, role, name, status }) => ({ organizationId, role, name, status })),
+      organizations: memberships.map(({ organizationId, name, status }) => ({ organizationId, name, status })),
     };
   }
   const setup = await control.select().from(organizationSetups)

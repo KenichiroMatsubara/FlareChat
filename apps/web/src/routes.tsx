@@ -215,7 +215,7 @@ interface OrganizationContextValue extends OrganizationRouteData {
   createTaskRole: (input: { displayName: string; description: string }) => Promise<void>;
   updateTaskRole: (roleId: string, input: { displayName?: string; description?: string }) => Promise<void>;
   deleteTaskRole: (roleId: string) => Promise<void>;
-  assignTaskRole: (roleId: string, identityId: string) => void;
+  assignTaskRole: (roleId: string, memberId: string) => void;
   createMember: (input: OrganizationMemberInput) => Promise<OrganizationMember | null>;
   updateMember: (memberId: string, input: Partial<Pick<OrganizationMember, 'name' | 'email' | 'tags' | 'state'>>) => Promise<void>;
   setLineDestination: (memberId: string, input: MemberLineDestinationInput) => Promise<void>;
@@ -399,8 +399,8 @@ export const OrganizationLayout = () => {
     await api.removeOrganizationTaskRole(data.organization.organizationId, roleId);
     setData((current) => ({ ...current, taskRoles: { ...current.taskRoles, roles: current.taskRoles.roles.filter((role) => role.id !== roleId), assignments: current.taskRoles.assignments.filter((assignment) => assignment.roleId !== roleId) } }));
   }, setBusy);
-  const assignTaskRole = (roleId: string, identityId: string) => void withError(async () => {
-    const assignment = await api.assignOrganizationTaskRole(data.organization.organizationId, roleId, identityId);
+  const assignTaskRole = (roleId: string, memberId: string) => void withError(async () => {
+    const assignment = await api.assignOrganizationTaskRole(data.organization.organizationId, roleId, memberId);
     setData((current) => ({ ...current, taskRoles: { ...current.taskRoles, assignments: [...current.taskRoles.assignments.filter((currentAssignment) => currentAssignment.roleId !== roleId), assignment] } }));
   }, setBusy);
   const reloadMembers = async (): Promise<void> => {
@@ -480,7 +480,6 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     organization={value.organization}
     organizationId={value.organization.organizationId}
     organizations={auth.organizations}
-    canManage={value.organization.role === 'owner' || value.organization.role === 'admin'}
     connections={value.connections}
     lineChannelAccessToken={value.lineChannelAccessToken}
     lineChannelSecret={value.lineChannelSecret}

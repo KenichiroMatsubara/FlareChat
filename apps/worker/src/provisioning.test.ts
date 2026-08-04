@@ -71,7 +71,6 @@ describe('Organization provisioning', () => {
         organizations: [{
           organizationId: 'organization-1',
           status: 'active',
-          role: 'owner',
         }],
       },
     });

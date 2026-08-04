@@ -36,7 +36,6 @@ describe('Request Context database access', () => {
       organizationId: 'organization-1',
       identityId: 'identity-1',
       email: 'owner@example.com',
-      role: 'owner',
       sessionId: 'session-1',
     });
     const context = createRequestContext(new Request('https://example.test', {

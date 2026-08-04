@@ -60,8 +60,8 @@ describe('Organization access', () => {
   });
 
   it('keeps management data isolated between two Organizations', async () => {
-    fixture = createTestApp('admin');
-    fixture.addOrganization({ id: 'organization-2', bindingName: 'ORG_ORGANIZATION2', role: 'admin' });
+    fixture = createTestApp();
+    fixture.addOrganization({ id: 'organization-2', bindingName: 'ORG_ORGANIZATION2' });
     const created = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-2/lists',
       { kind: 'source', name: 'Organization Two Sources' },
@@ -83,8 +83,8 @@ describe('Organization access', () => {
     });
   });
 
-  it('lets a Viewer inspect outcomes but rejects management changes', async () => {
-    fixture = createTestApp('viewer');
+  it('lets the one Admin of an Organization read outcomes and make management changes', async () => {
+    fixture = createTestApp();
 
     const dashboard = await app.fetch(
       fixture.request('/api/organizations/organization-1/dashboard'),
@@ -92,16 +92,16 @@ describe('Organization access', () => {
     );
     const listChange = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/lists',
-      { kind: 'source', name: 'Forbidden' },
+      { kind: 'source', name: 'Allowed' },
     ), fixture.environment);
-    const recipientChange = await app.fetch(fixture.jsonRequest(
+    const memberChange = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/members',
-      { name: 'Forbidden', email: 'forbidden@example.com' },
+      { name: 'Allowed', email: 'allowed@example.com' },
     ), fixture.environment);
 
     expect(dashboard.status).toBe(200);
-    expect(listChange.status).toBe(403);
-    expect(recipientChange.status).toBe(403);
+    expect(listChange.status).toBe(201);
+    expect(memberChange.status).toBe(201);
   });
 });
 
@@ -204,7 +204,7 @@ describe('OpenAI-compatible connection', () => {
 
 describe('Organization management', () => {
   it('creates and reads canonical Typed Lists and List Items', async () => {
-    fixture = createTestApp('admin');
+    fixture = createTestApp();
     const created = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/lists',
       { kind: 'source', name: 'Members', description: 'Verified senders' },
@@ -267,6 +267,52 @@ describe('Organization management', () => {
         selectionPolicy: { source: 'trusted' },
       }],
     });
+  });
+
+  it('offers Members rather than the shared Google account of an Organization as Task assignees', async () => {
+    fixture = createTestApp();
+    const role = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/task-roles', {
+      displayName: '会計', description: '支払期限を扱う',
+    }), fixture.environment);
+    const roleId = (await role.json() as { data: { id: string } }).data.id;
+    const member = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/members', {
+      name: '山田花子', email: 'hanako@example.com',
+    }), fixture.environment);
+    const memberId = (await member.json() as { data: { id: string } }).data.id;
+
+    const assigned = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/task-roles/${roleId}/assignment`,
+      { memberId },
+      'PUT',
+    ), fixture.environment);
+    const configuration = await app.fetch(
+      fixture.request('/api/organizations/organization-1/task-roles'),
+      fixture.environment,
+    );
+
+    expect(assigned.status).toBe(200);
+    await expect(configuration.json()).resolves.toMatchObject({
+      data: {
+        members: [{ memberId, displayName: '山田花子' }],
+        assignments: [{ roleId, memberId, displayName: '山田花子' }],
+      },
+    });
+  });
+
+  it('refuses a Task assignee that is not an active Member of the Organization', async () => {
+    fixture = createTestApp();
+    const role = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/task-roles', {
+      displayName: '会計', description: '支払期限を扱う',
+    }), fixture.environment);
+    const roleId = (await role.json() as { data: { id: string } }).data.id;
+
+    const assigned = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/task-roles/${roleId}/assignment`,
+      { memberId: 'identity-1' },
+      'PUT',
+    ), fixture.environment);
+
+    expect(assigned.status).toBe(409);
   });
 
   it('stores the Organization role subset an Automation Rule may assign', async () => {
@@ -476,7 +522,7 @@ describe('Organization management', () => {
   });
 
   it('creates, changes, imports, reads, and snapshots Members', async () => {
-    fixture = createTestApp('operator');
+    fixture = createTestApp();
     seedScheduledEvent(fixture.organization, { id: 'event-1' });
     const created = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/members',
@@ -512,7 +558,7 @@ describe('Organization management', () => {
   });
 
   it('creates multiple Members without email and allows email to be edited later', async () => {
-    fixture = createTestApp('operator');
+    fixture = createTestApp();
     const first = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/members',
       { name: 'メール未設定 一郎' },
@@ -570,28 +616,6 @@ describe('Organization management', () => {
 });
 
 describe('Control-plane administration', () => {
-  it('makes an Owner membership suspension visible to the affected member', async () => {
-    fixture = createTestApp();
-    seedOrganizationMember(fixture.control, {
-      identityId: 'identity-2',
-      email: 'member@example.com',
-      role: 'viewer',
-      sessionId: 'session-2',
-    });
-
-    const changed = await app.fetch(fixture.jsonRequest(
-      '/api/organizations/organization-1/admins/identity-2',
-      { role: 'operator', state: 'suspended' },
-      'PATCH',
-    ), fixture.environment);
-    const memberView = await app.fetch(new Request('https://app.example.com/api/auth/me', {
-      headers: { Cookie: 'mail_session=session-2' },
-    }), fixture.environment);
-
-    expect(changed.status).toBe(200);
-    await expect(memberView.json()).resolves.toMatchObject({ data: { organizations: [] } });
-  });
-
   it('records one Owner recovery request per idempotency key', async () => {
     fixture = createTestApp();
 
@@ -614,7 +638,7 @@ describe('Control-plane administration', () => {
 
 describe('Public attendance and operational outcomes', () => {
   it('returns and changes only a live Event-scoped attendance token', async () => {
-    fixture = createTestApp('operator');
+    fixture = createTestApp();
     seedScheduledEvent(fixture.organization, {
       id: 'event-1',
       attendanceDeadline: '2099-01-01T00:00:00.000Z',
@@ -641,7 +665,7 @@ describe('Public attendance and operational outcomes', () => {
   });
 
   it('rejects revoked attendance tokens', async () => {
-    fixture = createTestApp('operator');
+    fixture = createTestApp();
     seedScheduledEvent(fixture.organization, {
       id: 'event-1',
       attendanceDeadline: '2099-01-01T00:00:00.000Z',
@@ -666,7 +690,7 @@ describe('Public attendance and operational outcomes', () => {
   });
 
   it('exposes Event changes, Delivery Records, and Exception transitions through operations interfaces', async () => {
-    fixture = createTestApp('operator');
+    fixture = createTestApp();
     seedScheduledEvent(fixture.organization, { id: 'event-1', status: 'draft' });
     seedDeliveryRecord(fixture.organization, {
       id: 'delivery-1',

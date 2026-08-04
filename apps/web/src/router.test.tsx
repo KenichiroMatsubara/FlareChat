@@ -38,7 +38,7 @@ describe('application routes', () => {
     const ready = {
       kind: 'ready',
       identity: { email: 'owner@example.com', displayName: 'Owner' },
-      organizations: [{ organizationId: 'org-1', name: 'Example', role: 'owner', status: 'active' }],
+      organizations: [{ organizationId: 'org-1', name: 'Example', status: 'active' }],
     } as AppState;
 
     expect(resolveApplicationRedirect('/setup', signedOut)).toBe('/');
@@ -51,7 +51,7 @@ describe('application routes', () => {
     const ready = {
       kind: 'ready',
       identity: { email: 'owner@example.com', displayName: 'Owner' },
-      organizations: [{ organizationId: 'org-1', name: 'Example', role: 'owner', status: 'active' }],
+      organizations: [{ organizationId: 'org-1', name: 'Example', status: 'active' }],
     } as AppState;
     const router = createMemoryRouter(createAppRoutes({
       bootstrap: async () => ready,
@@ -73,7 +73,7 @@ describe('application routes', () => {
     const ready = {
       kind: 'ready',
       identity: { email: 'owner@example.com', displayName: 'Owner' },
-      organizations: [{ organizationId: 'org-1', name: 'Example', role: 'owner', status: 'active' }],
+      organizations: [{ organizationId: 'org-1', name: 'Example', status: 'active' }],
     } as AppState;
     const router = createMemoryRouter(createAppRoutes({
       bootstrap: async () => ready,
@@ -87,7 +87,7 @@ describe('application routes', () => {
     const ready = {
       kind: 'ready',
       identity: { email: 'owner@example.com', displayName: 'Owner' },
-      organizations: [{ organizationId: 'org-1', name: 'Example', role: 'owner', status: 'active' }],
+      organizations: [{ organizationId: 'org-1', name: 'Example', status: 'active' }],
     } as AppState;
     const router = createMemoryRouter(createAppRoutes({
       bootstrap: async () => ready,

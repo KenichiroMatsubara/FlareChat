@@ -29,7 +29,6 @@ export interface AutomationSummary {
 
 export interface OrganizationMembership {
   organizationId: string;
-  role: 'owner' | 'admin' | 'operator' | 'viewer';
   name: string;
   status: string;
 }
@@ -254,8 +253,8 @@ export interface MemberLineDestinationInput {
 }
 
 export interface OperationalTaskRole { id: string; displayName: string; description: string; }
-export interface TaskRoleAssignment { roleId: string; identityId: string; displayName: string; }
-export interface TaskRoleConfiguration { members: Array<{ identityId: string; displayName: string }>; roles: OperationalTaskRole[]; assignments: TaskRoleAssignment[]; }
+export interface TaskRoleAssignment { roleId: string; memberId: string; displayName: string; }
+export interface TaskRoleConfiguration { members: Array<{ memberId: string; displayName: string }>; roles: OperationalTaskRole[]; assignments: TaskRoleAssignment[]; }
 
 /** The OpenAI-compatible JSON body prepared for review; credentials are never included. */
 export interface MailboxTestAiRequest extends MailboxTestMatch {
@@ -364,7 +363,7 @@ export const api = {
   createOrganizationTaskRole: (organizationId: string, input: { displayName: string; description: string }): Promise<OperationalTaskRole> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles`, { method: 'POST', body: JSON.stringify(input) }),
   updateOrganizationTaskRole: (organizationId: string, roleId: string, input: { displayName?: string; description?: string }): Promise<OperationalTaskRole> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles/${encodeURIComponent(roleId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   removeOrganizationTaskRole: (organizationId: string, roleId: string): Promise<{ id: string; removed: boolean }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles/${encodeURIComponent(roleId)}`, { method: 'DELETE' }),
-  assignOrganizationTaskRole: (organizationId: string, roleId: string, identityId: string): Promise<TaskRoleAssignment> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles/${encodeURIComponent(roleId)}/assignment`, { method: 'PUT', body: JSON.stringify({ identityId }) }),
+  assignOrganizationTaskRole: (organizationId: string, roleId: string, memberId: string): Promise<TaskRoleAssignment> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles/${encodeURIComponent(roleId)}/assignment`, { method: 'PUT', body: JSON.stringify({ memberId }) }),
   updateOrganizationTask: (organizationId: string, taskId: string, input: { completed?: boolean; remarks?: string }): Promise<OrganizationTask> => request(`/api/organizations/${encodeURIComponent(organizationId)}/tasks/${encodeURIComponent(taskId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   createOrganizationRule: (organizationId: string, input: OrganizationRuleInput): Promise<OrganizationRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules`, {
     method: 'POST',

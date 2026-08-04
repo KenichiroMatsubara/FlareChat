@@ -12,7 +12,6 @@ import { admins, identities, organizationKeys, organizations, sessions } from '.
 export interface OrganizationAccess {
   session: SessionRow;
   organization: OrganizationRow;
-  role: string;
   database: D1Database | null;
 }
 
@@ -57,7 +56,6 @@ export const createRequestContext = (request: Request, env: Bindings): RequestCo
       const currentSession = await session();
       if (!currentSession) throw new Error('Authentication is required.');
       const membership = await controlDatabase(env.CONTROL_DB).select({
-        role: admins.role,
         id: organizations.id,
         name: organizations.name,
         status: organizations.status,
@@ -81,7 +79,6 @@ export const createRequestContext = (request: Request, env: Bindings): RequestCo
       return {
         session: currentSession,
         organization: membership,
-        role: membership.role,
         database,
       };
     },

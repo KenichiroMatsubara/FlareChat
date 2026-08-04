@@ -19,9 +19,9 @@ describe('Google credential recovery', () => {
 const dashboardProps = (): DashboardProps => ({
   page: 'automation', automation: null, summary: null, busy: false, error: '',
   onRun: vi.fn(), onSetEnabled: vi.fn(), onLogout: vi.fn(), onReauthenticate: vi.fn(),
-  organization: { name: 'Example', role: 'owner' }, organizationId: 'org-1',
-  organizations: [{ organizationId: 'org-1', name: 'Example', role: 'owner', status: 'active' }],
-  canManage: true, connections: null, lineChannelAccessToken: '', lineChannelSecret: '', aiApiKey: '', aiModel: 'test-model', aiBaseUrl: 'https://ai.example.com/v1',
+  organization: { name: 'Example' }, organizationId: 'org-1',
+  organizations: [{ organizationId: 'org-1', name: 'Example', status: 'active' }],
+  connections: null, lineChannelAccessToken: '', lineChannelSecret: '', aiApiKey: '', aiModel: 'test-model', aiBaseUrl: 'https://ai.example.com/v1',
   onLineChannelAccessTokenChange: vi.fn(), onLineChannelSecretChange: vi.fn(), onAiApiKeyChange: vi.fn(), onAiModelChange: vi.fn(), onAiBaseUrlChange: vi.fn(),
   lineSettingsBusy: false, aiSettingsBusy: false, onSaveLineConnection: vi.fn(), onSaveAiConnection: vi.fn(), aiTestPrompt: '', aiTestResult: '', aiTestBusy: false,
   onAiTestPromptChange: vi.fn(), onTestAi: vi.fn(), mailTestSubject: '', mailTestMatches: [], mailTestAiRequest: null,
@@ -93,8 +93,8 @@ describe('Operational Task Roles', () => {
           {...dashboardProps()}
           page="tasks"
           taskRoles={[{ id: 'role-registration', displayName: '参加登録担当', description: '出欠と申込期限を扱う' }]}
-          taskRoleAssignments={[{ roleId: 'role-registration', identityId: 'identity-1', displayName: 'Owner' }]}
-          taskMembers={[{ identityId: 'identity-1', displayName: 'Owner' }]}
+          taskRoleAssignments={[{ roleId: 'role-registration', memberId: 'member-1', displayName: '山田' }]}
+          taskMembers={[{ memberId: 'member-1', displayName: '山田' }]}
           organizationTasks={[{
             id: 'task-1', title: '登録状況を確認する', deadline: '2026-08-20',
             assigneeRoleId: 'role-registration', assigneeRoleName: '旧・参加登録担当',

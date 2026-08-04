@@ -337,7 +337,7 @@ export const operationalTaskRoles = sqliteTable('operational_task_roles', {
 /** An Organization-local projection of the active member assigned an Operational Task Role. */
 export const taskRoleAssignments = sqliteTable('task_role_assignments', {
   roleId: text('role_id').primaryKey().references(() => operationalTaskRoles.id, { onDelete: 'cascade' }),
-  identityId: text('identity_id').notNull(),
+  memberId: text('member_id').notNull().references(() => members.id, { onDelete: 'cascade' }),
   displayName: text('display_name').notNull(),
   assignedAt: text('assigned_at').notNull(),
   updatedAt: text('updated_at').notNull(),
@@ -352,7 +352,7 @@ export const tasks = sqliteTable('tasks', {
   deadline: text('deadline').notNull(),
   assigneeRoleId: text('assignee_role_id').notNull(),
   assigneeRoleName: text('assignee_role_name').notNull(),
-  assigneeIdentityId: text('assignee_identity_id'),
+  assigneeMemberId: text('assignee_member_id'),
   assigneeName: text('assignee_name').notNull().default('未割り当て'),
   description: text('description').notNull(),
   remarks: text('remarks').notNull().default(''),
@@ -364,7 +364,7 @@ export const tasks = sqliteTable('tasks', {
   check('tasks_completed_check', sql`${table.completed} in (0, 1)`),
   uniqueIndex('tasks_source_role_deadline_title_idx').on(table.sourceMessageId, table.assigneeRoleId, table.deadline, table.title),
   index('tasks_order_idx').on(table.completed, table.deadline),
-  index('tasks_assignee_idx').on(table.assigneeIdentityId),
+  index('tasks_assignee_idx').on(table.assigneeMemberId),
 ]);
 
 export const deliveryArchives = sqliteTable('delivery_archives', {

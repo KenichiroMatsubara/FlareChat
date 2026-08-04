@@ -50,8 +50,8 @@ export const createProvisioningTestApp = async (): Promise<ProvisioningTestApp> 
     CREATED_AT,
   );
   control.execute(
-    `INSERT INTO admins (organization_id, identity_id, role, state, created_at, updated_at)
-     VALUES (?, ?, 'owner', 'pending', ?, ?)`,
+    `INSERT INTO admins (organization_id, identity_id, state, created_at, updated_at)
+     VALUES (?, ?, 'active', ?, ?)`,
     'organization-1',
     'identity-1',
     CREATED_AT,
