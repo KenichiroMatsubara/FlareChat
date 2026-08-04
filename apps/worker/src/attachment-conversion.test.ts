@@ -57,6 +57,27 @@ describe('attachment conversion for Event Details', () => {
     expect(converted?.selectedTokens).toBeLessThan(200);
   });
 
+  it('drops thousands of blank XLSX columns emitted after the last populated cell', async () => {
+    const blankCells = Array.from({ length: 2_000 }, () => '             ');
+    const source = [
+      '## ご案内',
+      '',
+      `| 役職区分 | ${blankCells.join(' | ')} |`,
+    ].join('\n');
+    const [converted] = await convertAttachmentsForEventExtraction([{
+      attachmentId: 'wide-attachment-xlsx',
+      filename: 'registration.xlsx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      size: 3,
+      data: 'eGxzeA==',
+    }], { toMarkdown: vi.fn().mockResolvedValue({
+      format: 'markdown', name: 'registration.xlsx', mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', tokens: 10_000, data: source,
+    }) });
+
+    expect(converted?.text).toBe('## ご案内\n\n役職区分');
+    expect(converted?.selectedTokens).toBeLessThan(10);
+  });
+
   it('passes all Workers AI Markdown without a shared token budget or truncation', async () => {
     const markdown = {
       toMarkdown: vi.fn(async (document: { name: string }) => ({

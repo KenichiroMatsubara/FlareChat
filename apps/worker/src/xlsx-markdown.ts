@@ -43,4 +43,4 @@ const compactTable = (block: string): string => {
  * rectangle cells become TSV's much smaller representation.
  */
 export const compactXlsxMarkdown = (markdown: string): string =>
-  markdown.replace(/(?:^[ \t]*\|.*\|[ \t]*(?:\n|$)){2,}/gmu, compactTable);
+  markdown.replace(/(?:^[ \t]*\|.*\|[ \t]*(?:\n|$))+/gmu, compactTable);
