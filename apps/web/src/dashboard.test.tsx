@@ -19,7 +19,7 @@ describe('Google credential recovery', () => {
 
 const dashboardProps = (): DashboardProps => ({
   page: 'automation', automation: null, summary: null, error: '',
-  isPending: () => false, isSettled: () => false, navigating: false,
+  isPending: () => false, isSettled: () => false, navigating: false, runningOperations: [],
   onRun: vi.fn(), onSetEnabled: vi.fn(), onLogout: vi.fn(), onReauthenticate: vi.fn(),
   organization: { name: 'Example' }, organizationId: 'org-1',
   organizations: [{ organizationId: 'org-1', name: 'Example', status: 'active' }],
@@ -823,11 +823,30 @@ describe('operation progress', () => {
     expect(skipped).toContain('参加費を支払う');
   });
 
+  it('names the running operation in the middle of the page, whatever is scrolled into view', () => {
+    const html = dashboard({ runningOperations: [pendingKey.mailSearch] }, 'mail-test', 'mailbox-test');
+
+    expect(html).toContain('class="pending-overlay"');
+    expect(html).toContain('Gmail を検索しています');
+    expect(html).toContain('完了するまでこのページを開いたままにしてください。');
+    expect(dashboard({}, 'mail-test', 'mailbox-test')).not.toContain('pending-overlay');
+  });
+
+  it('counts the other operations running behind the one it names', () => {
+    const html = dashboard({
+      runningOperations: [pendingKey.taskUpdate('task-1'), pendingKey.taskRoleAssign('role-1')],
+    }, 'tasks', 'tasks');
+
+    expect(html).toContain('タスクを保存しています');
+    expect(html).toContain('ほか1件の処理を実行中です');
+  });
+
   it('dims the stale page while the route it navigated to is still loading', () => {
     const html = dashboard({ navigating: true }, 'automation');
 
     expect(html).toContain('class="app-content navigating"');
     expect(html).toContain('aria-busy="true"');
+    expect(html).toContain('ページを読み込んでいます');
     expect(dashboard({}, 'automation')).toContain('class="app-content"');
   });
 

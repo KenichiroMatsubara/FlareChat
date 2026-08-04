@@ -4,7 +4,8 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
 import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, OperationalTaskRole, OrganizationAgentRule, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationMember, OrganizationMemberInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, ProposedAction, MemberLineDestinationInput, TaskAssignmentProposal, TaskReassignmentReview, TaskRoleAssignment } from './api';
 import { AutomationPage, ConnectionsPage, MailboxTestPage, MembersPage, RulesPage, TasksPage } from './dashboard-pages';
-import { pendingKey } from './pending';
+import { pendingKey, ROUTE_NAVIGATION_KEY } from './pending';
+import { PendingOverlay } from './progress';
 
 export type Page = 'automation' | 'connections' | 'rules' | 'members' | 'mail-test' | 'tasks';
 
@@ -47,6 +48,8 @@ export interface DashboardProps {
   isSettled: (key: string) => boolean;
   /** True while React Router is loading another route's data. */
   navigating: boolean;
+  /** Every operation this screen has in flight, named in the centre of the page. */
+  runningOperations: readonly string[];
   error: string;
   onRun: () => void;
   onSetEnabled: (enabled: boolean) => void;
@@ -187,6 +190,7 @@ export const Dashboard = (props: DashboardProps) => {
         <button className="topbar-logout" onClick={props.onLogout} disabled={loggingOut}>{loggingOut ? <RefreshCw className="spin" size={16} /> : <LogOut size={16} />}{loggingOut ? 'ログアウト中…' : 'ログアウト'}</button>
       </div>
     </header>
+    <PendingOverlay running={props.navigating ? [ROUTE_NAVIGATION_KEY, ...props.runningOperations] : props.runningOperations} />
     {menuOpen && <button type="button" className="topbar-scrim" tabIndex={-1} aria-hidden="true" onClick={() => setMenuOpen(false)} />}
     <main className={props.navigating ? 'app-content navigating' : 'app-content'} aria-busy={props.navigating}>
       {(props.error || requiresGoogleReauthentication) && <div className="dashboard-error"><p><CircleAlert size={17} />{recoveryMessage}</p>{requiresGoogleReauthentication && <GoogleReauthenticationAction onClick={props.onReauthenticate} busy={props.isPending(pendingKey.reauthenticate)} />}</div>}

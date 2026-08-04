@@ -195,9 +195,10 @@ describe('Member Portal progress', () => {
       assigneeName: '山田', sourceMessageSubject: '総会案内', description: '', remarks: '', completed: false, mine: true,
     }],
   };
-  const view = (pending: (key: string) => boolean, settled: (key: string) => boolean = () => false): string =>
+  const view = (pending: (key: string) => boolean, settled: (key: string) => boolean = () => false, running: string[] = []): string =>
     renderToStaticMarkup(<MemberPortalView
       portal={portal}
+      running={running}
       pending={pending}
       settled={settled}
       error=""
@@ -225,6 +226,13 @@ describe('Member Portal progress', () => {
 
   it('reports a Member leaving the portal', () => {
     expect(view((key) => key === pendingKey.portalLogout)).toContain('ログアウト中…');
+  });
+
+  it('names the answer being sent in the middle of the page, not only inside the control', () => {
+    const html = view(() => true, () => false, [pendingKey.portalAttendance('event-1', 'attending')]);
+
+    expect(html).toContain('class="pending-overlay"');
+    expect(html).toContain('出欠を送信しています');
   });
 });
 

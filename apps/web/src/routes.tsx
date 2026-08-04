@@ -8,6 +8,7 @@ import { api } from './api';
 import type { MemberAttendanceStatus, MemberPortal, AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, OrganizationAgentRule, OrganizationConnections, OrganizationDashboard, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationMember, OrganizationMemberInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, ProposedAction, MemberLineDestinationInput, TaskAssignmentProposal, TaskReassignmentReview, TaskRoleConfiguration } from './api';
 import { defaultOrganizationName, setupPhaseLabel, SignedOutEntry } from './entry';
 import { pendingKey, usePendingOperations, type PendingOperations } from './pending';
+import { PendingOverlay } from './progress';
 import { Dashboard } from './dashboard';
 
 export const DEFAULT_MAIL_TEST_SUBJECT = '名古屋名城RAC30周年記念式典のご案内';
@@ -570,6 +571,7 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     summary={value.summary}
     isPending={value.pending}
     isSettled={value.settled}
+    runningOperations={value.running}
     navigating={navigation.state !== 'idle'}
     error={value.error}
     onRun={value.runAutomation}
@@ -763,6 +765,7 @@ const attendanceLabel: Record<MemberAttendanceStatus, string> = {
 /** The one signed-in page a Member has: attendance, comments, and their Tasks. */
 export interface MemberPortalViewProps {
   portal: MemberPortal;
+  running: readonly string[];
   pending: (key: string) => boolean;
   settled: (key: string) => boolean;
   error: string;
@@ -774,9 +777,10 @@ export interface MemberPortalViewProps {
 }
 
 /** The Member Portal itself: every control reports the one answer it is sending. */
-export const MemberPortalView = ({ portal, pending, settled, error, onAttendance, onComment, onTaskCompleted, onTaskRemarks, onLogout }: MemberPortalViewProps) => {
+export const MemberPortalView = ({ portal, running, pending, settled, error, onAttendance, onComment, onTaskCompleted, onTaskRemarks, onLogout }: MemberPortalViewProps) => {
   const leaving = pending(pendingKey.portalLogout);
   return <main className="portal-shell">
+    <PendingOverlay running={running} />
     <header className="portal-header">
       <div><p className="eyebrow">{portal.organization.name}</p><h1>{portal.member.name} さんのページ</h1></div>
       <button className="quiet-button" disabled={leaving} onClick={onLogout}>{leaving ? 'ログアウト中…' : 'ログアウト'}</button>
@@ -851,7 +855,7 @@ export const MemberPortalView = ({ portal, pending, settled, error, onAttendance
 export const MemberPortalRoute = () => {
   const [portal, setPortal] = useState<MemberPortal | null>(null);
   const [loadError, setLoadError] = useState('');
-  const { pending, settled, error, run } = usePendingOperations();
+  const { running, pending, settled, error, run } = usePendingOperations();
   const reload = async (): Promise<void> => { setPortal(await api.memberPortal()); };
   useEffect(() => {
     void reload().catch((cause: unknown) => setLoadError(cause instanceof Error ? cause.message : 'メンバーページを開けませんでした。'));
@@ -860,6 +864,7 @@ export const MemberPortalRoute = () => {
   if (!portal) return <SetupCard>{loadError ? <p className="setup-error">{loadError}</p> : <div className="loading"><RefreshCw className="spin" size={18} />読み込み中…</div>}</SetupCard>;
   return <MemberPortalView
     portal={portal}
+    running={running}
     pending={pending}
     settled={settled}
     error={loadError || error}

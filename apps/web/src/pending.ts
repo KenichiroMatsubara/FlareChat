@@ -56,7 +56,62 @@ export const pendingKey = {
   portalLogout: 'portal:logout',
 } as const;
 
+/** What the screen says it is doing, keyed by the start of an operation key. */
+const OPERATION_LABELS: ReadonlyArray<readonly [string, string]> = [
+  ['route:navigate', 'ページを読み込んでいます'],
+  ['automation:run', 'メールを確認しています'],
+  ['automation:enabled', '自動化の状態を切り替えています'],
+  ['session:logout', 'ログアウトしています'],
+  ['session:reauthenticate', 'Google に接続しています'],
+  ['connection:ai-test', 'AI に問い合わせています'],
+  ['connection:attachment-folder', '保存先を保存しています'],
+  ['connection:', '接続設定を保存しています'],
+  ['mail-test:search', 'Gmail を検索しています'],
+  ['mail-test:prepare:', 'メール本文と添付を読み込んでいます'],
+  ['mail-test:preview', 'AI が予定とタスクを抽出しています'],
+  ['mail-test:create-events', 'Calendar に予定を作成しています'],
+  ['mail-test:refresh-prepare', '既存の予定を照合しています'],
+  ['mail-test:refresh-plan', 'AI が対応付けを判定しています'],
+  ['mail-test:refresh-apply', '予定を更新しています'],
+  ['rule:create', 'ルールを作成しています'],
+  ['rule:update:', 'ルールを保存しています'],
+  ['prompt:create', 'Prompt を作成しています'],
+  ['prompt:update:', 'Prompt を保存しています'],
+  ['prompt:delete:', 'Prompt を削除しています'],
+  ['agent-rule:create', 'Agent Rule を作成しています'],
+  ['agent-rule:update:', 'Agent Rule を保存しています'],
+  ['agent-run:transcript:', 'Run Transcript を読み込んでいます'],
+  ['proposed-action-batch:', 'Proposed Action をまとめて処理しています'],
+  ['proposed-action:', 'Proposed Action を処理しています'],
+  ['preset:', 'Preset を適用しています'],
+  ['task-reassignment:suggest', 'AI が未完了タスクの割り当てを判定しています'],
+  ['task-reassignment:apply', 'タスクを再割り当てしています'],
+  ['task-role:create', 'role を追加しています'],
+  ['task-role:update:', 'role を保存しています'],
+  ['task-role:delete:', 'role を削除しています'],
+  ['task-role:assign:', '担当者を保存しています'],
+  ['task:', 'タスクを保存しています'],
+  ['member:create', 'メンバーを登録しています'],
+  ['member:update:', 'メンバーを保存しています'],
+  ['member:refresh', 'メンバーを読み直しています'],
+  ['line-destination:', 'LINE の連絡先を更新しています'],
+  ['portal:attendance:', '出欠を送信しています'],
+  ['portal:comment:', 'コメントを保存しています'],
+  ['portal:task:', 'タスクを保存しています'],
+  ['portal:remarks:', '備考を保存しています'],
+  ['portal:logout', 'ログアウトしています'],
+];
+
+/** The key a route transition reports under, so it is named like any other work. */
+export const ROUTE_NAVIGATION_KEY = 'route:navigate';
+
+/** The sentence shown for an operation while it runs. */
+export const operationLabel = (key: string): string =>
+  OPERATION_LABELS.find(([prefix]) => key.startsWith(prefix))?.[1] ?? '処理しています';
+
 export interface PendingOperations {
+  /** Every operation the screen has in flight, oldest first. */
+  running: readonly string[];
   /** True while the named operation is running. */
   pending: (key: string) => boolean;
   /** True for a short while after the named operation succeeded. */
@@ -102,6 +157,7 @@ export const usePendingOperations = (): PendingOperations => {
   }, []);
 
   return {
+    running,
     pending: (key: string): boolean => running.includes(key),
     settled: (key: string): boolean => succeeded.includes(key),
     error,
