@@ -1513,6 +1513,58 @@ describe('Manual mailbox test', () => {
     })).resolves.toEqual([{ id: 'mailbox-port-message', subject: '手動テスト', sender: 'member@example.com' }]);
   });
 
+  it('matches a subject despite full-width digits and doubled whitespace Gmail treats as the same subject', async () => {
+    fixture = await createAutomationTestApp();
+    const automation = createAutomation(fixture.environment, {
+      google: {
+        request: async <T>(_accessToken: string, url: string): Promise<T> => {
+          if (url.includes('/messages?')) return { messages: [{ id: 'mailbox-port-message' }] } as T;
+          return {
+            id: 'mailbox-port-message',
+            payload: {
+              headers: [
+                { name: 'Subject', value: '３０周年記念式典　のご案内' },
+                { name: 'From', value: 'member@example.com' },
+              ],
+            },
+          } as T;
+        },
+      },
+    });
+
+    await expect(automation.mailboxTest.search({
+      organizationId: 'organization-1',
+      database: fixture.organization.binding,
+      subject: '30周年記念式典  のご案内',
+    })).resolves.toEqual([{ id: 'mailbox-port-message', subject: '３０周年記念式典　のご案内', sender: 'member@example.com' }]);
+  });
+
+  it('rejects a subject that only shares words with the searched-for subject', async () => {
+    fixture = await createAutomationTestApp();
+    const automation = createAutomation(fixture.environment, {
+      google: {
+        request: async <T>(_accessToken: string, url: string): Promise<T> => {
+          if (url.includes('/messages?')) return { messages: [{ id: 'mailbox-port-message' }] } as T;
+          return {
+            id: 'mailbox-port-message',
+            payload: {
+              headers: [
+                { name: 'Subject', value: '30周年記念式典のご案内（再送）' },
+                { name: 'From', value: 'member@example.com' },
+              ],
+            },
+          } as T;
+        },
+      },
+    });
+
+    await expect(automation.mailboxTest.search({
+      organizationId: 'organization-1',
+      database: fixture.organization.binding,
+      subject: '30周年記念式典のご案内',
+    })).resolves.toEqual([]);
+  });
+
   it('previews an event whose date and time exist only in an XLSX attachment', async () => {
     fixture = await createAutomationTestApp({ ai: true });
     const registrationRoleResponse = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/task-roles', {
@@ -1764,8 +1816,9 @@ describe('the Event Refresh exit', () => {
     expect(plan.desired[0]?.description).toContain('Mail Automation が Gmail メッセージ gmail-refresh-1 から作成しました。');
   });
 
-  it('rewrites every field but the attendees, and records the effect', async () => {
+  it('rewrites every field, adds the active roster as attendees, and preserves an existing attendee\'s response status', async () => {
     fixture = await createAutomationTestApp({ ai: true });
+    seedMember(fixture.organization, { id: 'member-1', name: '一郎', email: 'first@example.com' });
     fixture.organization.execute(
       `INSERT INTO events
         (id, organization_id, rule_id, google_event_id, title, starts_at, ends_at, location, description, status, created_at, updated_at)
@@ -1791,6 +1844,9 @@ describe('the Event Refresh exit', () => {
             };
             return { id: 'calendar-event-1', etag: '"etag-2"' } as T;
           }
+          if (!init?.method && url.endsWith('/calendar-event-1')) {
+            return { id: 'calendar-event-1', attendees: [{ email: 'guest@example.com', responseStatus: 'accepted' }] } as T;
+          }
           throw new Error(`Unexpected Google request: ${url}`);
         },
       },
@@ -1805,13 +1861,16 @@ describe('the Event Refresh exit', () => {
 
     expect(outcome.updated).toEqual(['calendar-event-1']);
     expect(patched?.headers['If-Match']).toBe('"etag-1"');
-    expect(patched?.url).toContain('sendUpdates=none');
+    expect(patched?.url).toContain('sendUpdates=all');
     expect(patched?.body).toMatchObject({
       summary: '30周年記念式典',
       location: '市民ホール',
       start: { dateTime: '2026-08-18T14:30:00+09:00', timeZone: 'Asia/Tokyo' },
     });
-    expect(patched?.body.attendees).toBeUndefined();
+    expect(patched?.body.attendees).toEqual([
+      { email: 'guest@example.com', responseStatus: 'accepted' },
+      { email: 'first@example.com' },
+    ]);
     expect(String(patched?.body.description)).toContain('Mail Automation が Gmail メッセージ gmail-refresh-1 から作成しました。');
     expect(fixture.organization.row<{ title: string; location: string }>(
       'SELECT title, location FROM events WHERE google_event_id = ?', 'calendar-event-1',
@@ -1819,6 +1878,68 @@ describe('the Event Refresh exit', () => {
     expect(fixture.organization.rows<{ channel: string; external_id: string }>(
       "SELECT channel, external_id FROM deliveries WHERE channel = 'calendar'",
     )).toEqual([{ channel: 'calendar', external_id: 'calendar-event-1' }]);
+  });
+
+  it('sends no notification when every active Member is already an attendee', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    seedMember(fixture.organization, { id: 'member-1', name: '一郎', email: 'first@example.com' });
+    let patched: { url: string; body: Record<string, unknown> } | undefined;
+    const automation = createAutomation(fixture.environment, {
+      attachments: attachmentPort,
+      google: {
+        request: async <T>(_accessToken: string, url: string, init?: RequestInit): Promise<T> => {
+          if (url.includes('/messages/gmail-refresh-1')) return gmailMessage as T;
+          if (init?.method === 'PATCH') {
+            patched = { url, body: JSON.parse(String(init.body)) as Record<string, unknown> };
+            return { id: 'calendar-event-1', etag: '"etag-2"' } as T;
+          }
+          if (!init?.method && url.endsWith('/calendar-event-1')) {
+            return { id: 'calendar-event-1', attendees: [{ email: 'first@example.com', responseStatus: 'declined' }] } as T;
+          }
+          throw new Error(`Unexpected Google request: ${url}`);
+        },
+      },
+    });
+
+    await automation.mailboxTest.applyRefresh({
+      organizationId: 'organization-1',
+      database: fixture.organization.binding,
+      messageId: 'gmail-refresh-1',
+      entries: [{ googleEventId: 'calendar-event-1', etag: '"etag-1"', candidate: CANDIDATE }],
+    });
+
+    expect(patched?.url).toContain('sendUpdates=none');
+    expect(patched?.body.attendees).toEqual([{ email: 'first@example.com', responseStatus: 'declined' }]);
+  });
+
+  it('invites the active roster with sendUpdates=all when it creates a Scheduled Event through the refresh exit', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    seedMember(fixture.organization, { id: 'member-1', name: '一郎', email: 'first@example.com' });
+    let created: { url: string; body: Record<string, unknown> } | undefined;
+    const automation = createAutomation(fixture.environment, {
+      attachments: attachmentPort,
+      google: {
+        request: async <T>(_accessToken: string, url: string, init?: RequestInit): Promise<T> => {
+          if (url.includes('/messages/gmail-refresh-1')) return gmailMessage as T;
+          if (init?.method === 'POST') {
+            created = { url, body: JSON.parse(String(init.body)) as Record<string, unknown> };
+            return { id: 'calendar-event-new', etag: '"etag-1"' } as T;
+          }
+          throw new Error(`Unexpected Google request: ${url}`);
+        },
+      },
+    });
+
+    const outcome = await automation.mailboxTest.applyRefresh({
+      organizationId: 'organization-1',
+      database: fixture.organization.binding,
+      messageId: 'gmail-refresh-1',
+      entries: [{ googleEventId: null, etag: null, candidate: CANDIDATE }],
+    });
+
+    expect(outcome.created).toEqual(['calendar-event-new']);
+    expect(created?.url).toContain('sendUpdates=all');
+    expect(created?.body.attendees).toEqual([{ email: 'first@example.com' }]);
   });
 
   it('re-offers a Scheduled Event the Calendar changed after the plan, instead of overwriting it', async () => {
@@ -1891,6 +2012,7 @@ describe('the Event Refresh exit', () => {
             patchedDescription = String((JSON.parse(String(init.body)) as { description?: string }).description);
             return { id: 'calendar-event-1' } as T;
           }
+          if (!init?.method && url.endsWith('/calendar-event-1')) return { id: 'calendar-event-1', attendees: [] } as T;
           throw new Error(`Unexpected Google request: ${url}`);
         },
       },

@@ -10,6 +10,7 @@ import {
   attributedMessageId,
   buildEventCorrespondenceRequest,
   changedCalendarFields,
+  invitedAttendees,
   partitionByRefreshWindow,
   refreshPlan,
   refreshSearchWindow,
@@ -17,6 +18,7 @@ import {
 } from './event-refresh';
 import type {
   AiEventCorrespondenceRequest,
+  CalendarAttendee,
   CalendarEventFields,
   DesiredCalendarFields,
   EventCorrespondence,
@@ -117,6 +119,7 @@ interface CalendarEventResource extends CalendarEvent {
   location?: string;
   start?: CalendarTime;
   end?: CalendarTime;
+  attendees?: CalendarAttendee[];
 }
 
 interface CalendarEventList {
@@ -780,7 +783,17 @@ const previewMailboxTestAiRequest = async (
 const mailboxMessage = async (google: GoogleAutomationPort, accessToken: string, messageId: string): Promise<GmailMessage> =>
   google.request<GmailMessage>(accessToken, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}?format=full`);
 
-const exactSubject = (subject: string, expected: string): boolean => subject.normalize('NFC') === expected.normalize('NFC');
+/**
+ * Folds a subject down to the characters that carry meaning: Unicode-width
+ * variants (full-width/half-width) collapse together, and any run of
+ * whitespace — including a full-width space — collapses to one. An Admin
+ * pasting a subject from Gmail should not have a test fail over an invisible
+ * trailing space or a stray full-width character Gmail itself treats as the
+ * same subject.
+ */
+const normalizedSubject = (subject: string): string => subject.normalize('NFKC').trim().replace(/\s+/gu, ' ');
+
+const exactSubject = (subject: string, expected: string): boolean => normalizedSubject(subject) === normalizedSubject(expected);
 
 const activeAutomationInbox = async (database: D1Database): Promise<AutomationInbox> => {
   const inbox = await drizzleOrganizationDatabase(database).select().from(googleConnections).where(and(
@@ -1174,8 +1187,11 @@ const recordRefreshEffect = async (
 
 /**
  * The Event Refresh exit: rewrites every Calendar field of an already confirmed
- * Scheduled Event except its attendees, deliberately overwriting Manual
- * Overrides because an Admin approved this one event's diff.
+ * Scheduled Event, deliberately overwriting Manual Overrides because an Admin
+ * approved this one event's diff, and additively invites the active Member
+ * roster. A Member the Calendar already lists — invited earlier by this same
+ * exit or by ADR 0125's automated invitation — keeps whatever they answered;
+ * only Members missing from that list are appended.
  */
 const applyEventRefreshWithGoogle = async (
   env: Bindings,
@@ -1187,23 +1203,28 @@ const applyEventRefreshWithGoogle = async (
   const accessToken = await accessTokenForInbox(env, organizationId, database, await activeAutomationInbox(database), dependencies);
   const message = await mailboxMessage(dependencies.google, accessToken, input.messageId);
   const attachments = await resolveRefreshAttachments(dependencies, accessToken, database, message, input.messageId, true);
+  const invitees = await activeMemberInvitees(database);
   const outcome: EventRefreshOutcome = { updated: [], created: [], conflicts: [], failures: [] };
   for (const entry of input.entries) {
     const desired = desiredCalendarFields(entry.candidate, input.messageId, attachments.links);
-    const body = JSON.stringify({
+    const fields = {
       summary: desired.title,
       description: desired.description,
       location: desired.location,
       start: { dateTime: desired.startsAt, timeZone: desired.timeZone },
       end: { dateTime: desired.endsAt, timeZone: desired.timeZone },
       attachments: attachments.calendar,
-    });
+    };
     try {
       if (!entry.googleEventId) {
+        const attendees = invitees.map(({ email }) => ({ email }));
         const url = new URL(CALENDAR_EVENTS_URL);
-        url.searchParams.set('sendUpdates', 'none');
+        url.searchParams.set('sendUpdates', attendees.length ? 'all' : 'none');
         if (attachments.calendar.length) url.searchParams.set('supportsAttachments', 'true');
-        const created = await dependencies.google.request<CalendarEventResource>(accessToken, url.toString(), { method: 'POST', body });
+        const created = await dependencies.google.request<CalendarEventResource>(accessToken, url.toString(), {
+          method: 'POST',
+          body: JSON.stringify({ ...fields, attendees }),
+        });
         if (!created.id) throw new Error('Google Calendar が予定 ID を返しませんでした。');
         outcome.created.push(created.id);
         await recordRefreshEffect(env, organizationId, database, {
@@ -1211,12 +1232,17 @@ const applyEventRefreshWithGoogle = async (
         });
         continue;
       }
+      const existing = await dependencies.google.request<CalendarEventResource>(
+        accessToken,
+        `${CALENDAR_EVENTS_URL}/${encodeURIComponent(entry.googleEventId)}`,
+      );
+      const { attendees, added } = invitedAttendees(existing.attendees ?? [], invitees);
       const url = new URL(`${CALENDAR_EVENTS_URL}/${encodeURIComponent(entry.googleEventId)}`);
-      url.searchParams.set('sendUpdates', 'none');
+      url.searchParams.set('sendUpdates', added ? 'all' : 'none');
       if (attachments.calendar.length) url.searchParams.set('supportsAttachments', 'true');
       await dependencies.google.request<CalendarEventResource>(accessToken, url.toString(), {
         method: 'PATCH',
-        body,
+        body: JSON.stringify({ ...fields, attendees }),
         ...(entry.etag ? { headers: { 'If-Match': entry.etag } } : {}),
       });
       outcome.updated.push(entry.googleEventId);

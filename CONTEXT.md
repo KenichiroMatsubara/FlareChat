@@ -251,7 +251,7 @@ The sentence in a Scheduled Event's Calendar description naming the Source Messa
 _Avoid_: footer, provenance note
 
 **Event Refresh**:
-An Admin-approved rewrite of an existing Scheduled Event's Calendar fields, except its attendees, from a fresh extraction of its Source Message.
+An Admin-approved rewrite of an existing Scheduled Event's Calendar fields from a fresh extraction of its Source Message, together with an additive invitation of the active Member roster: a Member the Calendar already lists keeps whatever they answered, and only a Member missing from that list is added.
 _Avoid_: resync, regenerate, backfill
 
 **Significant Change**:

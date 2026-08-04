@@ -4,6 +4,7 @@ import {
   attributedMessageId,
   buildEventCorrespondenceRequest,
   changedCalendarFields,
+  invitedAttendees,
   partitionByRefreshWindow,
   refreshPlan,
   refreshSearchWindow,
@@ -208,5 +209,34 @@ describe('the approved plan', () => {
       desired: [desiredFrom(details, description)],
     });
     expect(plan.entries[0]?.changedFields).toEqual([]);
+  });
+});
+
+describe('invited attendees', () => {
+  it('appends a missing active Member and leaves an existing attendee untouched', () => {
+    const result = invitedAttendees(
+      [{ email: 'guest@example.com', responseStatus: 'accepted' }],
+      [{ email: 'first@example.com' }],
+    );
+    expect(result.attendees).toEqual([
+      { email: 'guest@example.com', responseStatus: 'accepted' },
+      { email: 'first@example.com' },
+    ]);
+    expect(result.added).toBe(1);
+  });
+
+  it('adds nobody, and reports it, when every Member already appears regardless of case', () => {
+    const result = invitedAttendees(
+      [{ email: 'First@Example.com', responseStatus: 'declined' }],
+      [{ email: 'first@example.com' }],
+    );
+    expect(result.attendees).toEqual([{ email: 'First@Example.com', responseStatus: 'declined' }]);
+    expect(result.added).toBe(0);
+  });
+
+  it('starts from an empty Calendar attendee list when the event has none', () => {
+    const result = invitedAttendees([], [{ email: 'first@example.com' }, { email: 'second@example.com' }]);
+    expect(result.attendees).toEqual([{ email: 'first@example.com' }, { email: 'second@example.com' }]);
+    expect(result.added).toBe(2);
   });
 });

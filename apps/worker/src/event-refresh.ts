@@ -35,6 +35,39 @@ export interface DesiredCalendarFields {
   timeZone: string;
 }
 
+/** One Google Calendar attendee, kept opaque beyond the fields the merge itself reads. */
+export interface CalendarAttendee {
+  email: string;
+  displayName?: string;
+  organizer?: boolean;
+  self?: boolean;
+  resource?: boolean;
+  optional?: boolean;
+  responseStatus?: string;
+  comment?: string;
+  additionalGuests?: number;
+}
+
+/**
+ * Adds the active Member roster to a Scheduled Event's attendees without
+ * disturbing anyone already on it. An attendee Google already lists — Member
+ * or not — rides through untouched, response status included; only Members
+ * missing from that list are appended, each starting from Google's default
+ * needsAction. `added` names how many were appended, so the caller can decide
+ * whether this write is news to anyone.
+ */
+export const invitedAttendees = (
+  current: CalendarAttendee[],
+  invitees: Array<{ email: string }>,
+): { attendees: CalendarAttendee[]; added: number } => {
+  const present = new Set(current.flatMap((attendee) => attendee.email ? [attendee.email.trim().toLowerCase()] : []));
+  const additions = invitees.filter((invitee) => !present.has(invitee.email.trim().toLowerCase()));
+  return {
+    attendees: [...current, ...additions.map((invitee) => ({ email: invitee.email }))],
+    added: additions.length,
+  };
+};
+
 export const REFRESH_WINDOW_DAYS = 7;
 /**
  * The search reaches further than the correspondence window so that a stale
