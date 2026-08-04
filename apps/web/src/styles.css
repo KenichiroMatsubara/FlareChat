@@ -316,6 +316,18 @@ svg { flex: none; }
 .task-role-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
 .task-role-list article > p { min-height: 2.8em; margin: 0; color: #667269; font-size: 11px; line-height: 1.45; }
 .task-role-list summary { cursor: pointer; }
+.task-reassignment { display: grid; gap: 14px; padding: 16px; background: white; border: 1px solid #dfe5de; border-radius: 14px; box-shadow: 0 3px 14px rgba(24,45,31,.04); }
+.task-reassignment-action { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.task-reassignment-action strong { font-size: 13px; }
+.task-reassignment-action p { margin: 4px 0 0; color: #667269; font-size: 11px; line-height: 1.5; }
+.task-reassignment-proposals { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid #edf0eb; }
+.task-reassignment-summary { margin: 0; color: #435247; font-size: 12px; font-weight: 600; }
+.task-reassignment-proposal { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; padding: 12px; background: #f7faf6; border: 1px solid #dce6db; border-radius: 10px; }
+.task-reassignment-proposal.changed { background: #f1f6f1; border-color: #cadfcd; }
+.task-reassignment-proposal strong { font-size: 12px; }
+.task-reassignment-proposal p { margin: 6px 0 0; color: #26372b; font-size: 12px; }
+.task-reassignment-proposal small { display: block; margin-top: 3px; color: #718073; font-size: 11px; line-height: 1.5; }
+.task-reassignment-decisions { display: flex; flex-wrap: wrap; gap: 9px; }
 .rule-builder fieldset { display: flex; flex-wrap: wrap; gap: 10px; padding: 14px; border: 1px solid #dce6db; border-radius: 10px; }
 .rule-builder fieldset legend { padding: 0 6px; color: #435247; font-size: 11px; font-weight: 700; }
 .rule-builder fieldset label { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 2px 8px; min-width: 190px; }

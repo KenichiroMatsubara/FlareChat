@@ -30,6 +30,8 @@ const dashboardProps = (): DashboardProps => ({
   onPrepareRefresh: vi.fn(), onPlanRefresh: vi.fn(), onApplyRefresh: vi.fn(), onMailTestSubjectChange: vi.fn(), onSearchMailbox: vi.fn(),
   onPrepareMailbox: vi.fn(), onPreviewMailbox: vi.fn(), onCreateCalendarEvent: vi.fn(), organizationRules: [], ruleBusy: false,
   organizationLists: [], onCreateRule: vi.fn(), onUpdateRule: vi.fn(), organizationTasks: [], onUpdateTask: vi.fn(), taskRoles: [], taskRoleAssignments: [], taskMembers: [], onCreateTaskRole: vi.fn(), onUpdateTaskRole: vi.fn(), onDeleteTaskRole: vi.fn(), onAssignTaskRole: vi.fn(),
+  taskReassignment: { rolesChangedAt: null, reviewedAt: null, pending: false, openTasks: 0 }, taskReassignmentProposals: [], taskReassignmentBusy: false,
+  onSuggestTaskReassignments: vi.fn(), onApplyTaskReassignments: vi.fn(), onDiscardTaskReassignments: vi.fn(),
   prompts: [], agentRules: [], agentRuns: [], agentTranscript: null, proposedActions: [], onCreatePrompt: vi.fn(), onUpdatePrompt: vi.fn(), onDeletePrompt: vi.fn(), onCreateAgentRule: vi.fn(), onUpdateAgentRule: vi.fn(), onLoadAgentTranscript: vi.fn(), onDecideProposedAction: vi.fn(), onDecideProposedActionBatch: vi.fn(),
   organizationMembers: [], lineDestinations: [], memberBusy: false, onCreateMember: vi.fn(), onUpdateMember: vi.fn(),
   onSetLineDestination: vi.fn(), onUnlinkLineDestination: vi.fn(), onRegisterLineDestination: vi.fn(), onRemoveLineDestination: vi.fn(), onRefreshMembers: vi.fn(),
@@ -119,7 +121,7 @@ describe('Operational Task Roles', () => {
           organizationTasks={[{
             id: 'task-1', title: '登録状況を確認する', deadline: '2026-08-20',
             assigneeRoleId: 'role-registration', assigneeRoleName: '旧・参加登録担当',
-            assigneeIdentityId: 'identity-1', assigneeName: 'Owner', sourceMessageSubject: '年次行事',
+            assigneeMemberId: 'member-1', assigneeName: 'Owner', sourceMessageSubject: '年次行事',
             description: '参加登録を取りまとめる', remarks: '', completed: false, completedAt: null,
           }]}
         />
@@ -621,5 +623,74 @@ describe('mailbox test prerequisites', () => {
     expect(html).toContain('LINE Developers');
     expect(html).toContain('Webhookの利用をオン');
     expect(html).toContain('保留中のLINE連絡先');
+  });
+});
+
+describe('AI Task reassignment', () => {
+  const tasksMarkup = (props: Partial<DashboardProps>): string => renderToStaticMarkup(
+    <MemoryRouter initialEntries={['/organizations/org-1/tasks']}>
+      <Dashboard
+        {...dashboardProps()}
+        page="tasks"
+        taskRoles={[
+          { id: 'role-registration', displayName: '参加登録担当', description: '出欠期限を扱う' },
+          { id: 'role-payment', displayName: '会計担当', description: '支払期限を扱う' },
+        ]}
+        {...props}
+      />
+    </MemoryRouter>,
+  );
+
+  it('keeps the reassignment action disabled until an Operational Task Role changes', () => {
+    const html = tasksMarkup({ taskReassignment: { rolesChangedAt: null, reviewedAt: null, pending: false, openTasks: 3 } });
+
+    expect(html).toContain('AIでタスクを再割り当て');
+    expect(html).toContain('roleを追加・変更・削除すると、未完了タスクの割り当て案をAIに出させられます。');
+    expect(/AIに割り当て案を出させる/u.test(html)).toBe(true);
+    expect(/<button type="button" class="primary" disabled="">AIに割り当て案を出させる<\/button>/u.test(html)).toBe(true);
+  });
+
+  it('enables the reassignment action once a changed role leaves open Tasks to review', () => {
+    const html = tasksMarkup({
+      taskReassignment: { rolesChangedAt: '2026-08-04T00:00:00.000Z', reviewedAt: null, pending: true, openTasks: 2 },
+    });
+
+    expect(html).toContain('未完了タスク2件の割り当て案をAIに出させられます。');
+    expect(/<button type="button" class="primary" disabled="">AIに割り当て案を出させる<\/button>/u.test(html)).toBe(false);
+  });
+
+  it('offers no reassignment when the changed roles leave nothing open to review', () => {
+    const html = tasksMarkup({
+      taskReassignment: { rolesChangedAt: '2026-08-04T00:00:00.000Z', reviewedAt: null, pending: true, openTasks: 0 },
+    });
+
+    expect(/<button type="button" class="primary" disabled="">AIに割り当て案を出させる<\/button>/u.test(html)).toBe(true);
+  });
+
+  it('shows each proposed role with its reason and preselects only the Tasks that would move', () => {
+    const html = tasksMarkup({
+      taskReassignment: { rolesChangedAt: '2026-08-04T00:00:00.000Z', reviewedAt: null, pending: true, openTasks: 2 },
+      taskReassignmentProposals: [
+        {
+          taskId: 'task-1', title: '参加費を支払う', deadline: '2026-08-25', sourceMessageSubject: '総会案内',
+          currentRoleId: 'role-registration', currentRoleName: '参加登録担当',
+          proposedRoleId: 'role-payment', proposedRoleName: '会計担当',
+          reason: '送金の期限だから', changed: true,
+        },
+        {
+          taskId: 'task-2', title: '出欠を回答する', deadline: '2026-08-20', sourceMessageSubject: '総会案内',
+          currentRoleId: 'role-registration', currentRoleName: '参加登録担当',
+          proposedRoleId: 'role-registration', proposedRoleName: '参加登録担当',
+          reason: '出欠の期限だから', changed: false,
+        },
+      ],
+    });
+
+    expect(html).toContain('2件のうち1件のroleを変更する案です。');
+    expect(html).toContain('送金の期限だから');
+    expect(html).toContain('（変更なし）');
+    expect(html).toContain('aria-label="参加費を支払うを会計担当に割り当てる"');
+    expect(html).toContain('選んだ1件を適用');
+    expect(html).toContain('この案を破棄');
   });
 });

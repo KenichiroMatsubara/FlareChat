@@ -287,7 +287,7 @@ export interface MailboxTestPreview extends MailboxTestMatch {
 }
 
 export interface OrganizationTask {
-  id: string; title: string; deadline: string; assigneeRoleId: string; assigneeRoleName: string; assigneeIdentityId: string | null; assigneeName: string; sourceMessageSubject: string; description: string; remarks: string; completed: boolean; completedAt: string | null;
+  id: string; title: string; deadline: string; assigneeRoleId: string; assigneeRoleName: string; assigneeMemberId: string | null; assigneeName: string; sourceMessageSubject: string; description: string; remarks: string; completed: boolean; completedAt: string | null;
 }
 
 export interface MemberLineDestination {
@@ -327,6 +327,27 @@ export interface MemberLineDestinationInput {
   destinationId: string;
   kind?: 'user' | 'group' | 'room';
   displayName?: string;
+}
+
+/** Whether the open Tasks still have to be reviewed against a changed role set. */
+export interface TaskReassignmentReview {
+  rolesChangedAt: string | null;
+  reviewedAt: string | null;
+  pending: boolean;
+  openTasks: number;
+}
+
+export interface TaskAssignmentProposal {
+  taskId: string;
+  title: string;
+  deadline: string;
+  sourceMessageSubject: string;
+  currentRoleId: string;
+  currentRoleName: string;
+  proposedRoleId: string;
+  proposedRoleName: string;
+  reason: string;
+  changed: boolean;
 }
 
 export interface OperationalTaskRole { id: string; displayName: string; description: string; }
@@ -521,6 +542,9 @@ export const api = {
   removeOrganizationTaskRole: (organizationId: string, roleId: string): Promise<{ id: string; removed: boolean }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles/${encodeURIComponent(roleId)}`, { method: 'DELETE' }),
   assignOrganizationTaskRole: (organizationId: string, roleId: string, memberId: string): Promise<TaskRoleAssignment> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles/${encodeURIComponent(roleId)}/assignment`, { method: 'PUT', body: JSON.stringify({ memberId }) }),
   updateOrganizationTask: (organizationId: string, taskId: string, input: { completed?: boolean; remarks?: string }): Promise<OrganizationTask> => request(`/api/organizations/${encodeURIComponent(organizationId)}/tasks/${encodeURIComponent(taskId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  organizationTaskReassignment: (organizationId: string): Promise<TaskReassignmentReview> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-reassignments`),
+  suggestOrganizationTaskReassignments: (organizationId: string): Promise<{ proposals: TaskAssignmentProposal[]; review: TaskReassignmentReview }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-reassignments/suggestions`, { method: 'POST', body: JSON.stringify({}) }),
+  applyOrganizationTaskReassignments: (organizationId: string, assignments: Array<{ taskId: string; roleId: string }>): Promise<{ tasks: OrganizationTask[]; skipped: string[]; review: TaskReassignmentReview }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-reassignments`, { method: 'POST', body: JSON.stringify({ assignments }) }),
   createOrganizationRule: (organizationId: string, input: OrganizationRuleInput): Promise<OrganizationRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules`, {
     method: 'POST',
     body: JSON.stringify(input),

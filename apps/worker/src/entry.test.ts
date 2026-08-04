@@ -68,10 +68,10 @@ describe('application entry', () => {
     )).toEqual([{ name: '0005_member_logins.sql' }]);
     expect(fixture.organization.rows<{ name: string }>(
       'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1',
-    )).toEqual([{ name: '0018_automation_inbox_health.sql' }]);
+    )).toEqual([{ name: '0019_task_role_revisions.sql' }]);
     expect(secondOrganization.rows<{ name: string }>(
       'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1',
-    )).toEqual([{ name: '0018_automation_inbox_health.sql' }]);
+    )).toEqual([{ name: '0019_task_role_revisions.sql' }]);
   });
 
   it('reports the exact Organization schema mismatch without revoking the session', async () => {
@@ -95,7 +95,7 @@ describe('application entry', () => {
         databaseId: 'database-1',
         bindingName: 'ORG_ORGANIZATION1',
         currentMigration: '9999_future.sql',
-        expectedMigration: '0018_automation_inbox_health.sql',
+        expectedMigration: '0019_task_role_revisions.sql',
         requestId: expect.any(String),
       },
     });

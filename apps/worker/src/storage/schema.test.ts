@@ -78,6 +78,7 @@ describe('canonical D1 schemas', () => {
       '0016_member_task_assignments.sql',
       '0017_member_portal.sql',
       '0018_automation_inbox_health.sql',
+      '0019_task_role_revisions.sql',
     ]);
   });
 

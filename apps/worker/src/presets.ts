@@ -1,5 +1,5 @@
 import membershipOrganization from '../presets/membership-organization.json';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 
 import type { OrganizationDatabase } from './storage/database';
 import {
@@ -17,7 +17,9 @@ import {
   ruleRevisions,
   rules,
   settings,
+  taskRoleRevisions,
 } from './storage/organization-schema';
+import { TASK_ROLE_REVISION_ID } from './tasks';
 
 export interface PresetDocument {
   id: string;
@@ -174,6 +176,12 @@ export const applyPreset = async (
       createdAt: timestamp,
       updatedAt: timestamp,
     })),
+    ...(preset.operationalTaskRoles.length ? [database.insert(taskRoleRevisions)
+      .values({ id: TASK_ROLE_REVISION_ID, revision: 1, reviewedRevision: 0, changedAt: timestamp, reviewedAt: null })
+      .onConflictDoUpdate({
+        target: taskRoleRevisions.id,
+        set: { revision: sql`${taskRoleRevisions.revision} + 1`, changedAt: timestamp },
+      })] : []),
     ...preset.prompts.flatMap((prompt) => {
       const promptId = requiredReference(promptIds, prompt.key, 'Prompt');
       return [

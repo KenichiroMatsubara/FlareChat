@@ -23,6 +23,7 @@ import organizationAttachmentFoldersMigration from '../migrations/organization/0
 import organizationMemberTaskAssignmentsMigration from '../migrations/organization/0016_member_task_assignments.sql';
 import organizationMemberPortalMigration from '../migrations/organization/0017_member_portal.sql';
 import organizationAutomationInboxHealthMigration from '../migrations/organization/0018_automation_inbox_health.sql';
+import organizationTaskRoleRevisionsMigration from '../migrations/organization/0019_task_role_revisions.sql';
 
 type SchemaKind = 'control' | 'organization';
 
@@ -117,6 +118,7 @@ const ORGANIZATION_MIGRATIONS: readonly SchemaMigration[] = [
   { name: '0016_member_task_assignments.sql', sql: organizationMemberTaskAssignmentsMigration },
   { name: '0017_member_portal.sql', sql: organizationMemberPortalMigration },
   { name: '0018_automation_inbox_health.sql', sql: organizationAutomationInboxHealthMigration },
+  { name: '0019_task_role_revisions.sql', sql: organizationTaskRoleRevisionsMigration },
 ];
 const LEGACY_MIGRATION_CHECKSUMS = new Map<string, ReadonlySet<string>>([
   ['0001_tasks.sql', new Set(['4b2f3889191d0eafbbe45b78103db7139c7ce2b937c02cbbb6824f5131d7429f'])],

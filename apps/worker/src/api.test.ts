@@ -1050,3 +1050,126 @@ describe('LINE destinations', () => {
     expect(duplicateRegistration.status).toBe(409);
   });
 });
+
+describe('AI Task reassignment', () => {
+  const seedOpenTask = (organization: TestApp['organization'], input: { id: string; title: string; roleId: string; roleName: string }): void => {
+    organization.execute(
+      `INSERT OR IGNORE INTO source_messages (id, gmail_message_id, gmail_history_id, sender, subject, received_at, state)
+       VALUES ('source-1', 'gmail-1', 'history-1', 'sender@example.com', '総会案内', '2026-08-02T00:00:00.000Z', 'processing')`,
+    );
+    organization.execute(
+      `INSERT INTO tasks (id, organization_id, source_message_id, source_message_subject, title, deadline, assignee_role_id, assignee_role_name, assignee_member_id, assignee_name, description, remarks, completed, created_at, updated_at)
+       VALUES (?, 'organization-1', 'source-1', '総会案内', ?, '2026-08-25', ?, ?, NULL, '未割り当て', '指定口座へ送金する', '', 0, '2026-08-02', '2026-08-02')`,
+      input.id,
+      input.title,
+      input.roleId,
+      input.roleName,
+    );
+  };
+
+  it('opens the reassignment review only after an Operational Task Role changes', async () => {
+    fixture = createTestApp();
+    const before = await app.fetch(fixture.request('/api/organizations/organization-1/task-reassignments'), fixture.environment);
+
+    await expect(before.json()).resolves.toMatchObject({ data: { pending: false, rolesChangedAt: null } });
+
+    await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/task-roles', {
+      displayName: '会計担当', description: '支払期限を扱う',
+    }), fixture.environment);
+    const after = await app.fetch(fixture.request('/api/organizations/organization-1/task-reassignments'), fixture.environment);
+
+    await expect(after.json()).resolves.toMatchObject({ data: { pending: true, rolesChangedAt: expect.any(String) } });
+  });
+
+  it('proposes a role for every open Task without writing one, then applies only what an Admin accepted', async () => {
+    const automation = await createAutomationTestApp({ ai: true });
+    fixture = automation;
+    const role = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/task-roles', {
+      displayName: '会計担当', description: '支払期限を扱う',
+    }), fixture.environment);
+    const roleId = (await role.json() as { data: { id: string } }).data.id;
+    const member = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/members', {
+      name: '山田花子', email: 'hanako@example.com',
+    }), fixture.environment);
+    const memberId = (await member.json() as { data: { id: string } }).data.id;
+    await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/task-roles/${roleId}/assignment`,
+      { memberId },
+      'PUT',
+    ), fixture.environment);
+    seedOpenTask(automation.organization, { id: 'task-1', title: '参加費を支払う', roleId: 'unassigned', roleName: '未割り当て' });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({ assignments: [{ taskId: 'task-1', assigneeRoleId: roleId, reason: '送金の期限だから' }] }) } }],
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const suggested = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/task-reassignments/suggestions', {},
+    ), fixture.environment);
+    const unchanged = await app.fetch(fixture.request('/api/organizations/organization-1/tasks'), fixture.environment);
+
+    expect(suggested.status).toBe(200);
+    await expect(suggested.json()).resolves.toMatchObject({
+      data: { proposals: [{ taskId: 'task-1', proposedRoleId: roleId, proposedRoleName: '会計担当', changed: true, reason: '送金の期限だから' }] },
+    });
+    await expect(unchanged.json()).resolves.toMatchObject({ data: [{ id: 'task-1', assigneeRoleId: 'unassigned' }] });
+
+    const applied = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/task-reassignments',
+      { assignments: [{ taskId: 'task-1', roleId }] },
+    ), fixture.environment);
+
+    expect(applied.status).toBe(200);
+    await expect(applied.json()).resolves.toMatchObject({
+      data: {
+        tasks: [{ id: 'task-1', assigneeRoleId: roleId, assigneeRoleName: '会計担当', assigneeMemberId: memberId, assigneeName: '山田花子' }],
+        skipped: [],
+        review: { pending: false },
+      },
+    });
+  });
+
+  it('closes the review when an Admin accepts none of the proposals', async () => {
+    fixture = createTestApp();
+    await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/task-roles', {
+      displayName: '会計担当', description: '支払期限を扱う',
+    }), fixture.environment);
+
+    const applied = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/task-reassignments', { assignments: [] },
+    ), fixture.environment);
+
+    expect(applied.status).toBe(200);
+    await expect(applied.json()).resolves.toMatchObject({ data: { tasks: [], review: { pending: false } } });
+  });
+
+  it('asks for an AI connection before proposing anything, and never asks the AI without an open Task', async () => {
+    fixture = createTestApp();
+    fixture.organization.execute(
+      `INSERT INTO source_messages (id, gmail_message_id, gmail_history_id, sender, subject, received_at, state)
+       VALUES ('source-1', 'gmail-1', 'history-1', 'sender@example.com', '総会案内', '2026-08-02T00:00:00.000Z', 'processing')`,
+    );
+    const empty = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/task-reassignments/suggestions', {},
+    ), fixture.environment);
+    seedOpenTask(fixture.organization, { id: 'task-1', title: '参加費を支払う', roleId: 'unassigned', roleName: '未割り当て' });
+    const withoutAi = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/task-reassignments/suggestions', {},
+    ), fixture.environment);
+
+    expect(empty.status).toBe(200);
+    await expect(empty.json()).resolves.toMatchObject({ data: { proposals: [] } });
+    expect(withoutAi.status).toBe(409);
+  });
+
+  it('refuses an assignment batch that does not name a Task and a role', async () => {
+    fixture = createTestApp();
+
+    const response = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/task-reassignments',
+      { assignments: [{ taskId: 'task-1' }] },
+    ), fixture.environment);
+
+    expect(response.status).toBe(400);
+  });
+});

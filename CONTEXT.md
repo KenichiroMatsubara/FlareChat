@@ -26,6 +26,8 @@ A Member signs into a single Member Portal to register attendance, write comment
 
 An Attendance Registration belongs to a Member rather than to an unguessable URL, so a leaked link grants nothing. An unfinished Task notifies its assignee alone at the same seven, three, and one day milestones the attendance reminders use.
 
+Adding, renaming, redescribing, or removing an Operational Task Role opens a Task Reassignment Review, because Tasks already extracted were routed by a role set that no longer exists. The review offers one AI proposal per incomplete Task, naming a role and the evidence that chose it; completed Tasks are history and are never revisited. Nothing moves until an Admin accepts a proposal, and accepting one takes the assignee from the role's current holder. Accepting none still closes the review, so a deliberate decision to leave the Tasks alone is not asked for again.
+
 An Organization setup session expires fifteen minutes after the Automation Inbox grant while the installer confirms the editable Organization name. If confirmation is not completed in time, Mail Automation revokes and deletes the Google credential and creates no Organization D1 database.
 
 After Google authorization and name confirmation succeed, a failed D1 provisioning operation may retain the encrypted Google credential and initial Admin record for at most twenty-four hours while explicit and automatic idempotent retries remain available. The failed phase and concrete error remain visible. Expiry revokes the grant, deletes the pending credential, and requires a new setup.
@@ -363,3 +365,7 @@ _Avoid_: member role, permission
 **Task Assignment**:
 The current Member who holds an Operational Task Role; each Task retains the assignee identity and name captured when it was created.
 _Avoid_: recipient assignment, authorization
+
+**Task Reassignment Review**:
+The open question of whether the incomplete Tasks still match the Operational Task Roles, raised by any change to the role set and settled only by an Admin accepting or rejecting the AI's proposal for each Task.
+_Avoid_: rebalancing, bulk reassignment

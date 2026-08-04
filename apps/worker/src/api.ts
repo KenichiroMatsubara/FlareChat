@@ -22,6 +22,7 @@ import type { CipherEnvelope } from './cryptography';
 import { openAiChatCompletionsUrl, type EventDetails, type MailExtraction, type TaskDetails } from './event-details';
 import { approveProposedAction, expireProposedActions, proposedActionsForRun, readAgentRunTranscript, rejectProposedAction } from './agent-runs';
 import { createTaskWorkflow } from './tasks';
+import { proposeTaskReassignments, TASK_REASSIGNMENT_LIMIT } from './task-reassignment';
 import { applyPreset, availablePresets, PresetConfigurationConflictError } from './presets';
 import { controlDatabase as drizzleControlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
 import { createOrganizationStore } from './storage/organization-store';
@@ -1951,6 +1952,66 @@ app.get('/api/organizations/:organizationId/tasks', async (context) => {
     }));
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Tasks could not be loaded.', 403);
+  }
+});
+
+app.get('/api/organizations/:organizationId/task-reassignments', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
+    return json(context, await createTaskWorkflow(drizzleOrganizationDatabase(access.database)).reassignmentReview());
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Task reassignment review could not be loaded.', 403);
+  }
+});
+
+/** Asks the Organization's AI for a role per open Task. Nothing is written until an Admin accepts. */
+app.post('/api/organizations/:organizationId/task-reassignments/suggestions', async (context) => {
+  try {
+    const organizationId = context.req.param('organizationId');
+    const access = await organizationForRequest(context.req.raw, context.env, organizationId);
+    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
+    const database = drizzleOrganizationDatabase(access.database);
+    const workflow = createTaskWorkflow(database);
+    const [openTasks, roles] = await Promise.all([workflow.list({ completed: false }), workflow.listRoles()]);
+    if (!openTasks.length) return json(context, { proposals: [], review: await workflow.reassignmentReview() });
+    const existing = await database.select().from(organizationConnections)
+      .where(and(eq(organizationConnections.kind, 'ai'), eq(organizationConnections.status, 'active'))).limit(1).get();
+    if (!existing) return failure(context, 'OpenAI 互換 API を設定してください。', 409);
+    const credential = await connectionCredential(existing, await organizationKeyForRequest(context.env, organizationId), organizationId, 'ai');
+    const model = credential.model?.trim();
+    const baseUrl = normalizedAiBaseUrl(credential.baseUrl || LEGACY_AI_BASE_URL);
+    if (!credential.apiKey || !model || !baseUrl) return failure(context, 'OpenAI 互換 API を設定してください。', 409);
+    const proposals = await proposeTaskReassignments({
+      apiKey: credential.apiKey,
+      baseUrl,
+      model,
+      tasks: openTasks.slice(0, TASK_REASSIGNMENT_LIMIT),
+      roles,
+    });
+    return json(context, { proposals, review: await workflow.reassignmentReview() });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'AIの割り当て案を取得できませんでした。';
+    return failure(context, message, message === 'Authentication is required.' ? 401 : 500);
+  }
+});
+
+/** Applies the proposals an Admin accepted and closes the review, even when none were accepted. */
+app.post('/api/organizations/:organizationId/task-reassignments', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
+    const input = await context.req.json<{ assignments?: unknown }>();
+    if (!Array.isArray(input.assignments)) return failure(context, 'Assignments must be an array of Task and role identifiers.');
+    const assignments = input.assignments as Array<{ taskId?: unknown; roleId?: unknown }>;
+    if (assignments.length > TASK_REASSIGNMENT_LIMIT) return failure(context, `A review applies at most ${TASK_REASSIGNMENT_LIMIT} Tasks.`);
+    if (assignments.some((assignment) => typeof assignment?.taskId !== 'string' || !assignment.taskId.trim()
+      || typeof assignment.roleId !== 'string' || !assignment.roleId.trim())) return failure(context, 'Every assignment needs a Task and a role identifier.');
+    const workflow = createTaskWorkflow(drizzleOrganizationDatabase(access.database));
+    const applied = await workflow.reassign(assignments as Array<{ taskId: string; roleId: string }>);
+    return json(context, { ...applied, review: await workflow.markReassignmentReviewed() });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Tasks could not be reassigned.', 409);
   }
 });
 

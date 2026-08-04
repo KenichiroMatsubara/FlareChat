@@ -5,7 +5,7 @@ import { isRouteErrorResponse, NavLink, Outlet, useLoaderData, useNavigate, useP
 import type { AppState } from '@mail/domain';
 
 import { api } from './api';
-import type { MemberAttendanceStatus, MemberPortal, AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, OrganizationAgentRule, OrganizationConnections, OrganizationDashboard, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationMember, OrganizationMemberInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, ProposedAction, MemberLineDestinationInput, TaskRoleConfiguration } from './api';
+import type { MemberAttendanceStatus, MemberPortal, AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, OrganizationAgentRule, OrganizationConnections, OrganizationDashboard, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationMember, OrganizationMemberInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, ProposedAction, MemberLineDestinationInput, TaskAssignmentProposal, TaskReassignmentReview, TaskRoleConfiguration } from './api';
 import { defaultOrganizationName, setupPhaseLabel, SignedOutEntry } from './entry';
 import { Dashboard } from './dashboard';
 
@@ -155,6 +155,7 @@ export interface OrganizationRouteData {
   audit: DeliveryAuditRecord[];
   tasks: OrganizationTask[];
   taskRoles: TaskRoleConfiguration;
+  taskReassignment: TaskReassignmentReview;
   members: OrganizationMember[];
   lineDestinations: OrganizationLineDestination[];
   presets: PresetSummary[];
@@ -166,7 +167,7 @@ export const loadOrganization = async (organizationId: string): Promise<Organiza
   if (state.kind !== 'ready') throw new Response('Organization is not ready', { status: 409 });
   const organization = state.organizations.find((value) => value.organizationId === organizationId);
   if (!organization) throw new Response('Organization was not found', { status: 404 });
-  const [automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, members, lineDestinations, presets, attachmentFolder] = await Promise.all([
+  const [automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, taskReassignment, members, lineDestinations, presets, attachmentFolder] = await Promise.all([
     api.currentAutomation(organizationId),
     api.organizationConnections(organizationId),
     api.organizationDashboard(organizationId),
@@ -178,13 +179,19 @@ export const loadOrganization = async (organizationId: string): Promise<Organiza
     api.organizationDeliveryAudit(organizationId),
     api.organizationTasks(organizationId),
     api.organizationTaskRoles(organizationId),
+    api.organizationTaskReassignment(organizationId),
     api.organizationMembers(organizationId),
     api.organizationLineDestinations(organizationId),
     api.presets(),
     api.organizationAttachmentFolder(organizationId),
   ]);
-  return { state, organization, automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, members, lineDestinations, presets, attachmentFolder };
+  return { state, organization, automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, taskReassignment, members, lineDestinations, presets, attachmentFolder };
 };
+
+const roleChangeOpensReassignment = (current: OrganizationRouteData): OrganizationRouteData => ({
+  ...current,
+  taskReassignment: { ...current.taskReassignment, pending: true, rolesChangedAt: new Date().toISOString() },
+});
 
 interface OrganizationContextValue extends OrganizationRouteData {
   busy: boolean;
@@ -219,6 +226,11 @@ interface OrganizationContextValue extends OrganizationRouteData {
   updateTaskRole: (roleId: string, input: { displayName?: string; description?: string }) => Promise<void>;
   deleteTaskRole: (roleId: string) => Promise<void>;
   assignTaskRole: (roleId: string, memberId: string) => void;
+  taskReassignmentProposals: TaskAssignmentProposal[];
+  taskReassignmentBusy: boolean;
+  suggestTaskReassignments: () => void;
+  applyTaskReassignments: (assignments: Array<{ taskId: string; roleId: string }>) => void;
+  discardTaskReassignments: () => void;
   createMember: (input: OrganizationMemberInput) => Promise<OrganizationMember | null>;
   updateMember: (memberId: string, input: Partial<Pick<OrganizationMember, 'name' | 'email' | 'tags' | 'state'>>) => Promise<void>;
   setLineDestination: (memberId: string, input: MemberLineDestinationInput) => Promise<void>;
@@ -302,6 +314,8 @@ export const OrganizationLayout = () => {
   const [mailTestRefreshOutcome, setMailTestRefreshOutcome] = useState<MailboxTestRefreshOutcome | null>(null);
   const [agentTranscript, setAgentTranscript] = useState<AgentRunTranscript | null>(null);
   const [proposedActions, setProposedActions] = useState<ProposedAction[]>([]);
+  const [taskReassignmentProposals, setTaskReassignmentProposals] = useState<TaskAssignmentProposal[]>([]);
+  const [taskReassignmentBusy, setTaskReassignmentBusy] = useState(false);
 
   useEffect(() => {
     setData(initial);
@@ -311,6 +325,7 @@ export const OrganizationLayout = () => {
     setLineChannelSecret('');
     setAiApiKey('');
     setSummary(null);
+    setTaskReassignmentProposals([]);
   }, [initial]);
 
   const withError = async (work: () => Promise<void>, setBusyState: (busy: boolean) => void): Promise<void> => {
@@ -428,20 +443,32 @@ export const OrganizationLayout = () => {
   }, setBusy);
   const createTaskRole = async (input: { displayName: string; description: string }): Promise<void> => withError(async () => {
     const role = await api.createOrganizationTaskRole(data.organization.organizationId, input);
-    setData((current) => ({ ...current, taskRoles: { ...current.taskRoles, roles: [...current.taskRoles.roles, role] } }));
+    setData((current) => roleChangeOpensReassignment({ ...current, taskRoles: { ...current.taskRoles, roles: [...current.taskRoles.roles, role] } }));
   }, setBusy);
   const updateTaskRole = async (roleId: string, input: { displayName?: string; description?: string }): Promise<void> => withError(async () => {
     const role = await api.updateOrganizationTaskRole(data.organization.organizationId, roleId, input);
-    setData((current) => ({ ...current, taskRoles: { ...current.taskRoles, roles: current.taskRoles.roles.map((item) => item.id === role.id ? role : item) } }));
+    setData((current) => roleChangeOpensReassignment({ ...current, taskRoles: { ...current.taskRoles, roles: current.taskRoles.roles.map((item) => item.id === role.id ? role : item) } }));
   }, setBusy);
   const deleteTaskRole = async (roleId: string): Promise<void> => withError(async () => {
     await api.removeOrganizationTaskRole(data.organization.organizationId, roleId);
-    setData((current) => ({ ...current, taskRoles: { ...current.taskRoles, roles: current.taskRoles.roles.filter((role) => role.id !== roleId), assignments: current.taskRoles.assignments.filter((assignment) => assignment.roleId !== roleId) } }));
+    setData((current) => roleChangeOpensReassignment({ ...current, taskRoles: { ...current.taskRoles, roles: current.taskRoles.roles.filter((role) => role.id !== roleId), assignments: current.taskRoles.assignments.filter((assignment) => assignment.roleId !== roleId) } }));
   }, setBusy);
   const assignTaskRole = (roleId: string, memberId: string) => void withError(async () => {
     const assignment = await api.assignOrganizationTaskRole(data.organization.organizationId, roleId, memberId);
     setData((current) => ({ ...current, taskRoles: { ...current.taskRoles, assignments: [...current.taskRoles.assignments.filter((currentAssignment) => currentAssignment.roleId !== roleId), assignment] } }));
   }, setBusy);
+  const suggestTaskReassignments = () => void withError(async () => {
+    const suggested = await api.suggestOrganizationTaskReassignments(data.organization.organizationId);
+    setTaskReassignmentProposals(suggested.proposals);
+    setData((current) => ({ ...current, taskReassignment: suggested.review }));
+  }, setTaskReassignmentBusy);
+  const applyTaskReassignments = (assignments: Array<{ taskId: string; roleId: string }>) => void withError(async () => {
+    const applied = await api.applyOrganizationTaskReassignments(data.organization.organizationId, assignments);
+    const reassigned = new Map(applied.tasks.map((task) => [task.id, task]));
+    setTaskReassignmentProposals([]);
+    setData((current) => ({ ...current, tasks: current.tasks.map((task) => reassigned.get(task.id) ?? task), taskReassignment: applied.review }));
+  }, setTaskReassignmentBusy);
+  const discardTaskReassignments = (): void => setTaskReassignmentProposals([]);
   const reloadMembers = async (): Promise<void> => {
     const [members, lineDestinations] = await Promise.all([
       api.organizationMembers(data.organization.organizationId),
@@ -498,7 +525,7 @@ export const OrganizationLayout = () => {
   }, setRuleBusy);
   const logout = () => void withError(async () => { await api.logout(); navigate('/', { replace: true }); }, setBusy);
   const reauthenticate = () => void withError(async () => { window.location.assign((await api.reauthorizeAutomationInbox(data.organization.organizationId)).authorizationUrl); }, setBusy);
-  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateRule, agentTranscript, proposedActions, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, decideProposedAction, decideProposedActionBatch, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, createMember, updateMember, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshMembers, applyPreset, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, aiTestBusy, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, mailTestRefreshRequest, mailTestRefreshPlan, mailTestRefreshOutcome, prepareRefresh, planRefresh, applyRefresh, lineSettingsBusy, aiSettingsBusy, ruleBusy, memberBusy, attachmentFolderPath, setAttachmentFolderPath, attachmentFolderBusy, saveAttachmentFolderPath, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
+  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateRule, agentTranscript, proposedActions, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, decideProposedAction, decideProposedActionBatch, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, taskReassignmentProposals, taskReassignmentBusy, suggestTaskReassignments, applyTaskReassignments, discardTaskReassignments, createMember, updateMember, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshMembers, applyPreset, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, aiTestBusy, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, mailTestRefreshRequest, mailTestRefreshPlan, mailTestRefreshOutcome, prepareRefresh, planRefresh, applyRefresh, lineSettingsBusy, aiSettingsBusy, ruleBusy, memberBusy, attachmentFolderPath, setAttachmentFolderPath, attachmentFolderBusy, saveAttachmentFolderPath, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
   return <OrganizationContext.Provider value={value}><Outlet /></OrganizationContext.Provider>;
 };
 
@@ -588,6 +615,12 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     onUpdateTaskRole={value.updateTaskRole}
     onDeleteTaskRole={value.deleteTaskRole}
     onAssignTaskRole={value.assignTaskRole}
+    taskReassignment={value.taskReassignment}
+    taskReassignmentProposals={value.taskReassignmentProposals}
+    taskReassignmentBusy={value.taskReassignmentBusy}
+    onSuggestTaskReassignments={value.suggestTaskReassignments}
+    onApplyTaskReassignments={value.applyTaskReassignments}
+    onDiscardTaskReassignments={value.discardTaskReassignments}
     organizationMembers={value.members}
     lineDestinations={value.lineDestinations}
     memberBusy={value.memberBusy}

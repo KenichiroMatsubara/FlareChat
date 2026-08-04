@@ -217,16 +217,73 @@ export const MembersPage = (props: DashboardProps) => {
   </section>;
 };
 
+/** Lets an Admin accept or reject the role the AI proposed for each open Task. */
+const TaskReassignmentReview = (props: DashboardProps) => {
+  const proposals = props.taskReassignmentProposals;
+  const [reviewed, setReviewed] = useState(proposals);
+  const [decisions, setDecisions] = useState<Record<string, boolean>>({});
+  if (reviewed !== proposals) {
+    setReviewed(proposals);
+    setDecisions({});
+  }
+  /** A Task the AI would move is accepted until the Admin says otherwise. */
+  const accepted = proposals.filter((proposal) => decisions[proposal.taskId] ?? proposal.changed).map((proposal) => proposal.taskId);
+  const changed = proposals.filter((proposal) => proposal.changed);
+  const openTasks = props.taskReassignment.openTasks;
+  const explanation = props.taskReassignment.pending
+    ? `roleが変更されています。未完了タスク${openTasks}件の割り当て案をAIに出させられます。`
+    : 'roleを追加・変更・削除すると、未完了タスクの割り当て案をAIに出させられます。';
+  const toggle = (taskId: string, on: boolean): void =>
+    setDecisions((current) => ({ ...current, [taskId]: on }));
+  const apply = (): void => props.onApplyTaskReassignments(
+    proposals.filter((proposal) => accepted.includes(proposal.taskId))
+      .map((proposal) => ({ taskId: proposal.taskId, roleId: proposal.proposedRoleId })),
+  );
+  return <section className="task-reassignment">
+    <div className="task-reassignment-action">
+      <div><strong>AIでタスクを再割り当て</strong><p>{explanation}</p></div>
+      <button
+        type="button"
+        className="primary"
+        onClick={props.onSuggestTaskReassignments}
+        disabled={!props.taskReassignment.pending || openTasks === 0 || props.taskReassignmentBusy}
+      >{props.taskReassignmentBusy ? '判定中…' : 'AIに割り当て案を出させる'}</button>
+    </div>
+    {proposals.length > 0 && <div className="task-reassignment-proposals">
+      <p className="task-reassignment-summary">{changed.length ? `${proposals.length}件のうち${changed.length}件のroleを変更する案です。適用するものを選んでください。` : `${proposals.length}件すべて現在のroleのままで良いという判定です。`}</p>
+      {proposals.map((proposal) => <label key={proposal.taskId} className={proposal.changed ? 'task-reassignment-proposal changed' : 'task-reassignment-proposal'}>
+        <input
+          type="checkbox"
+          checked={accepted.includes(proposal.taskId)}
+          disabled={props.taskReassignmentBusy}
+          aria-label={`${proposal.title}を${proposal.proposedRoleName}に割り当てる`}
+          onChange={(change) => toggle(proposal.taskId, change.target.checked)}
+        />
+        <div>
+          <strong>{proposal.title}</strong>
+          <small>{proposal.sourceMessageSubject} ・ 期限 {proposal.deadline}</small>
+          <p>{proposal.currentRoleName} → <strong>{proposal.proposedRoleName}</strong>{proposal.changed ? '' : '（変更なし）'}</p>
+          <small>{proposal.reason}</small>
+        </div>
+      </label>)}
+      <div className="task-reassignment-decisions">
+        <button type="button" className="primary" onClick={apply} disabled={props.taskReassignmentBusy}>{`選んだ${accepted.length}件を適用`}</button>
+        <button type="button" className="secondary" onClick={props.onDiscardTaskReassignments} disabled={props.taskReassignmentBusy}>この案を破棄</button>
+      </div>
+    </div>}
+  </section>;
+};
+
 export const TasksPage = (props: DashboardProps) => {
   const [assignee, setAssignee] = useState('');
   const [event, setEvent] = useState('');
   const [roleName, setRoleName] = useState('');
   const [roleDescription, setRoleDescription] = useState('');
-  const assignees = [...new Map(props.organizationTasks.flatMap((task) => task.assigneeIdentityId ? [[task.assigneeIdentityId, task.assigneeName] as const] : [])).entries()];
+  const assignees = [...new Map(props.organizationTasks.flatMap((task) => task.assigneeMemberId ? [[task.assigneeMemberId, task.assigneeName] as const] : [])).entries()];
   const events = [...new Set(props.organizationTasks.map((task) => task.sourceMessageSubject))];
   const visible = props.organizationTasks.filter((task) => (
     !assignee
-    || (assignee === 'unassigned' ? task.assigneeRoleId === 'unassigned' : task.assigneeIdentityId === assignee)
+    || (assignee === 'unassigned' ? task.assigneeRoleId === 'unassigned' : task.assigneeMemberId === assignee)
   ) && (!event || task.sourceMessageSubject === event));
   const today = new Date().toISOString().slice(0, 10);
   const near = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
@@ -242,6 +299,7 @@ export const TasksPage = (props: DashboardProps) => {
       <form onSubmit={(submit) => void createRole(submit)}><strong>Operational Task Roleを追加</strong><label>名前<input value={roleName} onChange={(change) => setRoleName(change.target.value)} maxLength={100} required /></label><label>説明<textarea value={roleDescription} onChange={(change) => setRoleDescription(change.target.value)} maxLength={500} required /></label><button className="primary" disabled={props.busy}>roleを追加</button></form>
       <div className="task-role-list">{props.taskRoles.map((role) => <article key={role.id}><strong>{role.displayName}</strong><p>{role.description}</p><details><summary>名前と説明を編集</summary><label>名前<input defaultValue={role.displayName} onBlur={(change) => { const displayName = change.target.value.trim(); if (displayName && displayName !== role.displayName) void props.onUpdateTaskRole(role.id, { displayName }); }} /></label><label>説明<textarea defaultValue={role.description} onBlur={(change) => { const description = change.target.value.trim(); if (description && description !== role.description) void props.onUpdateTaskRole(role.id, { description }); }} /></label></details><label>現在の担当者<select value={props.taskRoleAssignments.find((assignment) => assignment.roleId === role.id)?.memberId ?? ''} onChange={(change) => { if (change.target.value) props.onAssignTaskRole(role.id, change.target.value); }}><option value="">未割り当て</option>{props.taskMembers.map((member) => <option key={member.memberId} value={member.memberId}>{member.displayName}</option>)}</select></label><button type="button" className="secondary" onClick={() => void props.onDeleteTaskRole(role.id)} disabled={props.busy}>roleを削除</button></article>)}</div>
     </section>}
+    <TaskReassignmentReview {...props} />
     <section className="task-filters"><label>担当者<select value={assignee} onChange={(change) => setAssignee(change.target.value)}><option value="">すべて</option><option value="unassigned">未割り当て</option>{assignees.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label><label>イベント<select value={event} onChange={(change) => setEvent(change.target.value)}><option value="">すべて</option>{events.map((name) => <option key={name} value={name}>{name}</option>)}</select></label><button className="secondary" onClick={() => { setAssignee(''); setEvent(''); }}>フィルターをリセット</button></section>
     <section className="tasks-table-wrap"><table className="tasks-table"><thead><tr><th>完了</th><th>期限</th><th>Role</th><th>担当者</th><th>イベント名</th><th>内容</th><th>備考</th></tr></thead><tbody>{visible.map((task) => <tr key={task.id} className={task.completed ? 'completed' : task.deadline < today ? 'overdue' : task.deadline <= near ? 'near-deadline' : ''}><td><input aria-label={`${task.title}を完了`} type="checkbox" checked={task.completed} disabled={props.busy} onChange={(change) => props.onUpdateTask(task.id, { completed: change.target.checked })} /></td><td>{task.deadline}</td><td>{task.assigneeRoleName}</td><td>{task.assigneeName}</td><td>{task.sourceMessageSubject}</td><td><strong>{task.title}</strong><small>{task.description}</small></td><td><textarea aria-label={`${task.title}の備考`} defaultValue={task.remarks} onBlur={(change) => props.onUpdateTask(task.id, { remarks: change.target.value })} maxLength={10_000} /></td></tr>)}</tbody></table>{visible.length === 0 && <p className="rules-empty">表示するタスクはありません。</p>}</section>
   </section>;
