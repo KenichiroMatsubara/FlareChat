@@ -181,8 +181,18 @@ export { batchLineMessages, discoveredLineDestinations, verifyLineWebhookSignatu
 export type { LineBatch, LineDestination, LineMessage } from './line';
 export { canUpdateAttendance } from './attendance';
 export type { AttendanceLinkCheck } from './attendance';
-export { MAX_ATTACHMENT_BYTES, MAX_SOURCE_MESSAGE_ATTACHMENT_BYTES, MAX_SOURCE_MESSAGE_ATTACHMENTS, validateAttachmentIntake } from './attachments';
-export type { AttachmentIntakeResult } from './attachments';
+export {
+  DEFAULT_ATTACHMENT_FOLDER_PATH,
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENT_FOLDER_PATH_SEGMENTS,
+  MAX_ATTACHMENT_FOLDER_SEGMENT_CHARACTERS,
+  MAX_SOURCE_MESSAGE_ATTACHMENT_BYTES,
+  MAX_SOURCE_MESSAGE_ATTACHMENTS,
+  readAttachmentFolderPath,
+  sourceMessageFolderName,
+  validateAttachmentIntake,
+} from './attachments';
+export type { AttachmentFolderPathResult, AttachmentIntakeResult } from './attachments';
 export { MAX_DELIVERY_ATTEMPTS, MAX_RETRY_WINDOW_MS, nextRetry } from './retry';
 export type { RetryDecision } from './retry';
 export { CAPACITY_CRITICAL_THRESHOLD, CAPACITY_WARNING_THRESHOLD, capacityWarning } from './capacity';

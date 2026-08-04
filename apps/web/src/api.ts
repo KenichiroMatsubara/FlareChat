@@ -311,6 +311,13 @@ export const api = {
   }),
   organizationDeliveryAudit: (organizationId: string): Promise<DeliveryAuditRecord[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/audit/deliveries`),
   organizationTasks: (organizationId: string): Promise<OrganizationTask[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/tasks`),
+  organizationAttachmentFolder: (organizationId: string): Promise<{ path: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/attachment-folder`),
+
+  saveOrganizationAttachmentFolder: (organizationId: string, path: string): Promise<{ path: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/attachment-folder`, {
+    method: 'PUT',
+    body: JSON.stringify({ path }),
+  }),
+
   organizationMembers: (organizationId: string): Promise<OrganizationMember[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/members`),
   organizationLineDestinations: (organizationId: string): Promise<OrganizationLineDestination[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/line-destinations`),
   createOrganizationMember: (organizationId: string, input: OrganizationMemberInput): Promise<OrganizationMember> => request(`/api/organizations/${encodeURIComponent(organizationId)}/members`, {

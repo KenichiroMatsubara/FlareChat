@@ -498,7 +498,12 @@ describe('Organization Automation Inbox scheduling', () => {
         } } as T;
         return { id: 'calendar-shared' } as T;
       } },
-      attachments: { read, publish: async () => ({ outcome: 'succeeded', driveFileId: 'drive-1', publicUrl: 'https://drive.example/agenda' }) },
+      attachments: {
+        read,
+        publish: async () => ({ outcome: 'succeeded', driveFileId: 'drive-1', publicUrl: 'https://drive.example/agenda' }),
+        ensurePath: async () => 'attachment-folder-path',
+        createMessageFolder: async () => 'source-message-folder',
+      },
       ai: { extract },
       agent: { complete },
     });
@@ -1477,6 +1482,9 @@ describe('Manual mailbox test', () => {
     let aiRequest: { messages?: Array<{ role?: string; content?: string }> } = {};
     let calendarUrl = '';
     const calendarRequests: Array<{ summary?: string; attachments?: Array<{ fileUrl?: string; title?: string; mimeType?: string }> }> = [];
+    const driveFolders: Array<{ name?: string; parents?: string[] }> = [];
+    const driveFolderQueries: string[] = [];
+    let uploadMetadata: { name?: string; parents?: string[] } = {};
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes('/attachments/attachment-xlsx')) {
         return new Response(JSON.stringify({ data: gmailXlsx }), { status: 200 });
@@ -1523,7 +1531,18 @@ describe('Manual mailbox test', () => {
           }) } }],
         }), { status: 200 });
       }
+      if (url.includes('drive/v3/files?q=')) {
+        driveFolderQueries.push(decodeURIComponent(new URL(url).searchParams.get('q') ?? ''));
+        return new Response(JSON.stringify({ files: [] }), { status: 200 });
+      }
+      if (url.includes('drive/v3/files?fields=id') && init?.method === 'POST') {
+        driveFolders.push(JSON.parse(init.body as string) as typeof driveFolders[number]);
+        return new Response(JSON.stringify({ id: `drive-folder-${driveFolders.length}` }), { status: 200 });
+      }
       if (url.includes('upload/drive')) {
+        uploadMetadata = JSON.parse(
+          /\r\n\r\n(\{.*?\})\r\n/su.exec(init?.body as string)?.[1] ?? '{}',
+        ) as typeof uploadMetadata;
         return new Response(JSON.stringify({ id: 'drive-file-xlsx', webViewLink: 'https://drive.example/xlsx' }), { status: 200 });
       }
       if (url.includes('/permissions')) return new Response('', { status: 200 });
@@ -1585,5 +1604,11 @@ describe('Manual mailbox test', () => {
       title: '式典案内.xlsx',
       mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     }]);
+    expect(driveFolderQueries).toEqual([expect.stringContaining("name = 'Mail Automation'")]);
+    expect(driveFolders).toEqual([
+      expect.objectContaining({ name: 'Mail Automation', parents: ['root'] }),
+      expect.objectContaining({ name: expect.stringContaining('名古屋名城RAC30周年記念式典のご案内'), parents: ['drive-folder-1'] }),
+    ]);
+    expect(uploadMetadata.parents).toEqual(['drive-folder-2']);
   });
 });

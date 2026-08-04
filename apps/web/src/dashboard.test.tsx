@@ -31,6 +31,7 @@ const dashboardProps = (): DashboardProps => ({
   prompts: [], agentRules: [], agentRuns: [], agentTranscript: null, proposedActions: [], onCreatePrompt: vi.fn(), onUpdatePrompt: vi.fn(), onDeletePrompt: vi.fn(), onCreateAgentRule: vi.fn(), onUpdateAgentRule: vi.fn(), onLoadAgentTranscript: vi.fn(), onDecideProposedAction: vi.fn(), onDecideProposedActionBatch: vi.fn(),
   organizationMembers: [], lineDestinations: [], memberBusy: false, onCreateMember: vi.fn(), onUpdateMember: vi.fn(),
   onSetLineDestination: vi.fn(), onUnlinkLineDestination: vi.fn(), onRegisterLineDestination: vi.fn(), onRemoveLineDestination: vi.fn(), onRefreshMembers: vi.fn(),
+  attachmentFolderPath: 'Mail Automation', savedAttachmentFolderPath: 'Mail Automation', onAttachmentFolderPathChange: vi.fn(), attachmentFolderBusy: false, onSaveAttachmentFolderPath: vi.fn(),
   presets: [{ id: 'membership-organization', name: 'Membership organization', description: 'Starting configuration.' }], onApplyPreset: vi.fn(),
 });
 
@@ -188,6 +189,36 @@ describe('Preset settings', () => {
     expect(html).toContain('Membership organization');
     expect(html).toContain('既存の構成に別のコピーを追加する');
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Presetを適用<\/button>/u);
+  });
+});
+
+const saveFolderButton = (html: string): string => {
+  const before = html.slice(0, html.indexOf('保存先を保存'));
+  return before.slice(before.lastIndexOf('<button'));
+};
+
+describe('Attachment Folder Path', () => {
+  it('shows the Drive location attachments are written to and disables saving an unchanged path', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/connections']}>
+        <Dashboard {...dashboardProps()} page="connections" />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('添付ファイルの保存先');
+    expect(html).toContain('現在: Mail Automation');
+    expect(saveFolderButton(html)).toContain('disabled=""');
+  });
+
+  it('offers to save a path the Organization has changed', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/connections']}>
+        <Dashboard {...dashboardProps()} page="connections" attachmentFolderPath="会計 2026/添付" />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('会計 2026/添付');
+    expect(saveFolderButton(html)).not.toContain('disabled=""');
   });
 });
 

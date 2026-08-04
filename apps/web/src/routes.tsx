@@ -158,6 +158,7 @@ export interface OrganizationRouteData {
   members: OrganizationMember[];
   lineDestinations: OrganizationLineDestination[];
   presets: PresetSummary[];
+  attachmentFolder: { path: string };
 }
 
 export const loadOrganization = async (organizationId: string): Promise<OrganizationRouteData> => {
@@ -165,7 +166,7 @@ export const loadOrganization = async (organizationId: string): Promise<Organiza
   if (state.kind !== 'ready') throw new Response('Organization is not ready', { status: 409 });
   const organization = state.organizations.find((value) => value.organizationId === organizationId);
   if (!organization) throw new Response('Organization was not found', { status: 404 });
-  const [automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, members, lineDestinations, presets] = await Promise.all([
+  const [automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, members, lineDestinations, presets, attachmentFolder] = await Promise.all([
     api.currentAutomation(organizationId),
     api.organizationConnections(organizationId),
     api.organizationDashboard(organizationId),
@@ -180,8 +181,9 @@ export const loadOrganization = async (organizationId: string): Promise<Organiza
     api.organizationMembers(organizationId),
     api.organizationLineDestinations(organizationId),
     api.presets(),
+    api.organizationAttachmentFolder(organizationId),
   ]);
-  return { state, organization, automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, members, lineDestinations, presets };
+  return { state, organization, automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, members, lineDestinations, presets, attachmentFolder };
 };
 
 interface OrganizationContextValue extends OrganizationRouteData {
@@ -238,6 +240,10 @@ interface OrganizationContextValue extends OrganizationRouteData {
   mailTestCreatedEventIds: string[];
   lineSettingsBusy: boolean;
   aiSettingsBusy: boolean;
+  attachmentFolderPath: string;
+  setAttachmentFolderPath: (value: string) => void;
+  attachmentFolderBusy: boolean;
+  saveAttachmentFolderPath: () => void;
   ruleBusy: boolean;
   memberBusy: boolean;
   setLineChannelAccessToken: (value: string) => void;
@@ -266,6 +272,7 @@ export const OrganizationLayout = () => {
   const [busy, setBusy] = useState(false);
   const [lineSettingsBusy, setLineSettingsBusy] = useState(false);
   const [aiSettingsBusy, setAiSettingsBusy] = useState(false);
+  const [attachmentFolderBusy, setAttachmentFolderBusy] = useState(false);
   const [ruleBusy, setRuleBusy] = useState(false);
   const [memberBusy, setMemberBusy] = useState(false);
   const [summary, setSummary] = useState<AutomationSummary | null>(null);
@@ -274,6 +281,7 @@ export const OrganizationLayout = () => {
   const [aiApiKey, setAiApiKey] = useState('');
   const [aiModel, setAiModel] = useState(data.connections.ai.model);
   const [aiBaseUrl, setAiBaseUrl] = useState(data.connections.ai.baseUrl);
+  const [attachmentFolderPath, setAttachmentFolderPath] = useState(data.attachmentFolder.path);
   const [aiTestPrompt, setAiTestPrompt] = useState('日本の首都を一文で教えてください。');
   const [aiTestResult, setAiTestResult] = useState('');
   const [aiTestBusy, setAiTestBusy] = useState(false);
@@ -322,6 +330,11 @@ export const OrganizationLayout = () => {
     setData((current) => ({ ...current, connections: { ...current.connections, ai } }));
     setAiApiKey('');
   }, setAiSettingsBusy);
+  const saveAttachmentFolderPath = () => void withError(async () => {
+    const attachmentFolder = await api.saveOrganizationAttachmentFolder(data.organization.organizationId, attachmentFolderPath);
+    setData((current) => ({ ...current, attachmentFolder }));
+    setAttachmentFolderPath(attachmentFolder.path);
+  }, setAttachmentFolderBusy);
   const testAi = () => void withError(async () => { const result = await api.testAiConnection(data.organization.organizationId, aiTestPrompt); setAiTestResult(result.text); }, setAiTestBusy);
   const searchMailbox = () => void withError(async () => { setMailTestAiRequest(null); setMailTestPreview(null); setMailTestCreatedEventIds([]); setMailTestMatches((await api.searchMailboxForTest(data.organization.organizationId, mailTestSubject.trim())).messages); }, setMailTestBusy);
   const prepareMailbox = (messageId: string) => void withError(async () => { setMailTestAiRequest(await api.prepareMailboxTestAiRequest(data.organization.organizationId, messageId)); setMailTestPreview(null); setMailTestCreatedEventIds([]); }, setMailTestBusy);
@@ -446,7 +459,7 @@ export const OrganizationLayout = () => {
   }, setRuleBusy);
   const logout = () => void withError(async () => { await api.logout(); navigate('/', { replace: true }); }, setBusy);
   const reauthenticate = () => void withError(async () => { window.location.assign((await api.reauthorizeAutomationInbox(data.organization.organizationId)).authorizationUrl); }, setBusy);
-  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateRule, agentTranscript, proposedActions, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, decideProposedAction, decideProposedActionBatch, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, createMember, updateMember, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshMembers, applyPreset, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, aiTestBusy, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, lineSettingsBusy, aiSettingsBusy, ruleBusy, memberBusy, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
+  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateRule, agentTranscript, proposedActions, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, decideProposedAction, decideProposedActionBatch, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, createMember, updateMember, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshMembers, applyPreset, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, aiTestBusy, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, lineSettingsBusy, aiSettingsBusy, ruleBusy, memberBusy, attachmentFolderPath, setAttachmentFolderPath, attachmentFolderBusy, saveAttachmentFolderPath, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
   return <OrganizationContext.Provider value={value}><Outlet /></OrganizationContext.Provider>;
 };
 
@@ -483,6 +496,11 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     aiSettingsBusy={value.aiSettingsBusy}
     onSaveLineConnection={value.saveLineConnection}
     onSaveAiConnection={value.saveAiConnection}
+    attachmentFolderPath={value.attachmentFolderPath}
+    savedAttachmentFolderPath={value.attachmentFolder.path}
+    onAttachmentFolderPathChange={value.setAttachmentFolderPath}
+    attachmentFolderBusy={value.attachmentFolderBusy}
+    onSaveAttachmentFolderPath={value.saveAttachmentFolderPath}
     aiTestPrompt={value.aiTestPrompt}
     aiTestResult={value.aiTestResult}
     aiTestBusy={value.aiTestBusy}

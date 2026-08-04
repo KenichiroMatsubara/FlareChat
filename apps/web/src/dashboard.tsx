@@ -60,6 +60,11 @@ export interface DashboardProps {
   onAiBaseUrlChange: (value: string) => void;
   lineSettingsBusy: boolean;
   aiSettingsBusy: boolean;
+  attachmentFolderPath: string;
+  savedAttachmentFolderPath: string;
+  onAttachmentFolderPathChange: (value: string) => void;
+  attachmentFolderBusy: boolean;
+  onSaveAttachmentFolderPath: () => void;
   onSaveLineConnection: () => void;
   onSaveAiConnection: () => void;
   aiTestPrompt: string;

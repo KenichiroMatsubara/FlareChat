@@ -23,6 +23,8 @@ export interface AutomationDependencies {
   attachments: {
     read: typeof readGmailAttachments;
     publish: typeof publishDriveAttachment;
+    ensurePath: typeof ensureAttachmentFolderPath;
+    createMessageFolder: typeof createSourceMessageFolder;
   };
   ai: {
     extract: typeof extractAiEventDetails;
@@ -51,12 +53,22 @@ export const productionGoogleAutomationPort: GoogleAutomationPort = {
 /** The only production adapter set used by Organization Automation. */
 export const productionAutomationDependencies: AutomationDependencies = {
   google: productionGoogleAutomationPort,
-  attachments: { read: readGmailAttachments, publish: publishDriveAttachment },
+  attachments: {
+    read: readGmailAttachments,
+    publish: publishDriveAttachment,
+    ensurePath: ensureAttachmentFolderPath,
+    createMessageFolder: createSourceMessageFolder,
+  },
   ai: { extract: extractAiEventDetails },
   agent: { complete: completeAgentTurn },
   tokens: { refresh: refreshGoogleToken },
 };
 import { extractAiEventDetails } from '../event-details';
 import { completeAgentTurn } from '../agent-runs';
-import { publishDriveAttachment, readGmailAttachments } from '../drive-attachments';
+import {
+  createSourceMessageFolder,
+  ensureAttachmentFolderPath,
+  publishDriveAttachment,
+  readGmailAttachments,
+} from '../drive-attachments';
 import { refreshGoogleToken } from '../google';

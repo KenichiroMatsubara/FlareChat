@@ -150,6 +150,7 @@ export const sourceMessages = sqliteTable('source_messages', {
   subject: text('subject').notNull(),
   receivedAt: text('received_at').notNull(),
   processedAt: text('processed_at'),
+  driveFolderId: text('drive_folder_id'),
   state: text('state', { enum: ['pending', 'processing', 'processed', 'skipped', 'exception'] }).notNull().default('pending'),
 }, (table) => [
   check('source_messages_state_check', sql`${table.state} in ('pending', 'processing', 'processed', 'skipped', 'exception')`),
