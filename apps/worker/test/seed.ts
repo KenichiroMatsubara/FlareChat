@@ -67,41 +67,67 @@ export const seedScheduledEvent = (
   );
 };
 
+export const seedMember = (
+  organization: TestD1Database,
+  input: { id: string; name?: string; email?: string; googleSubject?: string; lineDestinationId?: string },
+): void => {
+  organization.execute(
+    `INSERT OR IGNORE INTO members (id, organization_id, name, email, state, tags, google_subject, created_at, updated_at)
+     VALUES (?, 'organization-1', ?, ?, 'active', '[]', ?, ?, ?)`,
+    input.id,
+    input.name ?? input.id,
+    input.email ?? '',
+    input.googleSubject ?? null,
+    CREATED_AT,
+    CREATED_AT,
+  );
+  if (!input.lineDestinationId) return;
+  organization.execute(
+    `INSERT OR IGNORE INTO connections (id, kind, label, credential, status, created_at, updated_at)
+     VALUES ('line-connection', 'line', 'LINE', '{}', 'active', ?, ?)`,
+    CREATED_AT,
+    CREATED_AT,
+  );
+  organization.execute(
+    `INSERT OR IGNORE INTO line_destinations (id, connection_id, destination_id, display_name, kind, status, source, discovered_at, updated_at)
+     VALUES (?, 'line-connection', ?, ?, 'user', 'discovered', 'webhook', ?, ?)`,
+    `line-${input.id}`,
+    input.lineDestinationId,
+    input.name ?? input.id,
+    CREATED_AT,
+    CREATED_AT,
+  );
+  organization.execute(
+    'INSERT OR IGNORE INTO member_line_destinations (member_id, line_destination_id, created_at) VALUES (?, ?, ?)',
+    input.id,
+    `line-${input.id}`,
+    CREATED_AT,
+  );
+};
+
 export const seedAttendanceRegistration = (
   organization: TestD1Database,
   input: {
     eventId: string;
-    recipientId: string;
+    memberId: string;
     destination: string;
+    name?: string;
+    googleSubject?: string;
     status?: 'unanswered' | 'attending' | 'not_attending';
-    revokedAt?: string | null;
   },
 ): void => {
-  const listId = `list-${input.recipientId}`;
+  seedMember(organization, {
+    id: input.memberId,
+    ...(input.name === undefined ? {} : { name: input.name }),
+    ...(input.googleSubject === undefined ? {} : { googleSubject: input.googleSubject }),
+    lineDestinationId: input.destination,
+  });
   organization.execute(
-    `INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at)
-     VALUES (?, 'organization-1', 'recipient', ?, ?, ?)`,
-    listId,
-    listId,
-    CREATED_AT,
-    CREATED_AT,
-  );
-  organization.execute(
-    'INSERT INTO list_items (id, list_id, value, label) VALUES (?, ?, ?, ?)',
-    input.recipientId,
-    listId,
-    input.destination,
-    input.destination,
-  );
-  organization.execute(
-    `INSERT INTO attendance
-      (event_id, recipient_item_id, status, comment, token, revoked_at, updated_at)
-     VALUES (?, ?, ?, '', ?, ?, ?)`,
+    `INSERT INTO attendance (event_id, member_id, status, comment, updated_at)
+     VALUES (?, ?, ?, '', ?)`,
     input.eventId,
-    input.recipientId,
+    input.memberId,
     input.status ?? 'unanswered',
-    `token-${input.eventId}-${input.recipientId}`,
-    input.revokedAt ?? null,
     CREATED_AT,
   );
 };
@@ -169,8 +195,7 @@ export const seedOrganizationMember = (
     organizationId?: string;
     identityId: string;
     email: string;
-    role: 'owner' | 'admin' | 'operator' | 'viewer';
-    state?: 'pending' | 'active' | 'suspended' | 'removed';
+    state?: 'active' | 'suspended' | 'removed';
     sessionId?: string;
   },
 ): void => {
@@ -184,10 +209,9 @@ export const seedOrganizationMember = (
     CREATED_AT,
   );
   control.execute(
-    'INSERT INTO members (organization_id, identity_id, role, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+    'INSERT INTO admins (organization_id, identity_id, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
     input.organizationId ?? 'organization-1',
     input.identityId,
-    input.role,
     input.state ?? 'active',
     CREATED_AT,
     CREATED_AT,

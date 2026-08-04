@@ -4,11 +4,11 @@ import { createDatabaseAccess } from './database-access';
 import type { Bindings } from './types';
 import { controlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
 import { organizations } from './storage/control-schema';
-import { attendance, events, jobs, listItems } from './storage/organization-schema';
+import { attendance, events, jobs, lineDestinations, memberLineDestinations, members } from './storage/organization-schema';
 
 interface ReminderCandidate {
   eventId: string;
-  recipientItemId: string;
+  memberId: string;
   destination: string;
   status: 'unanswered' | 'attending' | 'not_attending';
   attendanceDeadline: string;
@@ -19,25 +19,27 @@ export const enqueueDueAttendanceReminders = async (database: D1Database, now: s
   const db = drizzleOrganizationDatabase(database);
   const rows: ReminderCandidate[] = await db.select({
     eventId: attendance.eventId,
-    recipientItemId: attendance.recipientItemId,
-    destination: listItems.value,
+    memberId: attendance.memberId,
+    destination: lineDestinations.destinationId,
     status: attendance.status,
     attendanceDeadline: events.attendanceDeadline,
   }).from(attendance)
     .innerJoin(events, eq(events.id, attendance.eventId))
-    .innerJoin(listItems, eq(listItems.id, attendance.recipientItemId))
+    .innerJoin(members, eq(members.id, attendance.memberId))
+    .innerJoin(memberLineDestinations, eq(memberLineDestinations.memberId, members.id))
+    .innerJoin(lineDestinations, eq(lineDestinations.id, memberLineDestinations.lineDestinationId))
     .where(isNotNull(events.attendanceDeadline))
     .all() as ReminderCandidate[];
   let queued = 0;
   for (const row of rows) {
     const milestone = Math.floor((Date.parse(row.attendanceDeadline) - Date.parse(now)) / 86_400_000);
-    const idempotencyKey = `attendance-reminder:${row.eventId}:${row.recipientItemId}:${milestone}`;
+    const idempotencyKey = `attendance-reminder:${row.eventId}:${row.memberId}:${milestone}`;
     if (!shouldSendAttendanceReminder({ status: row.status, daysUntilDeadline: milestone, alreadySent: false })) continue;
     const timestamp = now;
     const result = await db.insert(jobs).values({
       id: crypto.randomUUID(),
       kind: 'attendance_reminder',
-      payload: JSON.stringify({ eventId: row.eventId, recipientItemId: row.recipientItemId, destination: row.destination, milestone }),
+      payload: JSON.stringify({ eventId: row.eventId, memberId: row.memberId, destination: row.destination, milestone }),
       state: 'pending',
       attempts: 0,
       availableAt: timestamp,

@@ -60,8 +60,8 @@ describe('Organization access', () => {
   });
 
   it('keeps management data isolated between two Organizations', async () => {
-    fixture = createTestApp('admin');
-    fixture.addOrganization({ id: 'organization-2', bindingName: 'ORG_ORGANIZATION2', role: 'admin' });
+    fixture = createTestApp();
+    fixture.addOrganization({ id: 'organization-2', bindingName: 'ORG_ORGANIZATION2' });
     const created = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-2/lists',
       { kind: 'source', name: 'Organization Two Sources' },
@@ -83,8 +83,8 @@ describe('Organization access', () => {
     });
   });
 
-  it('lets a Viewer inspect outcomes but rejects management changes', async () => {
-    fixture = createTestApp('viewer');
+  it('lets the one Admin of an Organization read outcomes and make management changes', async () => {
+    fixture = createTestApp();
 
     const dashboard = await app.fetch(
       fixture.request('/api/organizations/organization-1/dashboard'),
@@ -92,16 +92,16 @@ describe('Organization access', () => {
     );
     const listChange = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/lists',
-      { kind: 'source', name: 'Forbidden' },
+      { kind: 'source', name: 'Allowed' },
     ), fixture.environment);
-    const recipientChange = await app.fetch(fixture.jsonRequest(
-      '/api/organizations/organization-1/recipients',
-      { name: 'Forbidden', email: 'forbidden@example.com' },
+    const memberChange = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/members',
+      { name: 'Allowed', email: 'allowed@example.com' },
     ), fixture.environment);
 
     expect(dashboard.status).toBe(200);
-    expect(listChange.status).toBe(403);
-    expect(recipientChange.status).toBe(403);
+    expect(listChange.status).toBe(201);
+    expect(memberChange.status).toBe(201);
   });
 });
 
@@ -204,7 +204,7 @@ describe('OpenAI-compatible connection', () => {
 
 describe('Organization management', () => {
   it('creates and reads canonical Typed Lists and List Items', async () => {
-    fixture = createTestApp('admin');
+    fixture = createTestApp();
     const created = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/lists',
       { kind: 'source', name: 'Members', description: 'Verified senders' },
@@ -267,6 +267,52 @@ describe('Organization management', () => {
         selectionPolicy: { source: 'trusted' },
       }],
     });
+  });
+
+  it('offers Members rather than the shared Google account of an Organization as Task assignees', async () => {
+    fixture = createTestApp();
+    const role = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/task-roles', {
+      displayName: '会計', description: '支払期限を扱う',
+    }), fixture.environment);
+    const roleId = (await role.json() as { data: { id: string } }).data.id;
+    const member = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/members', {
+      name: '山田花子', email: 'hanako@example.com',
+    }), fixture.environment);
+    const memberId = (await member.json() as { data: { id: string } }).data.id;
+
+    const assigned = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/task-roles/${roleId}/assignment`,
+      { memberId },
+      'PUT',
+    ), fixture.environment);
+    const configuration = await app.fetch(
+      fixture.request('/api/organizations/organization-1/task-roles'),
+      fixture.environment,
+    );
+
+    expect(assigned.status).toBe(200);
+    await expect(configuration.json()).resolves.toMatchObject({
+      data: {
+        members: [{ memberId, displayName: '山田花子' }],
+        assignments: [{ roleId, memberId, displayName: '山田花子' }],
+      },
+    });
+  });
+
+  it('refuses a Task assignee that is not an active Member of the Organization', async () => {
+    fixture = createTestApp();
+    const role = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/task-roles', {
+      displayName: '会計', description: '支払期限を扱う',
+    }), fixture.environment);
+    const roleId = (await role.json() as { data: { id: string } }).data.id;
+
+    const assigned = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/task-roles/${roleId}/assignment`,
+      { memberId: 'identity-1' },
+      'PUT',
+    ), fixture.environment);
+
+    expect(assigned.status).toBe(409);
   });
 
   it('stores the Organization role subset an Automation Rule may assign', async () => {
@@ -475,29 +521,29 @@ describe('Organization management', () => {
     }] });
   });
 
-  it('creates, changes, imports, reads, and snapshots Recipient Profiles', async () => {
-    fixture = createTestApp('operator');
+  it('creates, changes, imports, reads, and snapshots Members', async () => {
+    fixture = createTestApp();
     seedScheduledEvent(fixture.organization, { id: 'event-1' });
     const created = await app.fetch(fixture.jsonRequest(
-      '/api/organizations/organization-1/recipients',
+      '/api/organizations/organization-1/members',
       { name: 'Guest', email: 'guest@example.com' },
     ), fixture.environment);
     const body = await created.json() as { data: { id: string } };
     const updated = await app.fetch(fixture.jsonRequest(
-      `/api/organizations/organization-1/recipients/${body.data.id}`,
+      `/api/organizations/organization-1/members/${body.data.id}`,
       { tags: ['vip'], state: 'active' },
       'PATCH',
     ), fixture.environment);
     const imported = await app.fetch(fixture.jsonRequest(
-      '/api/organizations/organization-1/recipients/import',
+      '/api/organizations/organization-1/members/import',
       { csv: 'name,email\nSecond,second@example.com\nInvalid,not-an-email' },
     ), fixture.environment);
     const snapshotted = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/events/event-1/recipient-snapshots',
-      { recipientProfileIds: [body.data.id] },
+      { memberIds: [body.data.id] },
     ), fixture.environment);
     const listed = await app.fetch(
-      fixture.request('/api/organizations/organization-1/recipients'),
+      fixture.request('/api/organizations/organization-1/members'),
       fixture.environment,
     );
 
@@ -511,29 +557,29 @@ describe('Organization management', () => {
     });
   });
 
-  it('creates multiple Recipient Profiles without email and allows email to be edited later', async () => {
-    fixture = createTestApp('operator');
+  it('creates multiple Members without email and allows email to be edited later', async () => {
+    fixture = createTestApp();
     const first = await app.fetch(fixture.jsonRequest(
-      '/api/organizations/organization-1/recipients',
+      '/api/organizations/organization-1/members',
       { name: 'メール未設定 一郎' },
     ), fixture.environment);
     const second = await app.fetch(fixture.jsonRequest(
-      '/api/organizations/organization-1/recipients',
+      '/api/organizations/organization-1/members',
       { name: 'メール未設定 二郎' },
     ), fixture.environment);
     const firstBody = await first.json() as { data: { id: string; email: string } };
     const setEmail = await app.fetch(fixture.jsonRequest(
-      `/api/organizations/organization-1/recipients/${firstBody.data.id}`,
+      `/api/organizations/organization-1/members/${firstBody.data.id}`,
       { email: 'later@example.com' },
       'PATCH',
     ), fixture.environment);
     const clearEmail = await app.fetch(fixture.jsonRequest(
-      `/api/organizations/organization-1/recipients/${firstBody.data.id}`,
+      `/api/organizations/organization-1/members/${firstBody.data.id}`,
       { email: '' },
       'PATCH',
     ), fixture.environment);
     const listed = await app.fetch(
-      fixture.request('/api/organizations/organization-1/recipients'),
+      fixture.request('/api/organizations/organization-1/members'),
       fixture.environment,
     );
 
@@ -570,28 +616,6 @@ describe('Organization management', () => {
 });
 
 describe('Control-plane administration', () => {
-  it('makes an Owner membership suspension visible to the affected member', async () => {
-    fixture = createTestApp();
-    seedOrganizationMember(fixture.control, {
-      identityId: 'identity-2',
-      email: 'member@example.com',
-      role: 'viewer',
-      sessionId: 'session-2',
-    });
-
-    const changed = await app.fetch(fixture.jsonRequest(
-      '/api/organizations/organization-1/members/identity-2',
-      { role: 'operator', state: 'suspended' },
-      'PATCH',
-    ), fixture.environment);
-    const memberView = await app.fetch(new Request('https://app.example.com/api/auth/me', {
-      headers: { Cookie: 'mail_session=session-2' },
-    }), fixture.environment);
-
-    expect(changed.status).toBe(200);
-    await expect(memberView.json()).resolves.toMatchObject({ data: { organizations: [] } });
-  });
-
   it('records one Owner recovery request per idempotency key', async () => {
     fixture = createTestApp();
 
@@ -612,61 +636,9 @@ describe('Control-plane administration', () => {
   });
 });
 
-describe('Public attendance and operational outcomes', () => {
-  it('returns and changes only a live Event-scoped attendance token', async () => {
-    fixture = createTestApp('operator');
-    seedScheduledEvent(fixture.organization, {
-      id: 'event-1',
-      attendanceDeadline: '2099-01-01T00:00:00.000Z',
-    });
-    seedAttendanceRegistration(fixture.organization, {
-      eventId: 'event-1',
-      recipientId: 'item-1',
-      destination: 'guest@example.com',
-    });
-    const path = '/api/public/organizations/organization-1/attendance/token-event-1-item-1';
-
-    const initial = await app.fetch(new Request(`https://app.example.com${path}`), fixture.environment);
-    const updated = await app.fetch(new Request(`https://app.example.com${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ eventId: 'event-1', status: 'attending', comment: '参加します' }),
-    }), fixture.environment);
-    const current = await app.fetch(new Request(`https://app.example.com${path}`), fixture.environment);
-
-    expect([initial.status, updated.status, current.status]).toEqual([200, 200, 200]);
-    await expect(current.json()).resolves.toMatchObject({
-      data: { eventId: 'event-1', status: 'attending', comment: '参加します' },
-    });
-  });
-
-  it('rejects revoked attendance tokens', async () => {
-    fixture = createTestApp('operator');
-    seedScheduledEvent(fixture.organization, {
-      id: 'event-1',
-      attendanceDeadline: '2099-01-01T00:00:00.000Z',
-    });
-    seedAttendanceRegistration(fixture.organization, {
-      eventId: 'event-1',
-      recipientId: 'item-1',
-      destination: 'guest@example.com',
-      revokedAt: '2026-07-25T00:00:00.000Z',
-    });
-
-    const response = await app.fetch(new Request(
-      'https://app.example.com/api/public/organizations/organization-1/attendance/token-event-1-item-1',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ eventId: 'event-1', status: 'attending' }),
-      },
-    ), fixture.environment);
-
-    expect(response.status).toBe(410);
-  });
-
+describe('Operational outcomes', () => {
   it('exposes Event changes, Delivery Records, and Exception transitions through operations interfaces', async () => {
-    fixture = createTestApp('operator');
+    fixture = createTestApp();
     seedScheduledEvent(fixture.organization, { id: 'event-1', status: 'draft' });
     seedDeliveryRecord(fixture.organization, {
       id: 'delivery-1',
@@ -758,7 +730,7 @@ describe('LINE destinations', () => {
     expect(response.status).toBe(200);
   });
 
-  it('captures a LINE display name and assigns the discovered ID to a Recipient Profile', async () => {
+  it('captures a LINE display name and assigns the discovered ID to a Member', async () => {
     fixture = await createAutomationTestApp({ lineSecret: 'line-secret' });
     const profileFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       displayName: '山田 太郎',
@@ -790,15 +762,15 @@ describe('LINE destinations', () => {
       id: string;
       destinationId: string;
       source: string;
-      recipientProfileId: string | null;
+      memberId: string | null;
     }> };
     expect(destinationsBody.data[0]).toMatchObject({
       destinationId: 'U1234…',
       source: 'webhook',
-      recipientProfileId: null,
+      memberId: null,
     });
     const recipient = await app.fetch(fixture.jsonRequest(
-      '/api/organizations/organization-1/recipients',
+      '/api/organizations/organization-1/members',
       {
         name: '山田 太郎',
         email: 'taro@example.com',
@@ -807,7 +779,7 @@ describe('LINE destinations', () => {
       },
     ), fixture.environment);
     const roster = await app.fetch(
-      fixture.request('/api/organizations/organization-1/recipients'),
+      fixture.request('/api/organizations/organization-1/members'),
       fixture.environment,
     );
 
@@ -831,7 +803,7 @@ describe('LINE destinations', () => {
     });
   });
 
-  it('verifies a webhook, discovers a destination, and consumes its Recipient Link once', async () => {
+  it('verifies a webhook, discovers a destination, and consumes its Member Link once', async () => {
     fixture = await createAutomationTestApp({ lineSecret: 'line-secret' });
     const payload = JSON.stringify({ events: [{ source: { type: 'group', groupId: 'group-1' } }] });
     const hmacKey = await crypto.subtle.importKey(
@@ -851,12 +823,12 @@ describe('LINE destinations', () => {
     ), fixture.environment, background.context);
     await background.settle();
     const recipient = await app.fetch(fixture.jsonRequest(
-      '/api/organizations/organization-1/recipients',
+      '/api/organizations/organization-1/members',
       { name: 'Guest', email: 'guest@example.com' },
     ), fixture.environment);
     const recipientBody = await recipient.json() as { data: { id: string } };
     const issued = await app.fetch(fixture.jsonRequest(
-      `/api/organizations/organization-1/recipients/${recipientBody.data.id}/line-links`,
+      `/api/organizations/organization-1/members/${recipientBody.data.id}/line-links`,
       {},
     ), fixture.environment);
     const issuedBody = await issued.json() as { data: { token: string } };
@@ -868,7 +840,7 @@ describe('LINE destinations', () => {
     expect(recipient.status).toBe(201);
     expect(issued.status).toBe(201);
     await expect(consumed.json()).resolves.toMatchObject({
-      data: { recipientProfileId: recipientBody.data.id, destinationId: 'group…' },
+      data: { memberId: recipientBody.data.id, destinationId: 'group…' },
     });
     expect(duplicate.status).toBe(410);
   });
@@ -876,25 +848,25 @@ describe('LINE destinations', () => {
   it('lets an Owner manually attach, correct, and unlink a LINE ID without a webhook event', async () => {
     fixture = await createAutomationTestApp({ lineSecret: 'line-secret' });
     const recipient = await app.fetch(fixture.jsonRequest(
-      '/api/organizations/organization-1/recipients',
+      '/api/organizations/organization-1/members',
       { name: '手動 太郎', email: 'manual@example.com' },
     ), fixture.environment);
     const recipientBody = await recipient.json() as { data: { id: string } };
 
     const attached = await app.fetch(fixture.jsonRequest(
-      `/api/organizations/organization-1/recipients/${recipientBody.data.id}/line-destination`,
+      `/api/organizations/organization-1/members/${recipientBody.data.id}/line-destination`,
       { destinationId: 'Umanualtypo0000000000000000000', displayName: '手動 太郎' },
       'PUT',
     ), fixture.environment);
     const attachedBody = await attached.json() as { data: { id: string } };
 
     const corrected = await app.fetch(fixture.jsonRequest(
-      `/api/organizations/organization-1/recipients/${recipientBody.data.id}/line-destination`,
+      `/api/organizations/organization-1/members/${recipientBody.data.id}/line-destination`,
       { destinationId: 'Ucorrected0000000000000000000000', displayName: '手動 太郎' },
       'PUT',
     ), fixture.environment);
     const roster = await app.fetch(
-      fixture.request('/api/organizations/organization-1/recipients'),
+      fixture.request('/api/organizations/organization-1/members'),
       fixture.environment,
     );
 
@@ -913,7 +885,7 @@ describe('LINE destinations', () => {
     });
 
     const unlinked = await app.fetch(fixture.jsonRequest(
-      `/api/organizations/organization-1/recipients/${recipientBody.data.id}/line-destination/${attachedBody.data.id}`,
+      `/api/organizations/organization-1/members/${recipientBody.data.id}/line-destination/${attachedBody.data.id}`,
       {},
       'DELETE',
     ), fixture.environment);
@@ -921,12 +893,12 @@ describe('LINE destinations', () => {
 
     const correctedBody = await corrected.json() as { data: { id: string } };
     const removed = await app.fetch(fixture.jsonRequest(
-      `/api/organizations/organization-1/recipients/${recipientBody.data.id}/line-destination/${correctedBody.data.id}`,
+      `/api/organizations/organization-1/members/${recipientBody.data.id}/line-destination/${correctedBody.data.id}`,
       {},
       'DELETE',
     ), fixture.environment);
     const afterRemoval = await app.fetch(
-      fixture.request('/api/organizations/organization-1/recipients'),
+      fixture.request('/api/organizations/organization-1/members'),
       fixture.environment,
     );
 
@@ -939,23 +911,23 @@ describe('LINE destinations', () => {
   it('rejects a manually entered LINE ID that is already linked to a different member', async () => {
     fixture = await createAutomationTestApp({ lineSecret: 'line-secret' });
     const first = await app.fetch(fixture.jsonRequest(
-      '/api/organizations/organization-1/recipients',
+      '/api/organizations/organization-1/members',
       { name: 'Member One', email: 'one@example.com' },
     ), fixture.environment);
     const firstBody = await first.json() as { data: { id: string } };
     const second = await app.fetch(fixture.jsonRequest(
-      '/api/organizations/organization-1/recipients',
+      '/api/organizations/organization-1/members',
       { name: 'Member Two', email: 'two@example.com' },
     ), fixture.environment);
     const secondBody = await second.json() as { data: { id: string } };
     await app.fetch(fixture.jsonRequest(
-      `/api/organizations/organization-1/recipients/${firstBody.data.id}/line-destination`,
+      `/api/organizations/organization-1/members/${firstBody.data.id}/line-destination`,
       { destinationId: 'Ushared00000000000000000000000000' },
       'PUT',
     ), fixture.environment);
 
     const conflict = await app.fetch(fixture.jsonRequest(
-      `/api/organizations/organization-1/recipients/${secondBody.data.id}/line-destination`,
+      `/api/organizations/organization-1/members/${secondBody.data.id}/line-destination`,
       { destinationId: 'Ushared00000000000000000000000000' },
       'PUT',
     ), fixture.environment);
@@ -988,13 +960,13 @@ describe('LINE destinations', () => {
     );
     const destinationsBody = await destinations.json() as { data: Array<{ id: string }> };
     const recipient = await app.fetch(fixture.jsonRequest(
-      '/api/organizations/organization-1/recipients',
+      '/api/organizations/organization-1/members',
       { name: 'Discovered', email: 'discovered@example.com', lineDestinationId: destinationsBody.data[0]?.id },
     ), fixture.environment);
     const recipientBody = await recipient.json() as { data: { id: string } };
 
     const unlinked = await app.fetch(fixture.jsonRequest(
-      `/api/organizations/organization-1/recipients/${recipientBody.data.id}/line-destination/${destinationsBody.data[0]?.id}`,
+      `/api/organizations/organization-1/members/${recipientBody.data.id}/line-destination/${destinationsBody.data[0]?.id}`,
       {},
       'DELETE',
     ), fixture.environment);
@@ -1005,7 +977,7 @@ describe('LINE destinations', () => {
 
     expect(unlinked.status).toBe(200);
     await expect(stillDiscovered.json()).resolves.toMatchObject({
-      data: [{ id: destinationsBody.data[0]?.id, recipientProfileId: null, source: 'webhook' }],
+      data: [{ id: destinationsBody.data[0]?.id, memberId: null, source: 'webhook' }],
     });
   });
 
@@ -1031,7 +1003,7 @@ describe('LINE destinations', () => {
         displayName: '保留 太郎',
         source: 'manual',
         status: 'discovered',
-        recipientProfileId: null,
+        memberId: null,
       }],
     });
 
@@ -1049,7 +1021,7 @@ describe('LINE destinations', () => {
     await expect(afterRemoval.json()).resolves.toMatchObject({ data: [] });
   });
 
-  it('promotes a pending LINE contact to a full Recipient Profile and blocks removing a linked one', async () => {
+  it('promotes a pending LINE contact to a full Member and blocks removing a linked one', async () => {
     fixture = await createAutomationTestApp({ lineSecret: 'line-secret' });
     const registered = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/line-destinations',
@@ -1059,7 +1031,7 @@ describe('LINE destinations', () => {
     const registeredBody = await registered.json() as { data: { id: string } };
 
     const promoted = await app.fetch(fixture.jsonRequest(
-      '/api/organizations/organization-1/recipients',
+      '/api/organizations/organization-1/members',
       { name: '昇格 花子', lineDestinationId: registeredBody.data.id },
     ), fixture.environment);
     const blockedRemoval = await app.fetch(fixture.jsonRequest(

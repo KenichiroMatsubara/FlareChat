@@ -6,7 +6,7 @@ import { fleetMigration } from './fleet-migration';
 import { provisionOrganizationDatabase } from './organization-db';
 import { applyPreset } from './presets';
 import { controlDatabase, organizationDatabase } from './storage/database';
-import { members, organizationKeys, organizationProvisionings, organizations } from './storage/control-schema';
+import { admins, organizationKeys, organizationProvisionings, organizations } from './storage/control-schema';
 import type { OrganizationProvisioningRecord } from './storage/control-schema';
 import { googleConnections } from './storage/organization-schema';
 import type { Bindings } from './types';
@@ -118,9 +118,9 @@ export const provisionOrganization = async (
       status: 'active',
       updatedAt: timestamp,
     }).where(eq(organizations.id, provisioning.organizationId)),
-    control.update(members).set({ state: 'active', updatedAt: timestamp }).where(and(
-      eq(members.organizationId, provisioning.organizationId),
-      eq(members.identityId, provisioning.ownerIdentityId),
+    control.update(admins).set({ state: 'active', updatedAt: timestamp }).where(and(
+      eq(admins.organizationId, provisioning.organizationId),
+      eq(admins.identityId, provisioning.ownerIdentityId),
     )),
     control.delete(organizationProvisionings)
       .where(eq(organizationProvisionings.organizationId, provisioning.organizationId)),

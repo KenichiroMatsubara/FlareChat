@@ -5,8 +5,6 @@ import { seedOrganizationRoute } from './seed';
 const CREATED_AT = '2026-07-25T00:00:00.000Z';
 const FUTURE = '2099-01-01T00:00:00.000Z';
 
-export type OrganizationRole = 'owner' | 'admin' | 'operator' | 'viewer';
-
 export interface TestApp {
   control: TestD1Database;
   organization: TestD1Database;
@@ -16,14 +14,12 @@ export interface TestApp {
   addOrganization: (input: {
     id: string;
     bindingName: string;
-    role?: OrganizationRole;
     name?: string;
   }) => TestD1Database;
   close: () => void;
 }
 
 export const createTestApp = (
-  role: OrganizationRole = 'owner',
   options: { includeAutomationInbox?: boolean } = {},
 ): TestApp => {
   const control = createMigratedTestD1('control');
@@ -45,10 +41,9 @@ export const createTestApp = (
     CREATED_AT,
   );
   control.execute(
-    'INSERT INTO members (organization_id, identity_id, role, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+    'INSERT INTO admins (organization_id, identity_id, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
     'organization-1',
     'identity-1',
-    role,
     'active',
     CREATED_AT,
     CREATED_AT,
@@ -129,10 +124,9 @@ export const createTestApp = (
         name: input.name ?? input.id,
       });
       control.execute(
-        'INSERT INTO members (organization_id, identity_id, role, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+        'INSERT INTO admins (organization_id, identity_id, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
         input.id,
         'identity-1',
-        input.role ?? role,
         'active',
         CREATED_AT,
         CREATED_AT,

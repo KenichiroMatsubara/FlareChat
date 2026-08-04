@@ -16,6 +16,8 @@ describe('application routes', () => {
       setupProvisioning: '/setup/provisioning',
       setupFailed: '/setup/failed',
       organization: '/organizations/:organizationId',
+      portal: '/portal',
+      portalJoin: '/portal/join/:organizationId/:token',
     });
     expect(organizationRoutePaths).toEqual({
       automation: 'automation',
@@ -38,7 +40,7 @@ describe('application routes', () => {
     const ready = {
       kind: 'ready',
       identity: { email: 'owner@example.com', displayName: 'Owner' },
-      organizations: [{ organizationId: 'org-1', name: 'Example', role: 'owner', status: 'active' }],
+      organizations: [{ organizationId: 'org-1', name: 'Example', status: 'active' }],
     } as AppState;
 
     expect(resolveApplicationRedirect('/setup', signedOut)).toBe('/');
@@ -51,7 +53,7 @@ describe('application routes', () => {
     const ready = {
       kind: 'ready',
       identity: { email: 'owner@example.com', displayName: 'Owner' },
-      organizations: [{ organizationId: 'org-1', name: 'Example', role: 'owner', status: 'active' }],
+      organizations: [{ organizationId: 'org-1', name: 'Example', status: 'active' }],
     } as AppState;
     const router = createMemoryRouter(createAppRoutes({
       bootstrap: async () => ready,
@@ -73,7 +75,7 @@ describe('application routes', () => {
     const ready = {
       kind: 'ready',
       identity: { email: 'owner@example.com', displayName: 'Owner' },
-      organizations: [{ organizationId: 'org-1', name: 'Example', role: 'owner', status: 'active' }],
+      organizations: [{ organizationId: 'org-1', name: 'Example', status: 'active' }],
     } as AppState;
     const router = createMemoryRouter(createAppRoutes({
       bootstrap: async () => ready,
@@ -87,7 +89,7 @@ describe('application routes', () => {
     const ready = {
       kind: 'ready',
       identity: { email: 'owner@example.com', displayName: 'Owner' },
-      organizations: [{ organizationId: 'org-1', name: 'Example', role: 'owner', status: 'active' }],
+      organizations: [{ organizationId: 'org-1', name: 'Example', status: 'active' }],
     } as AppState;
     const router = createMemoryRouter(createAppRoutes({
       bootstrap: async () => ready,
@@ -124,5 +126,28 @@ describe('application routes', () => {
 
     expect(logout).toHaveBeenCalledOnce();
     expect(navigate).toHaveBeenCalledWith('/', { replace: true });
+  });
+
+  it('sends a Member to the Portal and keeps them off the management GUI', () => {
+    const member = {
+      kind: 'member',
+      identity: { email: 'hanako@example.com', displayName: '山田花子' },
+      organization: { organizationId: 'org-1', name: 'Example' },
+    } as AppState;
+
+    expect(resolveApplicationRedirect('/portal', member)).toBeNull();
+    expect(resolveApplicationRedirect('/', member)).toBe('/portal');
+    expect(resolveApplicationRedirect('/organizations/org-1/automation', member)).toBe('/portal');
+  });
+
+  it('keeps a portal invitation reachable in every application state, so signing in returns to it', () => {
+    const signedOut = { kind: 'signed_out' } as AppState;
+    const join = '/portal/join/org-1/token-1';
+
+    expect(resolveApplicationRedirect(join, signedOut)).toBeNull();
+    expect(resolveApplicationRedirect(join, {
+      kind: 'unassigned',
+      identity: { email: 'hanako@example.com', displayName: '山田花子' },
+    } as AppState)).toBeNull();
   });
 });

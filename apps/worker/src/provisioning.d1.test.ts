@@ -42,7 +42,7 @@ describe('Organization schema provisioning through Miniflare D1', () => {
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
       .all<{ name: string }>();
 
-    expect(tables.results.map(({ name }) => name)).toContain('recipient_profiles');
+    expect(tables.results.map(({ name }) => name)).toContain('members');
   });
 
   it('returns a canonical schema when reusing a migrated local Organization database', async () => {
@@ -81,7 +81,7 @@ describe('Organization schema provisioning through Miniflare D1', () => {
       .prepare('SELECT value FROM provisioning_regression_marker')
       .first<{ value: string }>();
 
-    expect(tables.results.map(({ name }) => name)).toContain('recipient_profiles');
+    expect(tables.results.map(({ name }) => name)).toContain('members');
     expect(tables.results.map(({ name }) => name)).toContain('tasks');
     expect(marker).toEqual({ value: 'must survive retry' });
   });

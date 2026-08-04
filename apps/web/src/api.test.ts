@@ -9,7 +9,7 @@ describe('Organization setup client', () => {
       data: {
         kind: 'ready',
         identity: { email: 'owner@example.com', displayName: 'Owner' },
-        organizations: [{ organizationId: 'organization-1', name: 'Example', role: 'owner', status: 'active' }],
+        organizations: [{ organizationId: 'organization-1', name: 'Example', status: 'active' }],
       },
     }), { status: 200 })));
 
@@ -73,7 +73,7 @@ describe('Organization setup client', () => {
     const member = {
       email: 'owner@example.com',
       displayName: 'Owner',
-      organizations: [{ organizationId: 'organization-1', name: 'Example', role: 'owner' as const, status: 'active' }],
+      organizations: [{ organizationId: 'organization-1', name: 'Example', status: 'active' }],
     };
 
     expect(shouldShowOrganizationLoading(member, '', false)).toBe(true);

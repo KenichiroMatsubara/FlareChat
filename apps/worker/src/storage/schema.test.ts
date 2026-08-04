@@ -50,7 +50,14 @@ const tableNames = (kind: 'control' | 'organization'): string[] => {
 
 describe('canonical D1 schemas', () => {
   it('has one Drizzle-generated initial migration per database kind', () => {
-    expect(migrations('control')).toEqual(['0000_initial.sql', '0001_schema_release.sql', '0002_preset_selection.sql']);
+    expect(migrations('control')).toEqual([
+      '0000_initial.sql',
+      '0001_schema_release.sql',
+      '0002_preset_selection.sql',
+      '0003_admins.sql',
+      '0004_single_admin_role.sql',
+      '0005_member_logins.sql',
+    ]);
     expect(migrations('organization')).toEqual([
       '0000_initial.sql',
       '0001_tasks.sql',
@@ -66,6 +73,10 @@ describe('canonical D1 schemas', () => {
       '0011_agent_runs.sql',
       '0012_event_agent_owners.sql',
       '0013_agent_rule_writes.sql',
+      '0014_members.sql',
+      '0015_attachment_folders.sql',
+      '0016_member_task_assignments.sql',
+      '0017_member_portal.sql',
     ]);
   });
 
@@ -81,9 +92,10 @@ describe('canonical D1 schemas', () => {
 
   it('creates only Control-plane tables in Control D1', () => {
     expect(tableNames('control')).toEqual([
+      'admins',
       'automation_inbox_claims',
       'identities',
-      'members',
+      'member_logins',
       'oauth_flows',
       'organization_keys',
       'organization_provisionings',

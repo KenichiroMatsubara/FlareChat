@@ -2,7 +2,7 @@ import type { AppState } from '@mail/domain';
 import { createBrowserRouter, Outlet, redirect, type LoaderFunctionArgs } from 'react-router-dom';
 
 import { api } from './api';
-import { loadOrganization, LoadingRoute, NotFoundRoute, OAuthError, OrganizationLayout, OrganizationPage, RouteError, SetupConfirmRoute, SetupProgressRoute, SetupRoute } from './routes';
+import { loadOrganization, LoadingRoute, MemberPortalJoinRoute, MemberPortalRoute, NotFoundRoute, OAuthError, OrganizationLayout, OrganizationPage, RouteError, SetupConfirmRoute, SetupProgressRoute, SetupRoute } from './routes';
 
 export const routePaths = {
   signedOut: '/',
@@ -11,6 +11,8 @@ export const routePaths = {
   setupProvisioning: '/setup/provisioning',
   setupFailed: '/setup/failed',
   organization: '/organizations/:organizationId',
+  portal: '/portal',
+  portalJoin: '/portal/join/:organizationId/:token',
 } as const;
 
 export const organizationRoutePaths = {
@@ -33,6 +35,7 @@ const firstOrganizationUrl = (state: Extract<AppState, { kind: 'ready' }>): stri
 };
 
 const isOrganizationPath = (pathname: string): boolean => pathname.startsWith('/organizations/');
+const isPortalJoinPath = (pathname: string): boolean => pathname.startsWith('/portal/join/');
 const isSetupPath = (pathname: string): boolean => pathname === routePaths.setup || pathname === routePaths.setupConfirm || pathname === routePaths.setupProvisioning || pathname === routePaths.setupFailed;
 
 const organizationIdFromPath = (pathname: string): string | null => {
@@ -41,6 +44,10 @@ const organizationIdFromPath = (pathname: string): string | null => {
 };
 
 export const resolveApplicationRedirect = (pathname: string, state: AppState): string | null => {
+  // A portal invitation is the one entry a Member has, so it survives every
+  // other redirect: signing in returns them to the same link.
+  if (isPortalJoinPath(pathname)) return null;
+  if (state.kind === 'member') return pathname === routePaths.portal ? null : routePaths.portal;
   if (state.kind === 'signed_out') return pathname === routePaths.signedOut ? null : routePaths.signedOut;
   if (state.kind === 'unassigned') return pathname === routePaths.setup ? null : routePaths.setup;
   if (state.kind === 'confirming_organization') return pathname === routePaths.setupConfirm ? null : routePaths.setupConfirm;
@@ -74,6 +81,8 @@ const rootRoute = (client: RouterClient) => ({
   errorElement: <RouteError logout={client.logout} />,
   children: [
     { index: true, element: <OAuthError /> },
+    { path: 'portal', loader: stateLoader(client), element: <MemberPortalRoute />, errorElement: <RouteError logout={client.logout} /> },
+    { path: 'portal/join/:organizationId/:token', loader: stateLoader(client), element: <MemberPortalJoinRoute />, errorElement: <RouteError logout={client.logout} /> },
     { path: 'setup', loader: stateLoader(client), element: <SetupRoute />, errorElement: <RouteError logout={client.logout} /> },
     { path: 'setup/confirm', loader: stateLoader(client), element: <SetupConfirmRoute />, errorElement: <RouteError logout={client.logout} /> },
     { path: 'setup/provisioning', loader: stateLoader(client), element: <SetupProgressRoute failed={false} />, errorElement: <RouteError logout={client.logout} /> },

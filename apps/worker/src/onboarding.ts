@@ -15,8 +15,10 @@ import {
 import { availablePresets } from './presets';
 import { controlDatabase } from './storage/database';
 import {
+  admins,
   automationInboxClaims,
-  members,
+  identities,
+  memberLogins,
   organizationProvisionings,
   organizations,
   organizationSetups,
@@ -108,11 +110,10 @@ const beginProvisioning = async (
       createdAt,
       updatedAt: createdAt,
     }),
-    control.insert(members).values({
+    control.insert(admins).values({
       organizationId,
       identityId: setup.ownerIdentityId,
-      role: 'owner',
-      state: 'pending',
+      state: 'active',
       createdAt,
       updatedAt: createdAt,
     }),
@@ -203,16 +204,15 @@ export const applicationState = async (env: Bindings, session: SessionRow): Prom
   const identity = { email: session.email, displayName: session.display_name };
   const control = controlDatabase(env.CONTROL_DB);
   const memberships = await control.select({
-    organizationId: members.organizationId,
-    role: members.role,
+    organizationId: admins.organizationId,
     name: organizations.name,
     status: organizations.status,
     databaseId: organizations.databaseId,
     bindingName: organizations.bindingName,
-  }).from(members).innerJoin(organizations, eq(organizations.id, members.organizationId))
+  }).from(admins).innerJoin(organizations, eq(organizations.id, admins.organizationId))
     .where(and(
-      eq(members.identityId, session.identity_id),
-      eq(members.state, 'active'),
+      eq(admins.identityId, session.identity_id),
+      eq(admins.state, 'active'),
       isNotNull(organizations.databaseId),
     )).all();
   if (memberships.length > 0) {
@@ -231,7 +231,20 @@ export const applicationState = async (env: Bindings, session: SessionRow): Prom
     return {
       kind: 'ready',
       identity,
-      organizations: memberships.map(({ organizationId, role, name, status }) => ({ organizationId, role, name, status })),
+      organizations: memberships.map(({ organizationId, name, status }) => ({ organizationId, name, status })),
+    };
+  }
+  const memberLogin = await control.select({
+    organizationId: memberLogins.organizationId,
+    name: organizations.name,
+  }).from(memberLogins).innerJoin(organizations, eq(organizations.id, memberLogins.organizationId))
+    .innerJoin(identities, eq(identities.googleSubject, memberLogins.googleSubject))
+    .where(and(eq(identities.id, session.identity_id), eq(organizations.status, 'active'))).get();
+  if (memberLogin) {
+    return {
+      kind: 'member',
+      identity,
+      organization: { organizationId: memberLogin.organizationId, name: memberLogin.name },
     };
   }
   const setup = await control.select().from(organizationSetups)

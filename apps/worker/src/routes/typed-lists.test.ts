@@ -9,7 +9,7 @@ afterEach(() => fixture?.close());
 
 describe('Typed List routes', () => {
   it('creates and lists a Typed List through the module interface', async () => {
-    fixture = createTestApp('admin');
+    fixture = createTestApp();
 
     const created = await typedListRoutes.fetch(fixture.jsonRequest(
       '/organizations/organization-1/lists',

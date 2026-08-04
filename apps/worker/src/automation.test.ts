@@ -398,7 +398,7 @@ describe('Organization Automation Inbox scheduling', () => {
     );
     seedScheduledEvent(fixture.organization, { id: 'event-existing', title: '既存行事' });
     seedAttendanceRegistration(fixture.organization, {
-      eventId: 'event-existing', recipientId: 'recipient-existing', destination: 'reader@example.com', status: 'attending',
+      eventId: 'event-existing', memberId: 'recipient-existing', destination: 'reader@example.com', status: 'attending',
     });
     fixture.organization.execute(
       "INSERT INTO tasks (id, organization_id, source_message_id, source_message_subject, title, deadline, assignee_role_id, assignee_role_name, description, created_at, updated_at) VALUES ('task-existing', 'organization-1', 'source-existing', '既存行事', '資料確認', '2026-08-10', 'unassigned', '未割り当て', '資料を確認する', '2026-08-01', '2026-08-01')",
@@ -498,7 +498,12 @@ describe('Organization Automation Inbox scheduling', () => {
         } } as T;
         return { id: 'calendar-shared' } as T;
       } },
-      attachments: { read, publish: async () => ({ outcome: 'succeeded', driveFileId: 'drive-1', publicUrl: 'https://drive.example/agenda' }) },
+      attachments: {
+        read,
+        publish: async () => ({ outcome: 'succeeded', driveFileId: 'drive-1', publicUrl: 'https://drive.example/agenda' }),
+        ensurePath: async () => 'attachment-folder-path',
+        createMessageFolder: async () => 'source-message-folder',
+      },
       ai: { extract },
       agent: { complete },
     });
@@ -690,9 +695,13 @@ describe('Organization Automation Inbox scheduling', () => {
       displayName: '参加登録担当', description: '出欠と申込期限を扱う',
     }), fixture.environment);
     const roleId = (await createdRole.json() as { data: { id: string } }).data.id;
+    const createdMember = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/members', {
+      name: '山田花子', email: 'hanako@example.com',
+    }), fixture.environment);
+    const memberId = (await createdMember.json() as { data: { id: string } }).data.id;
     const assignment = await app.fetch(fixture.jsonRequest(
       `/api/organizations/organization-1/task-roles/${roleId}/assignment`,
-      { identityId: 'identity-1' },
+      { memberId },
       'PUT',
     ), fixture.environment);
     expect(assignment.status).toBe(200);
@@ -737,7 +746,7 @@ describe('Organization Automation Inbox scheduling', () => {
       data: [{
         title: '出席を取りまとめる',
         deadline: '2026-07-31',
-        assigneeName: 'Owner',
+        assigneeName: '山田花子',
         completed: false,
         sourceMessageSubject: '例会のお知らせ',
       }],
@@ -1477,6 +1486,9 @@ describe('Manual mailbox test', () => {
     let aiRequest: { messages?: Array<{ role?: string; content?: string }> } = {};
     let calendarUrl = '';
     const calendarRequests: Array<{ summary?: string; attachments?: Array<{ fileUrl?: string; title?: string; mimeType?: string }> }> = [];
+    const driveFolders: Array<{ name?: string; parents?: string[] }> = [];
+    const driveFolderQueries: string[] = [];
+    let uploadMetadata: { name?: string; parents?: string[] } = {};
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes('/attachments/attachment-xlsx')) {
         return new Response(JSON.stringify({ data: gmailXlsx }), { status: 200 });
@@ -1523,7 +1535,18 @@ describe('Manual mailbox test', () => {
           }) } }],
         }), { status: 200 });
       }
+      if (url.includes('drive/v3/files?q=')) {
+        driveFolderQueries.push(decodeURIComponent(new URL(url).searchParams.get('q') ?? ''));
+        return new Response(JSON.stringify({ files: [] }), { status: 200 });
+      }
+      if (url.includes('drive/v3/files?fields=id') && init?.method === 'POST') {
+        driveFolders.push(JSON.parse(init.body as string) as typeof driveFolders[number]);
+        return new Response(JSON.stringify({ id: `drive-folder-${driveFolders.length}` }), { status: 200 });
+      }
       if (url.includes('upload/drive')) {
+        uploadMetadata = JSON.parse(
+          /\r\n\r\n(\{.*?\})\r\n/su.exec(init?.body as string)?.[1] ?? '{}',
+        ) as typeof uploadMetadata;
         return new Response(JSON.stringify({ id: 'drive-file-xlsx', webViewLink: 'https://drive.example/xlsx' }), { status: 200 });
       }
       if (url.includes('/permissions')) return new Response('', { status: 200 });
@@ -1585,5 +1608,11 @@ describe('Manual mailbox test', () => {
       title: '式典案内.xlsx',
       mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     }]);
+    expect(driveFolderQueries).toEqual([expect.stringContaining("name = 'Mail Automation'")]);
+    expect(driveFolders).toEqual([
+      expect.objectContaining({ name: 'Mail Automation', parents: ['root'] }),
+      expect.objectContaining({ name: expect.stringContaining('名古屋名城RAC30周年記念式典のご案内'), parents: ['drive-folder-1'] }),
+    ]);
+    expect(uploadMetadata.parents).toEqual(['drive-folder-2']);
   });
 });

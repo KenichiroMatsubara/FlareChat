@@ -119,8 +119,6 @@ export interface ApiResult<T> {
   data: T;
 }
 
-export type OrganizationRole = 'owner' | 'admin' | 'operator' | 'viewer';
-
 export type ProvisioningPhase =
   | 'allocating_database'
   | 'applying_schema'
@@ -135,7 +133,6 @@ export interface AppIdentity {
 
 export interface AppMembership {
   organizationId: string;
-  role: 'owner' | 'admin' | 'operator' | 'viewer';
   name: string;
   status: string;
 }
@@ -162,7 +159,8 @@ export type AppState =
     error: string | null;
     retryUntil: string;
   }
-  | { kind: 'ready'; identity: AppIdentity; organizations: AppMembership[] };
+  | { kind: 'ready'; identity: AppIdentity; organizations: AppMembership[] }
+  | { kind: 'member'; identity: AppIdentity; organization: { organizationId: string; name: string } };
 
 export interface PasskeyCreationOptions {
   challenge: string;
@@ -181,16 +179,26 @@ export { batchLineMessages, discoveredLineDestinations, verifyLineWebhookSignatu
 export type { LineBatch, LineDestination, LineMessage } from './line';
 export { canUpdateAttendance } from './attendance';
 export type { AttendanceLinkCheck } from './attendance';
-export { MAX_ATTACHMENT_BYTES, MAX_SOURCE_MESSAGE_ATTACHMENT_BYTES, MAX_SOURCE_MESSAGE_ATTACHMENTS, validateAttachmentIntake } from './attachments';
-export type { AttachmentIntakeResult } from './attachments';
+export {
+  DEFAULT_ATTACHMENT_FOLDER_PATH,
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENT_FOLDER_PATH_SEGMENTS,
+  MAX_ATTACHMENT_FOLDER_SEGMENT_CHARACTERS,
+  MAX_SOURCE_MESSAGE_ATTACHMENT_BYTES,
+  MAX_SOURCE_MESSAGE_ATTACHMENTS,
+  readAttachmentFolderPath,
+  sourceMessageFolderName,
+  validateAttachmentIntake,
+} from './attachments';
+export type { AttachmentFolderPathResult, AttachmentIntakeResult } from './attachments';
 export { MAX_DELIVERY_ATTEMPTS, MAX_RETRY_WINDOW_MS, nextRetry } from './retry';
 export type { RetryDecision } from './retry';
 export { CAPACITY_CRITICAL_THRESHOLD, CAPACITY_WARNING_THRESHOLD, capacityWarning } from './capacity';
 export type { CapacityWarning } from './capacity';
-export { canConsumeRecipientLink } from './recipient-links';
-export type { RecipientLinkCheck } from './recipient-links';
-export { ATTENDANCE_REMINDER_DAYS, shouldSendAttendanceReminder } from './reminders';
+export { canConsumeMemberLink } from './member-links';
+export type { MemberLinkCheck } from './member-links';
+export { ATTENDANCE_REMINDER_DAYS, TASK_REMINDER_DAYS, shouldSendAttendanceReminder, shouldSendTaskReminder } from './reminders';
 export { classifyEventChange } from './event-changes';
 export type { EventChangeKind } from './event-changes';
 export { shouldWriteRecoveryReceipt } from './recovery';
-export { displayLineDestinationId, displayRecipientIdentifier } from './privacy';
+export { displayLineDestinationId } from './privacy';

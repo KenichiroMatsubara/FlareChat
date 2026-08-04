@@ -22,7 +22,7 @@ export interface TaskView {
   deadline: string;
   assigneeRoleId: string;
   assigneeRoleName: string;
-  assigneeIdentityId: string | null;
+  assigneeMemberId: string | null;
   assigneeName: string;
   sourceMessageSubject: string;
   description: string;
@@ -66,10 +66,10 @@ export const createTaskWorkflow = (database: OrganizationDatabase) => ({
     return Boolean(deleted);
   },
 
-  async assignRole(input: { roleId: string; identityId: string; displayName: string }): Promise<void> {
+  async assignRole(input: { roleId: string; memberId: string; displayName: string }): Promise<void> {
     const now = timestamp();
     await database.insert(taskRoleAssignments).values({ ...input, assignedAt: now, updatedAt: now })
-      .onConflictDoUpdate({ target: taskRoleAssignments.roleId, set: { identityId: input.identityId, displayName: input.displayName, updatedAt: now } }).run();
+      .onConflictDoUpdate({ target: taskRoleAssignments.roleId, set: { memberId: input.memberId, displayName: input.displayName, updatedAt: now } }).run();
   },
 
   async createFromSourceMessage(input: { organizationId: string; sourceMessageId: string; sourceMessageSubject: string; extractedTasks: TaskDetails[] }): Promise<void> {
@@ -92,7 +92,7 @@ export const createTaskWorkflow = (database: OrganizationDatabase) => ({
         deadline: extracted.deadline,
         assigneeRoleId: role.id,
         assigneeRoleName: role.displayName,
-        assigneeIdentityId: assignment?.identityId ?? null,
+        assigneeMemberId: assignment?.memberId ?? null,
         assigneeName: assignment?.displayName ?? '未割り当て',
         description: extracted.description,
         createdAt: now,
@@ -101,8 +101,8 @@ export const createTaskWorkflow = (database: OrganizationDatabase) => ({
     }
   },
 
-  async list(input: { assigneeIdentityId?: string; unassigned?: boolean; event?: string } = {}): Promise<TaskView[]> {
-    const conditions = [input.unassigned ? eq(tasks.assigneeRoleId, UNASSIGNED_TASK_ROLE.id) : input.assigneeIdentityId ? eq(tasks.assigneeIdentityId, input.assigneeIdentityId) : undefined,
+  async list(input: { assigneeMemberId?: string; unassigned?: boolean; event?: string } = {}): Promise<TaskView[]> {
+    const conditions = [input.unassigned ? eq(tasks.assigneeRoleId, UNASSIGNED_TASK_ROLE.id) : input.assigneeMemberId ? eq(tasks.assigneeMemberId, input.assigneeMemberId) : undefined,
       input.event ? eq(tasks.sourceMessageSubject, input.event) : undefined].filter((value): value is NonNullable<typeof value> => Boolean(value));
     const rows = await database.select().from(tasks).where(conditions.length ? and(...conditions) : undefined)
       .orderBy(asc(tasks.completed), asc(tasks.deadline), asc(tasks.createdAt)).all();

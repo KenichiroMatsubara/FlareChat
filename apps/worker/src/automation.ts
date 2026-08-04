@@ -5,9 +5,10 @@ import { completeBaselineSkippedRepair, ensureBaselineSchemaRule } from './basel
 import { fromBase64Url } from './encoding';
 import { buildAiEventDetailsRequest, type AiEventDetailsRequest, type EventDetails, type MailExtraction, type TaskRoleDescription } from './event-details';
 import { calendarEventDescription } from './event-description';
+import { resolveSourceMessageFolder } from './attachment-folders';
 import { createTaskWorkflow } from './tasks';
 import { deliverLineBatch, deliverSourceMessageEmail, recordDeliveryAttempt } from './delivery';
-import type { SourceAttachmentContent } from './drive-attachments';
+import type { PublishedDriveAttachment, SourceAttachmentContent } from './drive-attachments';
 import type { GoogleTokenSet } from './google';
 import { productionAutomationDependencies } from './automation/providers';
 import { GoogleApiError } from './automation/providers';
@@ -41,6 +42,9 @@ import {
   sourceMessages,
 } from './storage/organization-schema';
 import type { GoogleConnectionRecord } from './storage/organization-schema';
+
+/** Stands in for a publication that never ran because no Drive folder was available. */
+const unpublishedAttachment: PublishedDriveAttachment = { outcome: 'failed', driveFileId: null, publicUrl: null };
 
 interface GmailHistory {
   historyId?: string;
@@ -733,12 +737,18 @@ const createMailboxTestCalendarEventsWithGoogle = async (
   const intake = validateAttachmentIntake(attachments.map((attachment) => attachment.size));
   if (!intake.accepted) throw new Error('Source Message attachments exceed the configured intake limit.');
   const attachmentContents = await dependencies.attachments.read({ accessToken, gmailMessageId: input.messageId, attachments });
+  const attachmentFolderId = attachmentContents.length ? await resolveSourceMessageFolder({
+    database: drizzleOrganizationDatabase(database),
+    drive: dependencies.attachments,
+    accessToken,
+    subject: subjectOf(message.payload),
+    receivedAt: receivedAtOf(message.internalDate) ?? new Date().toISOString(),
+  }) : null;
   const publications = await Promise.all(attachmentContents.map(async (attachment) => ({
     attachment,
-    publication: await dependencies.attachments.publish({
-      accessToken,
-      attachment,
-    }),
+    publication: attachmentFolderId
+      ? await dependencies.attachments.publish({ accessToken, attachment, parentFolderId: attachmentFolderId })
+      : unpublishedAttachment,
   })));
   if (publications.some(({ publication }) => publication.outcome === 'failed')) {
     throw new Error('添付ファイルを公開できなかったため、テスト予定を作成しませんでした。');
@@ -792,7 +802,7 @@ const processOrganizationMessage = async (
   reprocessSkipped = false,
 ): Promise<void> => {
   const db = drizzleOrganizationDatabase(database);
-  const known = await db.select({ id: sourceMessages.id, state: sourceMessages.state }).from(sourceMessages)
+  const known = await db.select({ id: sourceMessages.id, state: sourceMessages.state, driveFolderId: sourceMessages.driveFolderId }).from(sourceMessages)
     .where(eq(sourceMessages.gmailMessageId, gmailMessageId)).get();
   if (known && !(reprocessSkipped && known.state === 'skipped')) return;
   const message = await dependencies.google.request<GmailMessage>(accessToken, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(gmailMessageId)}?format=full`);
@@ -1033,9 +1043,33 @@ const processOrganizationMessage = async (
       .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
   }
+  let attachmentFolderId: string | null = null;
+  if (attachmentContents.length) {
+    try {
+      attachmentFolderId = await resolveSourceMessageFolder({
+        database: db,
+        drive: dependencies.attachments,
+        accessToken,
+        subject,
+        receivedAt: receivedAtOf(message.internalDate) ?? timestamp,
+        recordedFolderId: known?.driveFolderId,
+        sourceMessageId,
+      });
+    } catch (error) {
+      await db.insert(automationWarnings).values({
+        id: crypto.randomUUID(),
+        sourceMessageId,
+        code: 'attachment_folder_unavailable',
+        message: error instanceof Error ? error.message : 'The Attachment Folder Path could not be created in Drive.',
+        createdAt: now(),
+      }).run();
+    }
+  }
   const publications = await Promise.all(attachmentContents.map(async (attachment) => ({
     attachment,
-    publication: await dependencies.attachments.publish({ accessToken, attachment }),
+    publication: attachmentFolderId
+      ? await dependencies.attachments.publish({ accessToken, attachment, parentFolderId: attachmentFolderId })
+      : unpublishedAttachment,
   })));
   const publicationFailed = publications.some(({ publication }) => publication.outcome === 'failed');
   const attachmentLinks = publications.flatMap(({ attachment, publication }) => publication.publicUrl

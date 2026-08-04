@@ -23,18 +23,25 @@ export const identities = sqliteTable('identities', {
   updatedAt: text('updated_at').notNull(),
 });
 
-export const members = sqliteTable('members', {
+export const admins = sqliteTable('admins', {
   organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
   identityId: text('identity_id').notNull().references(() => identities.id, { onDelete: 'cascade' }),
-  role: text('role', { enum: ['owner', 'admin', 'operator', 'viewer'] }).notNull(),
-  state: text('state', { enum: ['pending', 'active', 'suspended', 'removed'] }).notNull(),
+  state: text('state', { enum: ['active', 'suspended', 'removed'] }).notNull(),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
   primaryKey({ columns: [table.organizationId, table.identityId] }),
-  check('members_role_check', sql`${table.role} in ('owner', 'admin', 'operator', 'viewer')`),
-  check('members_state_check', sql`${table.state} in ('pending', 'active', 'suspended', 'removed')`),
-  index('members_identity_idx').on(table.identityId, table.state),
+  check('admins_state_check', sql`${table.state} in ('active', 'suspended', 'removed')`),
+  index('admins_identity_idx').on(table.identityId, table.state),
+]);
+
+/** Routes a Member's Google account to the Organization whose roster holds them. */
+export const memberLogins = sqliteTable('member_logins', {
+  googleSubject: text('google_subject').primaryKey(),
+  organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+  createdAt: text('created_at').notNull(),
+}, (table) => [
+  index('member_logins_organization_idx').on(table.organizationId),
 ]);
 
 export const sessions = sqliteTable('sessions', {

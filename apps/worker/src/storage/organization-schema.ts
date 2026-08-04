@@ -150,6 +150,7 @@ export const sourceMessages = sqliteTable('source_messages', {
   subject: text('subject').notNull(),
   receivedAt: text('received_at').notNull(),
   processedAt: text('processed_at'),
+  driveFolderId: text('drive_folder_id'),
   state: text('state', { enum: ['pending', 'processing', 'processed', 'skipped', 'exception'] }).notNull().default('pending'),
 }, (table) => [
   check('source_messages_state_check', sql`${table.state} in ('pending', 'processing', 'processed', 'skipped', 'exception')`),
@@ -228,14 +229,12 @@ export const eventOverrides = sqliteTable('event_overrides', {
 
 export const attendance = sqliteTable('attendance', {
   eventId: text('event_id').notNull().references(() => events.id, { onDelete: 'cascade' }),
-  recipientItemId: text('recipient_item_id').notNull().references(() => listItems.id),
+  memberId: text('member_id').notNull().references(() => members.id, { onDelete: 'cascade' }),
   status: text('status', { enum: ['unanswered', 'attending', 'not_attending'] }).notNull().default('unanswered'),
   comment: text('comment').notNull().default(''),
-  token: text('token').notNull().unique(),
-  revokedAt: text('revoked_at'),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
-  primaryKey({ columns: [table.eventId, table.recipientItemId] }),
+  primaryKey({ columns: [table.eventId, table.memberId] }),
   check('attendance_status_check', sql`${table.status} in ('unanswered', 'attending', 'not_attending')`),
 ]);
 
@@ -336,7 +335,7 @@ export const operationalTaskRoles = sqliteTable('operational_task_roles', {
 /** An Organization-local projection of the active member assigned an Operational Task Role. */
 export const taskRoleAssignments = sqliteTable('task_role_assignments', {
   roleId: text('role_id').primaryKey().references(() => operationalTaskRoles.id, { onDelete: 'cascade' }),
-  identityId: text('identity_id').notNull(),
+  memberId: text('member_id').notNull().references(() => members.id, { onDelete: 'cascade' }),
   displayName: text('display_name').notNull(),
   assignedAt: text('assigned_at').notNull(),
   updatedAt: text('updated_at').notNull(),
@@ -351,7 +350,7 @@ export const tasks = sqliteTable('tasks', {
   deadline: text('deadline').notNull(),
   assigneeRoleId: text('assignee_role_id').notNull(),
   assigneeRoleName: text('assignee_role_name').notNull(),
-  assigneeIdentityId: text('assignee_identity_id'),
+  assigneeMemberId: text('assignee_member_id'),
   assigneeName: text('assignee_name').notNull().default('未割り当て'),
   description: text('description').notNull(),
   remarks: text('remarks').notNull().default(''),
@@ -363,7 +362,7 @@ export const tasks = sqliteTable('tasks', {
   check('tasks_completed_check', sql`${table.completed} in (0, 1)`),
   uniqueIndex('tasks_source_role_deadline_title_idx').on(table.sourceMessageId, table.assigneeRoleId, table.deadline, table.title),
   index('tasks_order_idx').on(table.completed, table.deadline),
-  index('tasks_assignee_idx').on(table.assigneeIdentityId),
+  index('tasks_assignee_idx').on(table.assigneeMemberId),
 ]);
 
 export const deliveryArchives = sqliteTable('delivery_archives', {
@@ -374,28 +373,30 @@ export const deliveryArchives = sqliteTable('delivery_archives', {
   createdAt: text('created_at').notNull(),
 });
 
-export const recipientProfiles = sqliteTable('recipient_profiles', {
+export const members = sqliteTable('members', {
   id: text('id').primaryKey(),
   organizationId: text('organization_id').notNull(),
   name: text('name').notNull(),
   email: text('email').notNull(),
   state: text('state', { enum: ['active', 'inactive'] }).notNull().default('active'),
   tags: text('tags').notNull().default('[]'),
+  googleSubject: text('google_subject'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
-  check('recipient_profiles_state_check', sql`${table.state} in ('active', 'inactive')`),
-  uniqueIndex('recipient_profiles_email_unique').on(table.email).where(sql`${table.email} <> ''`),
+  check('members_state_check', sql`${table.state} in ('active', 'inactive')`),
+  uniqueIndex('members_email_unique').on(table.email).where(sql`${table.email} <> ''`),
+  uniqueIndex('members_google_subject_unique').on(table.googleSubject).where(sql`${table.googleSubject} is not null`),
 ]);
 
 export const eventRecipients = sqliteTable('event_recipients', {
   eventId: text('event_id').notNull().references(() => events.id, { onDelete: 'cascade' }),
-  recipientProfileId: text('recipient_profile_id').notNull().references(() => recipientProfiles.id),
+  memberId: text('member_id').notNull().references(() => members.id),
   nameSnapshot: text('name_snapshot').notNull(),
   emailSnapshot: text('email_snapshot').notNull(),
   createdAt: text('created_at').notNull(),
 }, (table) => [
-  primaryKey({ columns: [table.eventId, table.recipientProfileId] }),
+  primaryKey({ columns: [table.eventId, table.memberId] }),
 ]);
 
 export const lineDestinations = sqliteTable('line_destinations', {
@@ -414,21 +415,32 @@ export const lineDestinations = sqliteTable('line_destinations', {
   uniqueIndex('line_destinations_connection_destination_idx').on(table.connectionId, table.destinationId),
 ]);
 
-export const recipientLinkTokens = sqliteTable('recipient_link_tokens', {
+export const memberLinkTokens = sqliteTable('member_link_tokens', {
   token: text('token').primaryKey(),
-  recipientProfileId: text('recipient_profile_id').notNull().references(() => recipientProfiles.id, { onDelete: 'cascade' }),
+  memberId: text('member_id').notNull().references(() => members.id, { onDelete: 'cascade' }),
   expiresAt: text('expires_at').notNull(),
   usedAt: text('used_at'),
   createdAt: text('created_at').notNull(),
 });
 
-export const recipientLineDestinations = sqliteTable('recipient_line_destinations', {
-  recipientProfileId: text('recipient_profile_id').notNull().references(() => recipientProfiles.id, { onDelete: 'cascade' }),
+/** The single-use link that first brings a Member into the Member Portal. */
+export const portalInvitations = sqliteTable('portal_invitations', {
+  token: text('token').primaryKey(),
+  memberId: text('member_id').notNull().references(() => members.id, { onDelete: 'cascade' }),
+  expiresAt: text('expires_at').notNull(),
+  usedAt: text('used_at'),
+  createdAt: text('created_at').notNull(),
+}, (table) => [
+  index('portal_invitations_member_idx').on(table.memberId, table.usedAt),
+]);
+
+export const memberLineDestinations = sqliteTable('member_line_destinations', {
+  memberId: text('member_id').notNull().references(() => members.id, { onDelete: 'cascade' }),
   lineDestinationId: text('line_destination_id').notNull().references(() => lineDestinations.id, { onDelete: 'cascade' }),
   createdAt: text('created_at').notNull(),
 }, (table) => [
-  primaryKey({ columns: [table.recipientProfileId, table.lineDestinationId] }),
-  uniqueIndex('recipient_line_destinations_destination_unique').on(table.lineDestinationId),
+  primaryKey({ columns: [table.memberId, table.lineDestinationId] }),
+  uniqueIndex('member_line_destinations_destination_unique').on(table.lineDestinationId),
 ]);
 
 export const eventAttachments = sqliteTable('event_attachments', {

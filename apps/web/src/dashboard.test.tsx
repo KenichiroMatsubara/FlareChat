@@ -19,9 +19,9 @@ describe('Google credential recovery', () => {
 const dashboardProps = (): DashboardProps => ({
   page: 'automation', automation: null, summary: null, busy: false, error: '',
   onRun: vi.fn(), onSetEnabled: vi.fn(), onLogout: vi.fn(), onReauthenticate: vi.fn(),
-  organization: { name: 'Example', role: 'owner' }, organizationId: 'org-1',
-  organizations: [{ organizationId: 'org-1', name: 'Example', role: 'owner', status: 'active' }],
-  canManage: true, connections: null, lineChannelAccessToken: '', lineChannelSecret: '', aiApiKey: '', aiModel: 'test-model', aiBaseUrl: 'https://ai.example.com/v1',
+  organization: { name: 'Example' }, organizationId: 'org-1',
+  organizations: [{ organizationId: 'org-1', name: 'Example', status: 'active' }],
+  connections: null, lineChannelAccessToken: '', lineChannelSecret: '', aiApiKey: '', aiModel: 'test-model', aiBaseUrl: 'https://ai.example.com/v1',
   onLineChannelAccessTokenChange: vi.fn(), onLineChannelSecretChange: vi.fn(), onAiApiKeyChange: vi.fn(), onAiModelChange: vi.fn(), onAiBaseUrlChange: vi.fn(),
   lineSettingsBusy: false, aiSettingsBusy: false, onSaveLineConnection: vi.fn(), onSaveAiConnection: vi.fn(), aiTestPrompt: '', aiTestResult: '', aiTestBusy: false,
   onAiTestPromptChange: vi.fn(), onTestAi: vi.fn(), mailTestSubject: '', mailTestMatches: [], mailTestAiRequest: null,
@@ -29,8 +29,9 @@ const dashboardProps = (): DashboardProps => ({
   onPrepareMailbox: vi.fn(), onPreviewMailbox: vi.fn(), onCreateCalendarEvent: vi.fn(), organizationRules: [], ruleBusy: false,
   organizationLists: [], onCreateRule: vi.fn(), onUpdateRule: vi.fn(), organizationTasks: [], onUpdateTask: vi.fn(), taskRoles: [], taskRoleAssignments: [], taskMembers: [], onCreateTaskRole: vi.fn(), onUpdateTaskRole: vi.fn(), onDeleteTaskRole: vi.fn(), onAssignTaskRole: vi.fn(),
   prompts: [], agentRules: [], agentRuns: [], agentTranscript: null, proposedActions: [], onCreatePrompt: vi.fn(), onUpdatePrompt: vi.fn(), onDeletePrompt: vi.fn(), onCreateAgentRule: vi.fn(), onUpdateAgentRule: vi.fn(), onLoadAgentTranscript: vi.fn(), onDecideProposedAction: vi.fn(), onDecideProposedActionBatch: vi.fn(),
-  organizationRecipients: [], lineDestinations: [], memberBusy: false, onCreateRecipient: vi.fn(), onUpdateRecipient: vi.fn(),
-  onSetLineDestination: vi.fn(), onUnlinkLineDestination: vi.fn(), onRegisterLineDestination: vi.fn(), onRemoveLineDestination: vi.fn(), onRefreshRecipients: vi.fn(),
+  organizationMembers: [], lineDestinations: [], memberBusy: false, onCreateMember: vi.fn(), onUpdateMember: vi.fn(),
+  onSetLineDestination: vi.fn(), onUnlinkLineDestination: vi.fn(), onRegisterLineDestination: vi.fn(), onRemoveLineDestination: vi.fn(), onRefreshMembers: vi.fn(),
+  attachmentFolderPath: 'Mail Automation', savedAttachmentFolderPath: 'Mail Automation', onAttachmentFolderPathChange: vi.fn(), attachmentFolderBusy: false, onSaveAttachmentFolderPath: vi.fn(),
   presets: [{ id: 'membership-organization', name: 'Membership organization', description: 'Starting configuration.' }], onApplyPreset: vi.fn(),
 });
 
@@ -92,8 +93,8 @@ describe('Operational Task Roles', () => {
           {...dashboardProps()}
           page="tasks"
           taskRoles={[{ id: 'role-registration', displayName: '参加登録担当', description: '出欠と申込期限を扱う' }]}
-          taskRoleAssignments={[{ roleId: 'role-registration', identityId: 'identity-1', displayName: 'Owner' }]}
-          taskMembers={[{ identityId: 'identity-1', displayName: 'Owner' }]}
+          taskRoleAssignments={[{ roleId: 'role-registration', memberId: 'member-1', displayName: '山田' }]}
+          taskMembers={[{ memberId: 'member-1', displayName: '山田' }]}
           organizationTasks={[{
             id: 'task-1', title: '登録状況を確認する', deadline: '2026-08-20',
             assigneeRoleId: 'role-registration', assigneeRoleName: '旧・参加登録担当',
@@ -191,6 +192,36 @@ describe('Preset settings', () => {
   });
 });
 
+const saveFolderButton = (html: string): string => {
+  const before = html.slice(0, html.indexOf('保存先を保存'));
+  return before.slice(before.lastIndexOf('<button'));
+};
+
+describe('Attachment Folder Path', () => {
+  it('shows the Drive location attachments are written to and disables saving an unchanged path', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/connections']}>
+        <Dashboard {...dashboardProps()} page="connections" />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('添付ファイルの保存先');
+    expect(html).toContain('現在: Mail Automation');
+    expect(saveFolderButton(html)).toContain('disabled=""');
+  });
+
+  it('offers to save a path the Organization has changed', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/connections']}>
+        <Dashboard {...dashboardProps()} page="connections" attachmentFolderPath="会計 2026/添付" />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('会計 2026/添付');
+    expect(saveFolderButton(html)).not.toContain('disabled=""');
+  });
+});
+
 describe('read-only Agent Rules', () => {
   it('offers Prompt and Agent Rule management and renders a readable Run Transcript', () => {
     const html = renderToStaticMarkup(
@@ -235,7 +266,7 @@ describe('member roster', () => {
             ai: { apiKeyConfigured: false, model: '', baseUrl: '' },
             line: { channelAccessTokenConfigured: true, channelSecretConfigured: true, webhookUrl: 'https://app.example.com/api/public/organizations/org-1/line/webhook' },
           }}
-          organizationRecipients={[{
+          organizationMembers={[{
             id: 'recipient-1',
             organizationId: 'org-1',
             name: '山田 太郎',
@@ -261,7 +292,7 @@ describe('member roster', () => {
             status: 'discovered',
             source: 'webhook',
             discoveredAt: '2026-07-30T00:00:00.000Z',
-            recipientProfileId: null,
+            memberId: null,
           }]}
         />
       </MemoryRouter>,
@@ -292,7 +323,7 @@ describe('member roster', () => {
             ai: { apiKeyConfigured: false, model: '', baseUrl: '' },
             line: { channelAccessTokenConfigured: true, channelSecretConfigured: true, webhookUrl: 'https://app.example.com/api/public/organizations/org-1/line/webhook' },
           }}
-          organizationRecipients={[]}
+          organizationMembers={[]}
           lineDestinations={[
             {
               id: 'line-webhook',
@@ -302,7 +333,7 @@ describe('member roster', () => {
               status: 'discovered',
               source: 'webhook',
               discoveredAt: '2026-07-30T00:00:00.000Z',
-              recipientProfileId: null,
+              memberId: null,
             },
             {
               id: 'line-manual-pending',
@@ -312,7 +343,7 @@ describe('member roster', () => {
               status: 'discovered',
               source: 'manual',
               discoveredAt: '2026-07-30T00:00:00.000Z',
-              recipientProfileId: null,
+              memberId: null,
             },
           ]}
         />
@@ -338,7 +369,7 @@ describe('member roster', () => {
             ai: { apiKeyConfigured: false, model: '', baseUrl: '' },
             line: { channelAccessTokenConfigured: true, channelSecretConfigured: true, webhookUrl: 'https://app.example.com/api/public/organizations/org-1/line/webhook' },
           }}
-          organizationRecipients={[{
+          organizationMembers={[{
             id: 'recipient-1',
             organizationId: 'org-1',
             name: '手動 花子',

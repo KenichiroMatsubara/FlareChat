@@ -56,4 +56,33 @@ describe('Organization Automation routes', () => {
       error: { message: '自動化を有効にする前に OpenAI 互換 API を設定してください。' },
     });
   });
+
+  it('answers the product default Attachment Folder Path until an Organization saves its own', async () => {
+    fixture = createTestApp();
+
+    const initial = await automationRoutes.fetch(
+      fixture.request('/organizations/organization-1/attachment-folder'),
+      fixture.environment,
+    );
+    await expect(initial.json()).resolves.toMatchObject({ data: { path: 'Mail Automation' } });
+
+    const saved = await automationRoutes.fetch(
+      fixture.jsonRequest('/organizations/organization-1/attachment-folder', { path: '/会計 2026//添付/' }, 'PUT'),
+      fixture.environment,
+    );
+
+    expect(saved.status).toBe(200);
+    await expect(saved.json()).resolves.toMatchObject({ data: { path: '会計 2026/添付' } });
+  });
+
+  it('refuses an empty Attachment Folder Path, because an empty path is the Drive root', async () => {
+    fixture = createTestApp();
+
+    const response = await automationRoutes.fetch(
+      fixture.jsonRequest('/organizations/organization-1/attachment-folder', { path: '   ' }, 'PUT'),
+      fixture.environment,
+    );
+
+    expect(response.status).toBe(400);
+  });
 });

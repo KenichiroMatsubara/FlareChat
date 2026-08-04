@@ -21,10 +21,8 @@ afterEach(() => {
 });
 
 describe('application entry', () => {
-  it.each(['owner', 'admin', 'operator', 'viewer'] as const)(
-    'returns an existing %s to their Organization after identity-only Google login',
-    async (role) => {
-    fixture = createTestApp(role);
+  it('returns an existing Admin to their Organization after identity-only Google login', async () => {
+    fixture = createTestApp();
     fixture.environment.CREDENTIAL_MASTER_KEY = randomToken(32);
     fixture.environment.CREDENTIAL_MASTER_KEY_VERSION = 'test-v1';
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
@@ -72,7 +70,6 @@ describe('application entry', () => {
         identity: { email: 'owner@example.com', displayName: 'Owner' },
         organizations: [{
           organizationId: 'organization-1',
-          role,
           name: 'Organization One',
           status: 'active',
         }],
@@ -92,13 +89,13 @@ describe('application entry', () => {
     await expect(bootstrap.json()).resolves.toMatchObject({
       data: {
         kind: 'ready',
-        organizations: [{ organizationId: 'organization-1', role: 'owner' }],
+        organizations: [{ organizationId: 'organization-1' }],
       },
     });
     await expect(identity.json()).resolves.toMatchObject({
       data: {
         email: 'owner@example.com',
-        organizations: [{ organizationId: 'organization-1', role: 'owner' }],
+        organizations: [{ organizationId: 'organization-1' }],
       },
     });
   });
@@ -251,10 +248,8 @@ describe('application entry', () => {
     });
   });
 
-  it.each(['owner', 'admin', 'operator', 'viewer'] as const)(
-    'treats Organization setup by an existing %s as ordinary login',
-    async (role) => {
-    fixture = createTestApp(role);
+  it('treats Organization setup by an existing Admin as ordinary login', async () => {
+    fixture = createTestApp();
     fixture.environment.CREDENTIAL_MASTER_KEY = randomToken(32);
     fixture.environment.CREDENTIAL_MASTER_KEY_VERSION = 'test-v1';
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
@@ -304,7 +299,7 @@ describe('application entry', () => {
     await expect(bootstrap.json()).resolves.toMatchObject({
       data: {
         kind: 'ready',
-        organizations: [{ organizationId: 'organization-1', role }],
+        organizations: [{ organizationId: 'organization-1' }],
       },
     });
     expect(fixture.control.row<{ count: number }>('SELECT COUNT(*) AS count FROM organizations')?.count).toBe(1);
@@ -374,7 +369,6 @@ describe('application entry', () => {
         identity: { email: 'new-owner@example.com' },
         organizations: [{
           name: 'New Organization',
-          role: 'owner',
           status: 'active',
         }],
       },
