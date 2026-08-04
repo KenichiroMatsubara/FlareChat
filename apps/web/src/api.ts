@@ -198,6 +198,7 @@ export interface MailboxTestPreview extends MailboxTestMatch {
     timeZone: string;
     location: string;
     description: string;
+    summary: string;
   }>;
   tasks: Array<{
     title: string;

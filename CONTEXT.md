@@ -46,6 +46,8 @@ The initial private deployment uses one Google OAuth application configured as `
 
 Organization connection credentials are encrypted with an Organization-specific data-encryption key. That key is wrapped by a versioned deployment master key held as a Worker Secret, allowing stored credentials to be rewrapped during key rotation without exposing plaintext in D1.
 
+A Scheduled Event's Calendar description states its Event Summary first, then each Public Attachment as a link labelled with its filename, then the sentence naming the Source Message it came from. Google Calendar renders a small HTML subset, so untrusted extracted text and filenames are escaped and only absolute http(s) links are written.
+
 If Google Drive policy prevents an attachment from becoming a Public Attachment, the event is retained only on the Automation Inbox's Calendar as an administrative draft. Recipient invitations and Member notifications are withheld until publication succeeds, and an Automation Exception supports retry after policy correction.
 
 Completed Delivery Records and audit history older than twelve months are moved from Organization D1 into encrypted, compressed monthly R2 archives. Organization D1 retains archive indexes for GUI retrieval; active rules, recipients, credentials, pending Jobs, attendance for active events, and future events are never archived by this process.
@@ -185,8 +187,12 @@ The facts about a Source Message that Mail Automation observed rather than read 
 _Avoid_: context, metadata, current date
 
 **Event Details**:
-The structured title, start and end time, time zone, location, and description extracted from a Source Message through an AI Connection and completed with an Automation Rule's defaults.
+The structured title, start and end time, time zone, location, description, and Event Summary extracted from a Source Message through an AI Connection and completed with an Automation Rule's defaults.
 _Avoid_: parsed fields, event data
+
+**Event Summary**:
+The plain-text account of one Event Candidate alone, produced by the same extraction as the Message Summary and written into that event's Google Calendar description. It falls back to the event description when an extraction omits it.
+_Avoid_: event notes, per-event digest
 
 **Message Summary**:
 The single plain-text account of one Source Message and its accepted attachments produced by that message's one extraction, delivered on its own schedule whether or not the message yielded any Event Candidate.

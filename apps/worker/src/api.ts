@@ -157,6 +157,7 @@ const isEventDetails = (value: unknown): value is EventDetails => {
     && typeof event.timeZone === 'string'
     && typeof event.location === 'string'
     && typeof event.description === 'string'
+    && typeof event.summary === 'string'
     && Number.isFinite(Date.parse(event.startsAt))
     && Number.isFinite(Date.parse(event.endsAt))
     && Date.parse(event.startsAt) < Date.parse(event.endsAt);

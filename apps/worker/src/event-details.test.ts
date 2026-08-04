@@ -78,6 +78,7 @@ describe('OpenAI-compatible Event Details validation', () => {
       timeZone: 'Asia/Tokyo',
       location: '会館',
       description: '月例会',
+      summary: '毎月の例会です。会費は当日徴収します。',
     }))).toEqual({
       title: '例会',
       startsAt: '2026-08-03T19:00:00+09:00',
@@ -85,9 +86,48 @@ describe('OpenAI-compatible Event Details validation', () => {
       timeZone: 'Asia/Tokyo',
       location: '会館',
       description: '月例会',
+      summary: '毎月の例会です。会費は当日徴収します。',
     });
     expect(validatedEventDetails('{"title":"日時未定"}')).toBeNull();
     expect(validatedEventDetails('not json')).toBeNull();
+  });
+
+  it('falls back to the event description when an extraction omits the Event Summary', () => {
+    expect(validatedEventDetails(JSON.stringify({
+      title: '例会',
+      startsAt: '2026-08-03T19:00:00+09:00',
+      endsAt: '2026-08-03T21:00:00+09:00',
+      timeZone: 'Asia/Tokyo',
+      location: '会館',
+      description: '月例会',
+    }))).toMatchObject({ summary: '月例会' });
+    expect(validatedEventDetails(JSON.stringify({
+      title: '例会',
+      startsAt: '2026-08-03T19:00:00+09:00',
+      endsAt: '2026-08-03T21:00:00+09:00',
+      timeZone: 'Asia/Tokyo',
+      location: '会館',
+      description: '',
+      summary: '   ',
+    }))).toMatchObject({ summary: '例会' });
+    expect(validatedEventDetails(JSON.stringify({
+      title: '例会',
+      startsAt: '2026-08-03T19:00:00+09:00',
+      endsAt: '2026-08-03T21:00:00+09:00',
+      timeZone: 'Asia/Tokyo',
+      location: '会館',
+      description: '月例会',
+      summary: 42,
+    }))).toBeNull();
+  });
+
+  it('requires an Event Summary for every event in the extraction schema', async () => {
+    const request = await buildAiEventDetailsRequest({ source: '例会のご案内' });
+    const eventSchema = request.response_format.json_schema.schema.properties?.events?.items;
+
+    expect(eventSchema?.required).toEqual(['title', 'startsAt', 'endsAt', 'timeZone', 'location', 'description', 'summary']);
+    expect(eventSchema?.properties?.summary).toMatchObject({ type: 'string', maxLength: 1000 });
+    expect(request.messages[0]?.content).toContain("Write each event's summary");
   });
 
   it('retains a Message Summary when extraction produces no Event Candidate', () => {
