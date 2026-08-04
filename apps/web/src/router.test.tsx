@@ -6,7 +6,8 @@ import type { AppState } from '@mail/domain';
 
 import { ApiError } from './api';
 import { createAppRoutes, organizationRoutePaths, resolveApplicationRedirect, routePaths } from './router';
-import { logoutFromRouteError } from './routes';
+import { logoutFromRouteError, MemberPortalView } from './routes';
+import { pendingKey } from './pending';
 
 describe('application routes', () => {
   it('exposes stable public and organization URLs', () => {
@@ -178,5 +179,59 @@ describe('application routes', () => {
       kind: 'unassigned',
       identity: { email: 'hanako@example.com', displayName: '山田花子' },
     } as AppState)).toBeNull();
+  });
+});
+
+describe('Member Portal progress', () => {
+  const portal = {
+    organization: { organizationId: 'org-1', name: 'Example' },
+    member: { memberId: 'member-1', name: '山田' },
+    events: [{
+      eventId: 'event-1', title: '総会', startsAt: '2026-09-01T01:00:00.000Z', endsAt: '2026-09-01T03:00:00.000Z',
+      location: '本部', registrationDeadline: null, status: 'unanswered' as const, comment: '', open: true,
+    }],
+    tasks: [{
+      taskId: 'task-1', title: '参加費を支払う', deadline: '2026-08-25', assigneeRoleName: '会計担当',
+      assigneeName: '山田', sourceMessageSubject: '総会案内', description: '', remarks: '', completed: false, mine: true,
+    }],
+  };
+  const view = (pending: (key: string) => boolean, settled: (key: string) => boolean = () => false): string =>
+    renderToStaticMarkup(<MemberPortalView
+      portal={portal}
+      pending={pending}
+      settled={settled}
+      error=""
+      onAttendance={vi.fn()}
+      onComment={vi.fn()}
+      onTaskCompleted={vi.fn()}
+      onTaskRemarks={vi.fn()}
+      onLogout={vi.fn()}
+    />);
+
+  it('reports which attendance answer is being sent', () => {
+    const html = view((key) => key === pendingKey.portalAttendance('event-1', 'attending'));
+
+    expect(html.match(/送信中…/gu)?.length).toBe(1);
+    expect(html).toContain('欠席');
+  });
+
+  it('reports a comment and a remark being saved, and that they were saved', () => {
+    const saving = view((key) => key === pendingKey.portalComment('event-1'));
+    const saved = view(() => false, (key) => key === pendingKey.portalRemarks('task-1'));
+
+    expect(saving).toContain('保存中…');
+    expect(saved).toContain('保存しました');
+  });
+
+  it('reports a Member leaving the portal', () => {
+    expect(view((key) => key === pendingKey.portalLogout)).toContain('ログアウト中…');
+  });
+});
+
+describe('route loading progress', () => {
+  it('shows a loading screen while the first route resolves', () => {
+    const [root] = createAppRoutes({ bootstrap: async () => ({ kind: 'signed_out' } as AppState), logout: async () => ({ loggedOut: true }) });
+
+    expect(root?.hydrateFallbackElement).toBeDefined();
   });
 });

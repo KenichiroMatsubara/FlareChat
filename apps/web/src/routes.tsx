@@ -7,6 +7,7 @@ import type { AppState } from '@mail/domain';
 import { api } from './api';
 import type { MemberAttendanceStatus, MemberPortal, AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, OrganizationAgentRule, OrganizationConnections, OrganizationDashboard, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationMember, OrganizationMemberInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, ProposedAction, MemberLineDestinationInput, TaskAssignmentProposal, TaskReassignmentReview, TaskRoleConfiguration } from './api';
 import { defaultOrganizationName, setupPhaseLabel, SignedOutEntry } from './entry';
+import { pendingKey, usePendingOperations, type PendingOperations } from './pending';
 import { Dashboard } from './dashboard';
 
 export const DEFAULT_MAIL_TEST_SUBJECT = '名古屋名城RAC30周年記念式典のご案内';
@@ -96,11 +97,12 @@ export const SetupConfirmRoute = () => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [presets, setPresets] = useState<PresetSummary[]>([]);
+  const [presetsLoading, setPresetsLoading] = useState(true);
   const [presetId, setPresetId] = useState('');
   useEffect(() => {
     void api.presets().then(setPresets).catch((cause: unknown) => {
       setError(cause instanceof Error ? cause.message : 'Presetを読み込めませんでした。');
-    });
+    }).finally(() => setPresetsLoading(false));
   }, []);
   if (state.kind !== 'confirming_organization') return null;
   const submit = async (event: React.FormEvent) => {
@@ -113,8 +115,10 @@ export const SetupConfirmRoute = () => {
     <p className="eyebrow">CONFIRM ORGANIZATION</p><h1>組織名を確認</h1>
     <p className="setup-copy">認可したGoogleアカウントをAutomation Inboxと初期Ownerにします。</p>
     <label>組織名<input value={name} onChange={(event) => setName(event.target.value)} autoComplete="organization" required /></label>
-    <PresetSetupChoice presets={presets} selectedId={presetId} onChange={setPresetId} />
-    <button className="primary" disabled={busy}>{busy ? '組織DBを作成中…' : 'この名前で組織を作成する'}</button>
+    {presetsLoading
+      ? <div className="loading"><RefreshCw className="spin" size={16} />Presetを読み込み中…</div>
+      : <PresetSetupChoice presets={presets} selectedId={presetId} onChange={setPresetId} />}
+    <button className="primary" disabled={busy || presetsLoading}>{busy ? '組織DBを作成中…' : 'この名前で組織を作成する'}</button>
   </form></SetupCard>;
 };
 
@@ -151,7 +155,7 @@ export const SetupProgressRoute = ({ failed }: { failed: boolean }) => {
   if (!failed && state.kind === 'provisioning') return <SetupCard>
     <p className="eyebrow">PROVISIONING</p><h1>組織を準備しています</h1>
     <p className="setup-copy">{setupPhaseLabel(state.phase)}</p>
-    <div className="loading"><RefreshCw className="spin" size={18} />状態を確認中…</div>
+    <div className="loading"><RefreshCw className="spin" size={18} />{revalidator.state === 'idle' ? '5秒ごとに状態を確認しています…' : '状態を確認中…'}</div>
   </SetupCard>;
   return null;
 };
@@ -208,12 +212,10 @@ const roleChangeOpensReassignment = (current: OrganizationRouteData): Organizati
   taskReassignment: { ...current.taskReassignment, pending: true, rolesChangedAt: new Date().toISOString() },
 });
 
-interface OrganizationContextValue extends OrganizationRouteData {
-  busy: boolean;
-  error: string;
+interface OrganizationContextValue extends OrganizationRouteData, PendingOperations {
   summary: AutomationSummary | null;
   setEnabled: (enabled: boolean) => void;
-  run: () => void;
+  runAutomation: () => void;
   saveLineConnection: () => void;
   saveAiConnection: () => void;
   testAi: () => void;
@@ -242,7 +244,7 @@ interface OrganizationContextValue extends OrganizationRouteData {
   deleteTaskRole: (roleId: string) => Promise<void>;
   assignTaskRole: (roleId: string, memberId: string) => void;
   taskReassignmentProposals: TaskAssignmentProposal[];
-  taskReassignmentBusy: boolean;
+  taskReassignmentSkipped: string[];
   suggestTaskReassignments: () => void;
   applyTaskReassignments: (assignments: Array<{ taskId: string; roleId: string }>) => void;
   discardTaskReassignments: () => void;
@@ -261,24 +263,17 @@ interface OrganizationContextValue extends OrganizationRouteData {
   aiBaseUrl: string;
   aiTestPrompt: string;
   aiTestResult: string;
-  aiTestBusy: boolean;
   mailTestSubject: string;
   mailTestMatches: MailboxTestMatch[];
   mailTestAiRequest: MailboxTestAiRequest | null;
   mailTestPreview: MailboxTestPreview | null;
-  mailTestBusy: boolean;
   mailTestCreatedEventIds: string[];
   mailTestRefreshRequest: MailboxTestRefreshRequest | null;
   mailTestRefreshPlan: MailboxTestRefreshPlan | null;
   mailTestRefreshOutcome: MailboxTestRefreshOutcome | null;
-  lineSettingsBusy: boolean;
-  aiSettingsBusy: boolean;
   attachmentFolderPath: string;
   setAttachmentFolderPath: (value: string) => void;
-  attachmentFolderBusy: boolean;
   saveAttachmentFolderPath: () => void;
-  ruleBusy: boolean;
-  memberBusy: boolean;
   setLineChannelAccessToken: (value: string) => void;
   setLineChannelSecret: (value: string) => void;
   setAiApiKey: (value: string) => void;
@@ -301,13 +296,7 @@ export const OrganizationLayout = () => {
   const initial = useLoaderData() as OrganizationRouteData;
   const navigate = useNavigate();
   const [data, setData] = useState(initial);
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [lineSettingsBusy, setLineSettingsBusy] = useState(false);
-  const [aiSettingsBusy, setAiSettingsBusy] = useState(false);
-  const [attachmentFolderBusy, setAttachmentFolderBusy] = useState(false);
-  const [ruleBusy, setRuleBusy] = useState(false);
-  const [memberBusy, setMemberBusy] = useState(false);
+  const operations = usePendingOperations();
   const [summary, setSummary] = useState<AutomationSummary | null>(null);
   const [lineChannelAccessToken, setLineChannelAccessToken] = useState('');
   const [lineChannelSecret, setLineChannelSecret] = useState('');
@@ -317,12 +306,10 @@ export const OrganizationLayout = () => {
   const [attachmentFolderPath, setAttachmentFolderPath] = useState(data.attachmentFolder.path);
   const [aiTestPrompt, setAiTestPrompt] = useState('日本の首都を一文で教えてください。');
   const [aiTestResult, setAiTestResult] = useState('');
-  const [aiTestBusy, setAiTestBusy] = useState(false);
   const [mailTestSubject, setMailTestSubject] = useState(DEFAULT_MAIL_TEST_SUBJECT);
   const [mailTestMatches, setMailTestMatches] = useState<MailboxTestMatch[]>([]);
   const [mailTestAiRequest, setMailTestAiRequest] = useState<MailboxTestAiRequest | null>(null);
   const [mailTestPreview, setMailTestPreview] = useState<MailboxTestPreview | null>(null);
-  const [mailTestBusy, setMailTestBusy] = useState(false);
   const [mailTestCreatedEventIds, setMailTestCreatedEventIds] = useState<string[]>([]);
   const [mailTestRefreshRequest, setMailTestRefreshRequest] = useState<MailboxTestRefreshRequest | null>(null);
   const [mailTestRefreshPlan, setMailTestRefreshPlan] = useState<MailboxTestRefreshPlan | null>(null);
@@ -330,7 +317,7 @@ export const OrganizationLayout = () => {
   const [agentTranscript, setAgentTranscript] = useState<AgentRunTranscript | null>(null);
   const [proposedActions, setProposedActions] = useState<ProposedAction[]>([]);
   const [taskReassignmentProposals, setTaskReassignmentProposals] = useState<TaskAssignmentProposal[]>([]);
-  const [taskReassignmentBusy, setTaskReassignmentBusy] = useState(false);
+  const [taskReassignmentSkipped, setTaskReassignmentSkipped] = useState<string[]>([]);
 
   useEffect(() => {
     setData(initial);
@@ -341,62 +328,82 @@ export const OrganizationLayout = () => {
     setAiApiKey('');
     setSummary(null);
     setTaskReassignmentProposals([]);
+    setTaskReassignmentSkipped([]);
   }, [initial]);
 
-  const withError = async (work: () => Promise<void>, setBusyState: (busy: boolean) => void): Promise<void> => {
-    setBusyState(true); setError('');
-    try { await work(); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : '操作に失敗しました。'); }
-    finally { setBusyState(false); }
-  };
-  const run = () => void withError(async () => { const value = await api.runAutomation(data.organization.organizationId); const automation = await api.currentAutomation(data.organization.organizationId); setSummary(value); setData((current) => ({ ...current, automation })); }, setBusy);
-  const setEnabled = (enabled: boolean) => void withError(async () => { await api.setEnabled(data.organization.organizationId, enabled); const automation = await api.currentAutomation(data.organization.organizationId); setData((current) => ({ ...current, automation })); }, setBusy);
-  const saveLineConnection = () => void withError(async () => {
-    const line = await api.saveOrganizationLineConnection(data.organization.organizationId, {
+  const organizationId = data.organization.organizationId;
+  const runOperation = operations.run;
+  const runAutomation = () => void runOperation(pendingKey.automationRun, async () => {
+    const value = await api.runAutomation(organizationId);
+    const automation = await api.currentAutomation(organizationId);
+    setSummary(value);
+    setData((current) => ({ ...current, automation }));
+  });
+  const setEnabled = (enabled: boolean) => void runOperation(pendingKey.automationEnabled, async () => {
+    await api.setEnabled(organizationId, enabled);
+    const automation = await api.currentAutomation(organizationId);
+    setData((current) => ({ ...current, automation }));
+  });
+  const saveLineConnection = () => void runOperation(pendingKey.lineConnection, async () => {
+    const line = await api.saveOrganizationLineConnection(organizationId, {
       channelAccessToken: lineChannelAccessToken || undefined,
       channelSecret: lineChannelSecret || undefined,
     });
     setData((current) => ({ ...current, connections: { ...current.connections, line } }));
     setLineChannelAccessToken('');
     setLineChannelSecret('');
-  }, setLineSettingsBusy);
-  const saveAiConnection = () => void withError(async () => {
-    const ai = await api.saveOrganizationAiConnection(data.organization.organizationId, {
+  });
+  const saveAiConnection = () => void runOperation(pendingKey.aiConnection, async () => {
+    const ai = await api.saveOrganizationAiConnection(organizationId, {
       apiKey: aiApiKey || undefined,
       model: aiModel,
       baseUrl: aiBaseUrl,
     });
     setData((current) => ({ ...current, connections: { ...current.connections, ai } }));
     setAiApiKey('');
-  }, setAiSettingsBusy);
-  const saveAttachmentFolderPath = () => void withError(async () => {
-    const attachmentFolder = await api.saveOrganizationAttachmentFolder(data.organization.organizationId, attachmentFolderPath);
+  });
+  const saveAttachmentFolderPath = () => void runOperation(pendingKey.attachmentFolder, async () => {
+    const attachmentFolder = await api.saveOrganizationAttachmentFolder(organizationId, attachmentFolderPath);
     setData((current) => ({ ...current, attachmentFolder }));
     setAttachmentFolderPath(attachmentFolder.path);
-  }, setAttachmentFolderBusy);
-  const testAi = () => void withError(async () => { const result = await api.testAiConnection(data.organization.organizationId, aiTestPrompt); setAiTestResult(result.text); }, setAiTestBusy);
-  const searchMailbox = () => void withError(async () => { setMailTestAiRequest(null); setMailTestPreview(null); setMailTestCreatedEventIds([]); setMailTestMatches((await api.searchMailboxForTest(data.organization.organizationId, mailTestSubject.trim())).messages); }, setMailTestBusy);
-  const prepareMailbox = (messageId: string) => void withError(async () => { setMailTestAiRequest(await api.prepareMailboxTestAiRequest(data.organization.organizationId, messageId)); setMailTestPreview(null); setMailTestCreatedEventIds([]); }, setMailTestBusy);
-  const previewMailbox = (messageId: string) => void withError(async () => {
-    if (mailTestAiRequest?.id !== messageId) throw new Error('先に AI への送信内容を確認してください。');
-    setMailTestPreview(await api.previewMailboxTestEvent(data.organization.organizationId, messageId));
+  });
+  const testAi = () => void runOperation(pendingKey.aiTest, async () => {
+    setAiTestResult('');
+    setAiTestResult((await api.testAiConnection(organizationId, aiTestPrompt)).text);
+  });
+  const searchMailbox = () => void runOperation(pendingKey.mailSearch, async () => {
+    setMailTestAiRequest(null);
+    setMailTestPreview(null);
     setMailTestCreatedEventIds([]);
-  }, setMailTestBusy);
-  const createCalendarEvent = () => void withError(async () => { if (mailTestPreview) setMailTestCreatedEventIds((await api.createMailboxTestCalendarEvent(data.organization.organizationId, mailTestPreview.confirmationToken)).eventIds); }, setMailTestBusy);
-  const prepareRefresh = () => void withError(async () => {
+    setMailTestMatches((await api.searchMailboxForTest(organizationId, mailTestSubject.trim())).messages);
+  });
+  const prepareMailbox = (messageId: string) => void runOperation(pendingKey.mailPrepare(messageId), async () => {
+    setMailTestAiRequest(await api.prepareMailboxTestAiRequest(organizationId, messageId));
+    setMailTestPreview(null);
+    setMailTestCreatedEventIds([]);
+  });
+  const previewMailbox = (messageId: string) => void runOperation(pendingKey.mailPreview, async () => {
+    if (mailTestAiRequest?.id !== messageId) throw new Error('先に AI への送信内容を確認してください。');
+    setMailTestPreview(await api.previewMailboxTestEvent(organizationId, messageId));
+    setMailTestCreatedEventIds([]);
+  });
+  const createCalendarEvent = () => void runOperation(pendingKey.mailCreateEvents, async () => {
+    if (mailTestPreview) setMailTestCreatedEventIds((await api.createMailboxTestCalendarEvent(organizationId, mailTestPreview.confirmationToken)).eventIds);
+  });
+  const prepareRefresh = () => void runOperation(pendingKey.refreshPrepare, async () => {
     if (!mailTestPreview) throw new Error('先に AI 抽出を実行してください。');
     setMailTestRefreshPlan(null);
     setMailTestRefreshOutcome(null);
-    setMailTestRefreshRequest(await api.prepareMailboxTestRefreshRequest(data.organization.organizationId, mailTestPreview.id, mailTestPreview.confirmationToken));
-  }, setMailTestBusy);
-  const planRefresh = () => void withError(async () => {
+    setMailTestRefreshRequest(await api.prepareMailboxTestRefreshRequest(organizationId, mailTestPreview.id, mailTestPreview.confirmationToken));
+  });
+  const planRefresh = () => void runOperation(pendingKey.refreshPlan, async () => {
     if (!mailTestPreview) throw new Error('先に AI 抽出を実行してください。');
     setMailTestRefreshOutcome(null);
-    setMailTestRefreshPlan(await api.planMailboxTestRefresh(data.organization.organizationId, mailTestPreview.id, mailTestPreview.confirmationToken));
-  }, setMailTestBusy);
-  const applyRefresh = (candidateIndexes: number[]) => void withError(async () => {
+    setMailTestRefreshPlan(await api.planMailboxTestRefresh(organizationId, mailTestPreview.id, mailTestPreview.confirmationToken));
+  });
+  const applyRefresh = (candidateIndexes: number[]) => void runOperation(pendingKey.refreshApply, async () => {
     if (!mailTestRefreshPlan) throw new Error('先に既存予定と照合してください。');
-    const outcome = await api.applyMailboxTestRefresh(data.organization.organizationId, mailTestRefreshPlan.confirmationToken, candidateIndexes);
+    const outcome = await api.applyMailboxTestRefresh(organizationId, mailTestRefreshPlan.confirmationToken, candidateIndexes);
     setMailTestRefreshOutcome(outcome);
     if (outcome.confirmationToken) {
       setMailTestRefreshPlan({
@@ -412,149 +419,160 @@ export const OrganizationLayout = () => {
         })),
       });
     }
-  }, setMailTestBusy);
-  const createRule = async (input: OrganizationRuleInput): Promise<void> => withError(async () => { const rule = await api.createOrganizationRule(data.organization.organizationId, input); setData((current) => ({ ...current, rules: [...current.rules, rule] })); }, setRuleBusy);
-  const updateRule = async (ruleId: string, input: Pick<OrganizationRuleInput, 'permittedRecipientListIds' | 'permittedLineListIds'>): Promise<void> => withError(async () => {
-    const updated = await api.updateOrganizationRule(data.organization.organizationId, ruleId, input);
+  });
+  const createRule = async (input: OrganizationRuleInput): Promise<void> => runOperation(pendingKey.ruleCreate, async () => {
+    const rule = await api.createOrganizationRule(organizationId, input);
+    setData((current) => ({ ...current, rules: [...current.rules, rule] }));
+  });
+  const updateRule = async (ruleId: string, input: Pick<OrganizationRuleInput, 'permittedRecipientListIds' | 'permittedLineListIds'>): Promise<void> => runOperation(pendingKey.ruleUpdate(ruleId), async () => {
+    const updated = await api.updateOrganizationRule(organizationId, ruleId, input);
     setData((current) => ({ ...current, rules: current.rules.map((rule) => rule.id === ruleId ? { ...rule, ...updated } : rule) }));
-  }, setRuleBusy);
-  const createPrompt = async (input: { name: string; instructions: string }): Promise<void> => withError(async () => {
-    const prompt = await api.createOrganizationPrompt(data.organization.organizationId, input);
+  });
+  const createPrompt = async (input: { name: string; instructions: string }): Promise<void> => runOperation(pendingKey.promptCreate, async () => {
+    const prompt = await api.createOrganizationPrompt(organizationId, input);
     setData((current) => ({ ...current, prompts: [...current.prompts, prompt] }));
-  }, setRuleBusy);
-  const updatePrompt = async (promptId: string, input: { name?: string; instructions?: string }): Promise<void> => withError(async () => {
-    const updated = await api.updateOrganizationPrompt(data.organization.organizationId, promptId, input);
+  });
+  const updatePrompt = async (promptId: string, input: { name?: string; instructions?: string }): Promise<void> => runOperation(pendingKey.promptUpdate(promptId), async () => {
+    const updated = await api.updateOrganizationPrompt(organizationId, promptId, input);
     setData((current) => ({ ...current, prompts: current.prompts.map((prompt) => prompt.id === promptId ? { ...prompt, ...updated } : prompt) }));
-  }, setRuleBusy);
-  const deletePrompt = async (promptId: string): Promise<void> => withError(async () => {
-    await api.removeOrganizationPrompt(data.organization.organizationId, promptId);
+  });
+  const deletePrompt = async (promptId: string): Promise<void> => runOperation(pendingKey.promptDelete(promptId), async () => {
+    await api.removeOrganizationPrompt(organizationId, promptId);
     setData((current) => ({ ...current, prompts: current.prompts.filter((prompt) => prompt.id !== promptId) }));
-  }, setRuleBusy);
-  const createAgentRule = async (input: { name: string; promptId: string; state: 'active' | 'suspended'; executionMode?: 'read_only' | 'approval' | 'unattended'; selectionPolicy: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[]; priority?: number }): Promise<void> => withError(async () => {
-    const rule = await api.createOrganizationAgentRule(data.organization.organizationId, input);
+  });
+  const createAgentRule = async (input: { name: string; promptId: string; state: 'active' | 'suspended'; executionMode?: 'read_only' | 'approval' | 'unattended'; selectionPolicy: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[]; priority?: number }): Promise<void> => runOperation(pendingKey.agentRuleCreate, async () => {
+    const rule = await api.createOrganizationAgentRule(organizationId, input);
     setData((current) => ({ ...current, agentRules: [...current.agentRules, rule] }));
-  }, setRuleBusy);
-  const updateAgentRule = async (agentRuleId: string, input: { state?: 'active' | 'suspended' | 'archived'; executionMode?: 'read_only' | 'approval' | 'unattended'; permittedRecipientListIds?: string[]; permittedLineListIds?: string[] }): Promise<void> => withError(async () => {
-    const updated = await api.updateOrganizationAgentRule(data.organization.organizationId, agentRuleId, input);
+  });
+  const updateAgentRule = async (agentRuleId: string, input: { state?: 'active' | 'suspended' | 'archived'; executionMode?: 'read_only' | 'approval' | 'unattended'; permittedRecipientListIds?: string[]; permittedLineListIds?: string[] }): Promise<void> => runOperation(pendingKey.agentRuleUpdate(agentRuleId), async () => {
+    const updated = await api.updateOrganizationAgentRule(organizationId, agentRuleId, input);
     setData((current) => ({ ...current, agentRules: current.agentRules.map((rule) => rule.id === agentRuleId ? updated : rule) }));
-  }, setRuleBusy);
-  const loadAgentTranscript = (runId: string) => void withError(async () => {
-    const [transcript, actions] = await Promise.all([api.agentRunTranscript(data.organization.organizationId, runId), api.agentProposedActions(data.organization.organizationId, runId)]);
+  });
+  const loadAgentTranscript = (runId: string) => void runOperation(pendingKey.agentRunTranscript(runId), async () => {
+    const [transcript, actions] = await Promise.all([api.agentRunTranscript(organizationId, runId), api.agentProposedActions(organizationId, runId)]);
     setAgentTranscript(transcript);
     setProposedActions(actions);
-  }, setRuleBusy);
-  const decideProposedAction = (actionId: string, decision: 'approve' | 'reject') => void withError(async () => {
-    const decided = await api.decideProposedAction(data.organization.organizationId, actionId, decision);
+  });
+  const decideProposedAction = (actionId: string, decision: 'approve' | 'reject') => void runOperation(pendingKey.actionDecision(actionId, decision), async () => {
+    const decided = await api.decideProposedAction(organizationId, actionId, decision);
     setProposedActions((current) => current.map((action) => action.id === actionId ? { ...action, ...decided } : action));
-  }, setRuleBusy);
-  const decideProposedActionBatch = (runId: string, decision: 'approve' | 'reject') => void withError(async () => {
-    const decided = await api.decideProposedActionBatch(data.organization.organizationId, runId, decision);
+  });
+  const decideProposedActionBatch = (runId: string, decision: 'approve' | 'reject') => void runOperation(pendingKey.actionBatch(runId, decision), async () => {
+    const decided = await api.decideProposedActionBatch(organizationId, runId, decision);
     const byId = new Map(decided.map((action) => [action.id, action]));
     setProposedActions((current) => current.map((action) => byId.get(action.id) ?? action));
-  }, setRuleBusy);
-  const updateTask = (taskId: string, input: { completed?: boolean; remarks?: string }) => void withError(async () => {
-    const task = await api.updateOrganizationTask(data.organization.organizationId, taskId, input);
+  });
+  const updateTask = (taskId: string, input: { completed?: boolean; remarks?: string }) => void runOperation(pendingKey.taskUpdate(taskId), async () => {
+    const task = await api.updateOrganizationTask(organizationId, taskId, input);
     setData((current) => ({ ...current, tasks: current.tasks.map((currentTask) => currentTask.id === task.id ? task : currentTask) }));
-  }, setBusy);
-  const createTaskRole = async (input: { displayName: string; description: string }): Promise<void> => withError(async () => {
-    const role = await api.createOrganizationTaskRole(data.organization.organizationId, input);
+  });
+  const createTaskRole = async (input: { displayName: string; description: string }): Promise<void> => runOperation(pendingKey.taskRoleCreate, async () => {
+    const role = await api.createOrganizationTaskRole(organizationId, input);
     setData((current) => roleChangeOpensReassignment({ ...current, taskRoles: { ...current.taskRoles, roles: [...current.taskRoles.roles, role] } }));
-  }, setBusy);
-  const updateTaskRole = async (roleId: string, input: { displayName?: string; description?: string }): Promise<void> => withError(async () => {
-    const role = await api.updateOrganizationTaskRole(data.organization.organizationId, roleId, input);
+  });
+  const updateTaskRole = async (roleId: string, input: { displayName?: string; description?: string }): Promise<void> => runOperation(pendingKey.taskRoleUpdate(roleId), async () => {
+    const role = await api.updateOrganizationTaskRole(organizationId, roleId, input);
     setData((current) => roleChangeOpensReassignment({ ...current, taskRoles: { ...current.taskRoles, roles: current.taskRoles.roles.map((item) => item.id === role.id ? role : item) } }));
-  }, setBusy);
-  const deleteTaskRole = async (roleId: string): Promise<void> => withError(async () => {
-    await api.removeOrganizationTaskRole(data.organization.organizationId, roleId);
+  });
+  const deleteTaskRole = async (roleId: string): Promise<void> => runOperation(pendingKey.taskRoleDelete(roleId), async () => {
+    await api.removeOrganizationTaskRole(organizationId, roleId);
     setData((current) => roleChangeOpensReassignment({ ...current, taskRoles: { ...current.taskRoles, roles: current.taskRoles.roles.filter((role) => role.id !== roleId), assignments: current.taskRoles.assignments.filter((assignment) => assignment.roleId !== roleId) } }));
-  }, setBusy);
-  const assignTaskRole = (roleId: string, memberId: string) => void withError(async () => {
-    const assignment = await api.assignOrganizationTaskRole(data.organization.organizationId, roleId, memberId);
+  });
+  const assignTaskRole = (roleId: string, memberId: string) => void runOperation(pendingKey.taskRoleAssign(roleId), async () => {
+    const assignment = await api.assignOrganizationTaskRole(organizationId, roleId, memberId);
     setData((current) => ({ ...current, taskRoles: { ...current.taskRoles, assignments: [...current.taskRoles.assignments.filter((currentAssignment) => currentAssignment.roleId !== roleId), assignment] } }));
-  }, setBusy);
-  const suggestTaskReassignments = () => void withError(async () => {
-    const suggested = await api.suggestOrganizationTaskReassignments(data.organization.organizationId);
+  });
+  const suggestTaskReassignments = () => void runOperation(pendingKey.reassignmentSuggest, async () => {
+    setTaskReassignmentSkipped([]);
+    const suggested = await api.suggestOrganizationTaskReassignments(organizationId);
     setTaskReassignmentProposals(suggested.proposals);
     setData((current) => ({ ...current, taskReassignment: suggested.review }));
-  }, setTaskReassignmentBusy);
-  const applyTaskReassignments = (assignments: Array<{ taskId: string; roleId: string }>) => void withError(async () => {
-    const applied = await api.applyOrganizationTaskReassignments(data.organization.organizationId, assignments);
+  });
+  const applyTaskReassignments = (assignments: Array<{ taskId: string; roleId: string }>) => void runOperation(pendingKey.reassignmentApply, async () => {
+    const applied = await api.applyOrganizationTaskReassignments(organizationId, assignments);
     const reassigned = new Map(applied.tasks.map((task) => [task.id, task]));
     setTaskReassignmentProposals([]);
+    setTaskReassignmentSkipped(applied.skipped);
     setData((current) => ({ ...current, tasks: current.tasks.map((task) => reassigned.get(task.id) ?? task), taskReassignment: applied.review }));
-  }, setTaskReassignmentBusy);
-  const discardTaskReassignments = (): void => setTaskReassignmentProposals([]);
+  });
+  const discardTaskReassignments = (): void => {
+    setTaskReassignmentProposals([]);
+    setTaskReassignmentSkipped([]);
+  };
   const reloadMembers = async (): Promise<void> => {
     const [members, lineDestinations] = await Promise.all([
-      api.organizationMembers(data.organization.organizationId),
-      api.organizationLineDestinations(data.organization.organizationId),
+      api.organizationMembers(organizationId),
+      api.organizationLineDestinations(organizationId),
     ]);
     setData((current) => ({ ...current, members, lineDestinations }));
   };
   const createMember = async (input: OrganizationMemberInput): Promise<OrganizationMember | null> => {
     let created: OrganizationMember | null = null;
-    await withError(async () => {
-      created = await api.createOrganizationMember(data.organization.organizationId, input);
+    await runOperation(pendingKey.memberCreate, async () => {
+      created = await api.createOrganizationMember(organizationId, input);
       await reloadMembers();
-    }, setMemberBusy);
+    });
     return created;
   };
   const updateMember = async (
     memberId: string,
     input: Partial<Pick<OrganizationMember, 'name' | 'email' | 'tags' | 'state'>>,
-  ): Promise<void> => withError(async () => {
-    await api.updateOrganizationMember(data.organization.organizationId, memberId, input);
+  ): Promise<void> => runOperation(pendingKey.memberUpdate(memberId), async () => {
+    await api.updateOrganizationMember(organizationId, memberId, input);
     await reloadMembers();
-  }, setMemberBusy);
+  });
   const setLineDestination = async (memberId: string, input: MemberLineDestinationInput): Promise<void> =>
-    withError(async () => {
-      await api.setMemberLineDestination(data.organization.organizationId, memberId, input);
+    runOperation(pendingKey.lineDestinationSet(memberId), async () => {
+      await api.setMemberLineDestination(organizationId, memberId, input);
       await reloadMembers();
-    }, setMemberBusy);
+    });
   const unlinkLineDestination = async (memberId: string, lineDestinationId: string): Promise<void> =>
-    withError(async () => {
-      await api.removeMemberLineDestination(data.organization.organizationId, memberId, lineDestinationId);
+    runOperation(pendingKey.lineDestinationUnlink(lineDestinationId), async () => {
+      await api.removeMemberLineDestination(organizationId, memberId, lineDestinationId);
       await reloadMembers();
-    }, setMemberBusy);
+    });
   const registerLineDestination = async (input: MemberLineDestinationInput): Promise<void> =>
-    withError(async () => {
-      await api.registerLineDestination(data.organization.organizationId, input);
+    runOperation(pendingKey.lineDestinationRegister, async () => {
+      await api.registerLineDestination(organizationId, input);
       await reloadMembers();
-    }, setMemberBusy);
+    });
   const removeLineDestination = async (lineDestinationId: string): Promise<void> =>
-    withError(async () => {
-      await api.removeLineDestination(data.organization.organizationId, lineDestinationId);
+    runOperation(pendingKey.lineDestinationRemove(lineDestinationId), async () => {
+      await api.removeLineDestination(organizationId, lineDestinationId);
       await reloadMembers();
-    }, setMemberBusy);
-  const refreshMembers = () => void withError(reloadMembers, setMemberBusy);
-  const applyPreset = (presetId: string, conflictPolicy?: 'duplicate') => void withError(async () => {
-    await api.applyOrganizationPreset(data.organization.organizationId, presetId, conflictPolicy);
+    });
+  const refreshMembers = () => void runOperation(pendingKey.memberRefresh, reloadMembers);
+  const applyPreset = (presetId: string, conflictPolicy?: 'duplicate') => void runOperation(pendingKey.presetApply(presetId), async () => {
+    await api.applyOrganizationPreset(organizationId, presetId, conflictPolicy);
     const [rules, prompts, agentRules, lists, taskRoles] = await Promise.all([
-      api.organizationRules(data.organization.organizationId),
-      api.organizationPrompts(data.organization.organizationId),
-      api.organizationAgentRules(data.organization.organizationId),
-      api.organizationLists(data.organization.organizationId),
-      api.organizationTaskRoles(data.organization.organizationId),
+      api.organizationRules(organizationId),
+      api.organizationPrompts(organizationId),
+      api.organizationAgentRules(organizationId),
+      api.organizationLists(organizationId),
+      api.organizationTaskRoles(organizationId),
     ]);
     setData((current) => ({ ...current, rules, prompts, agentRules, lists, taskRoles }));
-  }, setRuleBusy);
-  const logout = () => void withError(async () => { await api.logout(); navigate('/', { replace: true }); }, setBusy);
-  const reauthenticate = () => void withError(async () => { window.location.assign((await api.reauthorizeAutomationInbox(data.organization.organizationId)).authorizationUrl); }, setBusy);
-  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateRule, agentTranscript, proposedActions, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, decideProposedAction, decideProposedActionBatch, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, taskReassignmentProposals, taskReassignmentBusy, suggestTaskReassignments, applyTaskReassignments, discardTaskReassignments, createMember, updateMember, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshMembers, applyPreset, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, aiTestBusy, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, mailTestRefreshRequest, mailTestRefreshPlan, mailTestRefreshOutcome, prepareRefresh, planRefresh, applyRefresh, lineSettingsBusy, aiSettingsBusy, ruleBusy, memberBusy, attachmentFolderPath, setAttachmentFolderPath, attachmentFolderBusy, saveAttachmentFolderPath, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
+  });
+  const logout = () => void runOperation(pendingKey.logout, async () => { await api.logout(); navigate('/', { replace: true }); });
+  const reauthenticate = () => void runOperation(pendingKey.reauthenticate, async () => { window.location.assign((await api.reauthorizeAutomationInbox(organizationId)).authorizationUrl); });
+  const value: OrganizationContextValue = { ...data, ...operations, summary, setEnabled, runAutomation, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateRule, agentTranscript, proposedActions, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, decideProposedAction, decideProposedActionBatch, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, taskReassignmentProposals, taskReassignmentSkipped, suggestTaskReassignments, applyTaskReassignments, discardTaskReassignments, createMember, updateMember, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshMembers, applyPreset, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestCreatedEventIds, mailTestRefreshRequest, mailTestRefreshPlan, mailTestRefreshOutcome, prepareRefresh, planRefresh, applyRefresh, attachmentFolderPath, setAttachmentFolderPath, saveAttachmentFolderPath, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
   return <OrganizationContext.Provider value={value}><Outlet /></OrganizationContext.Provider>;
 };
 
 type OrganizationPage = 'automation' | 'connections' | 'rules' | 'members' | 'mail-test' | 'tasks';
 export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
   const value = useOrganization();
+  const navigation = useNavigation();
   const auth: AuthMe = { email: value.state.identity.email, displayName: value.state.identity.displayName, organizations: value.state.organizations };
   return <Dashboard
     page={page}
     automation={value.automation}
     summary={value.summary}
-    busy={value.busy}
+    isPending={value.pending}
+    isSettled={value.settled}
+    navigating={navigation.state !== 'idle'}
     error={value.error}
-    onRun={value.run}
+    onRun={value.runAutomation}
     onSetEnabled={value.setEnabled}
     onLogout={value.logout}
     onReauthenticate={value.reauthenticate}
@@ -572,25 +590,20 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     onAiApiKeyChange={value.setAiApiKey}
     onAiModelChange={value.setAiModel}
     onAiBaseUrlChange={value.setAiBaseUrl}
-    lineSettingsBusy={value.lineSettingsBusy}
-    aiSettingsBusy={value.aiSettingsBusy}
     onSaveLineConnection={value.saveLineConnection}
     onSaveAiConnection={value.saveAiConnection}
     attachmentFolderPath={value.attachmentFolderPath}
     savedAttachmentFolderPath={value.attachmentFolder.path}
     onAttachmentFolderPathChange={value.setAttachmentFolderPath}
-    attachmentFolderBusy={value.attachmentFolderBusy}
     onSaveAttachmentFolderPath={value.saveAttachmentFolderPath}
     aiTestPrompt={value.aiTestPrompt}
     aiTestResult={value.aiTestResult}
-    aiTestBusy={value.aiTestBusy}
     onAiTestPromptChange={value.setAiTestPrompt}
     onTestAi={value.testAi}
     mailTestSubject={value.mailTestSubject}
     mailTestMatches={value.mailTestMatches}
     mailTestAiRequest={value.mailTestAiRequest}
     mailTestPreview={value.mailTestPreview}
-    mailTestBusy={value.mailTestBusy}
     mailTestCreatedEventIds={value.mailTestCreatedEventIds}
     mailTestRefreshRequest={value.mailTestRefreshRequest}
     mailTestRefreshPlan={value.mailTestRefreshPlan}
@@ -605,7 +618,6 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     onCreateCalendarEvent={value.createCalendarEvent}
     organizationRules={value.rules}
     organizationLists={value.lists}
-    ruleBusy={value.ruleBusy}
     onCreateRule={value.createRule}
     onUpdateRule={value.updateRule}
     prompts={value.prompts}
@@ -632,13 +644,12 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     onAssignTaskRole={value.assignTaskRole}
     taskReassignment={value.taskReassignment}
     taskReassignmentProposals={value.taskReassignmentProposals}
-    taskReassignmentBusy={value.taskReassignmentBusy}
+    taskReassignmentSkipped={value.taskReassignmentSkipped}
     onSuggestTaskReassignments={value.suggestTaskReassignments}
     onApplyTaskReassignments={value.applyTaskReassignments}
     onDiscardTaskReassignments={value.discardTaskReassignments}
     organizationMembers={value.members}
     lineDestinations={value.lineDestinations}
-    memberBusy={value.memberBusy}
     onCreateMember={value.createMember}
     onUpdateMember={value.updateMember}
     onSetLineDestination={value.setLineDestination}
@@ -750,74 +761,112 @@ const attendanceLabel: Record<MemberAttendanceStatus, string> = {
 };
 
 /** The one signed-in page a Member has: attendance, comments, and their Tasks. */
-export const MemberPortalRoute = () => {
-  const [portal, setPortal] = useState<MemberPortal | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const reload = async (): Promise<void> => { setPortal(await api.memberPortal()); };
-  useEffect(() => {
-    void reload().catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'メンバーページを開けませんでした。'));
-  }, []);
-  const withError = async (work: () => Promise<void>): Promise<void> => {
-    setBusy(true); setError('');
-    try { await work(); await reload(); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : '操作に失敗しました。'); }
-    finally { setBusy(false); }
-  };
-  if (!portal) return <SetupCard>{error ? <p className="setup-error">{error}</p> : <div className="loading"><RefreshCw className="spin" size={18} />読み込み中…</div>}</SetupCard>;
+export interface MemberPortalViewProps {
+  portal: MemberPortal;
+  pending: (key: string) => boolean;
+  settled: (key: string) => boolean;
+  error: string;
+  onAttendance: (eventId: string, status: MemberAttendanceStatus, comment: string) => void;
+  onComment: (eventId: string, status: MemberAttendanceStatus, comment: string) => void;
+  onTaskCompleted: (taskId: string, completed: boolean) => void;
+  onTaskRemarks: (taskId: string, remarks: string) => void;
+  onLogout: () => void;
+}
+
+/** The Member Portal itself: every control reports the one answer it is sending. */
+export const MemberPortalView = ({ portal, pending, settled, error, onAttendance, onComment, onTaskCompleted, onTaskRemarks, onLogout }: MemberPortalViewProps) => {
+  const leaving = pending(pendingKey.portalLogout);
   return <main className="portal-shell">
     <header className="portal-header">
       <div><p className="eyebrow">{portal.organization.name}</p><h1>{portal.member.name} さんのページ</h1></div>
-      <button className="quiet-button" onClick={() => void api.logout().then(() => window.location.assign('/'))}>ログアウト</button>
+      <button className="quiet-button" disabled={leaving} onClick={onLogout}>{leaving ? 'ログアウト中…' : 'ログアウト'}</button>
     </header>
     {error && <p className="setup-error">{error}</p>}
     <section className="portal-section">
       <h2>出欠登録</h2>
       {portal.events.length === 0 && <p className="portal-empty">登録が必要な予定はありません。</p>}
-      {portal.events.map((event) => <article key={event.eventId} className="portal-event">
-        <div><h3>{event.title}</h3><p>{event.startsAt}{event.location && ` ・ ${event.location}`}</p></div>
-        {event.open
-          ? <div className="portal-answer">
-            {(['attending', 'not_attending'] as const).map((status) => <button
-              key={status}
-              type="button"
-              className={event.status === status ? 'primary' : 'secondary'}
-              disabled={busy}
-              onClick={() => void withError(() => api.registerMemberAttendance(event.eventId, { status, comment: event.comment }).then(() => undefined))}
-            >{attendanceLabel[status]}</button>)}
-            <label>コメント<input
-              defaultValue={event.comment}
-              maxLength={1_000}
-              onBlur={(change) => { if (change.target.value !== event.comment) void withError(() => api.registerMemberAttendance(event.eventId, { status: event.status, comment: change.target.value }).then(() => undefined)); }}
-            /></label>
-          </div>
-          : <p className="portal-locked">回答期限を過ぎました（現在: {attendanceLabel[event.status]}）</p>}
-      </article>)}
+      {portal.events.map((event) => {
+        const answering = (status: MemberAttendanceStatus): boolean => pending(pendingKey.portalAttendance(event.eventId, status));
+        const commenting = pending(pendingKey.portalComment(event.eventId));
+        return <article key={event.eventId} className="portal-event" aria-busy={commenting || answering('attending') || answering('not_attending')}>
+          <div><h3>{event.title}</h3><p>{event.startsAt}{event.location && ` ・ ${event.location}`}</p></div>
+          {event.open
+            ? <div className="portal-answer">
+              {(['attending', 'not_attending'] as const).map((status) => <button
+                key={status}
+                type="button"
+                className={event.status === status ? 'primary' : 'secondary'}
+                disabled={answering(status)}
+                onClick={() => onAttendance(event.eventId, status, event.comment)}
+              >{answering(status) ? <><RefreshCw className="spin" size={14} />送信中…</> : attendanceLabel[status]}</button>)}
+              <label>コメント<input
+                defaultValue={event.comment}
+                maxLength={1_000}
+                disabled={commenting}
+                onBlur={(change) => { if (change.target.value !== event.comment) onComment(event.eventId, event.status, change.target.value); }}
+              />{commenting
+                ? <small className="portal-field-state"><RefreshCw className="spin" size={12} />保存中…</small>
+                : settled(pendingKey.portalComment(event.eventId)) ? <small className="portal-field-state saved">保存しました</small> : null}</label>
+            </div>
+            : <p className="portal-locked">回答期限を過ぎました（現在: {attendanceLabel[event.status]}）</p>}
+        </article>;
+      })}
     </section>
     <section className="portal-section">
       <h2>タスク</h2>
       {portal.tasks.length === 0 && <p className="portal-empty">タスクはありません。</p>}
-      {portal.tasks.map((task) => <article key={task.taskId} className={`portal-task ${task.mine ? 'mine' : ''}`}>
-        <div>
-          <h3>{task.title}</h3>
-          <p>{task.assigneeRoleName} ・ {task.assigneeName} ・ 期限 {task.deadline}</p>
-          <p className="portal-task-source">{task.sourceMessageSubject}</p>
-        </div>
-        {task.mine
-          ? <div className="portal-answer">
-            <label><input
-              type="checkbox"
-              checked={task.completed}
-              disabled={busy}
-              onChange={(change) => void withError(() => api.updateMemberTask(task.taskId, { completed: change.target.checked }).then(() => undefined))}
-            />完了</label>
-            <label>備考<input
-              defaultValue={task.remarks}
-              onBlur={(change) => { if (change.target.value !== task.remarks) void withError(() => api.updateMemberTask(task.taskId, { remarks: change.target.value }).then(() => undefined)); }}
-            /></label>
+      {portal.tasks.map((task) => {
+        const completing = pending(pendingKey.portalTask(task.taskId));
+        const remarking = pending(pendingKey.portalRemarks(task.taskId));
+        return <article key={task.taskId} className={`portal-task ${task.mine ? 'mine' : ''}`} aria-busy={completing || remarking}>
+          <div>
+            <h3>{task.title}</h3>
+            <p>{task.assigneeRoleName} ・ {task.assigneeName} ・ 期限 {task.deadline}</p>
+            <p className="portal-task-source">{task.sourceMessageSubject}</p>
           </div>
-          : <p className="portal-locked">{task.completed ? '完了' : '未完了'}</p>}
-      </article>)}
+          {task.mine
+            ? <div className="portal-answer">
+              <label><input
+                type="checkbox"
+                checked={task.completed}
+                disabled={completing}
+                onChange={(change) => onTaskCompleted(task.taskId, change.target.checked)}
+              />完了{completing && <RefreshCw className="spin" size={12} />}</label>
+              <label>備考<input
+                defaultValue={task.remarks}
+                disabled={remarking}
+                onBlur={(change) => { if (change.target.value !== task.remarks) onTaskRemarks(task.taskId, change.target.value); }}
+              />{remarking
+                ? <small className="portal-field-state"><RefreshCw className="spin" size={12} />保存中…</small>
+                : settled(pendingKey.portalRemarks(task.taskId)) ? <small className="portal-field-state saved">保存しました</small> : null}</label>
+            </div>
+            : <p className="portal-locked">{task.completed ? '完了' : '未完了'}</p>}
+        </article>;
+      })}
     </section>
   </main>;
+};
+
+/** The one signed-in page a Member has: attendance, comments, and their Tasks. */
+export const MemberPortalRoute = () => {
+  const [portal, setPortal] = useState<MemberPortal | null>(null);
+  const [loadError, setLoadError] = useState('');
+  const { pending, settled, error, run } = usePendingOperations();
+  const reload = async (): Promise<void> => { setPortal(await api.memberPortal()); };
+  useEffect(() => {
+    void reload().catch((cause: unknown) => setLoadError(cause instanceof Error ? cause.message : 'メンバーページを開けませんでした。'));
+  }, []);
+  const answer = (key: string, work: () => Promise<unknown>): void => void run(key, async () => { await work(); await reload(); });
+  if (!portal) return <SetupCard>{loadError ? <p className="setup-error">{loadError}</p> : <div className="loading"><RefreshCw className="spin" size={18} />読み込み中…</div>}</SetupCard>;
+  return <MemberPortalView
+    portal={portal}
+    pending={pending}
+    settled={settled}
+    error={loadError || error}
+    onAttendance={(eventId, status, comment) => answer(pendingKey.portalAttendance(eventId, status), () => api.registerMemberAttendance(eventId, { status, comment }))}
+    onComment={(eventId, status, comment) => answer(pendingKey.portalComment(eventId), () => api.registerMemberAttendance(eventId, { status, comment }))}
+    onTaskCompleted={(taskId, completed) => answer(pendingKey.portalTask(taskId), () => api.updateMemberTask(taskId, { completed }))}
+    onTaskRemarks={(taskId, remarks) => answer(pendingKey.portalRemarks(taskId), () => api.updateMemberTask(taskId, { remarks }))}
+    onLogout={() => void run(pendingKey.portalLogout, async () => { await api.logout(); window.location.assign('/'); })}
+  />;
 };

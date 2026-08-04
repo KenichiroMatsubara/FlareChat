@@ -1,17 +1,21 @@
-import { CheckSquare, CircleAlert, LogOut, Mail, Menu, Play, Settings, ShieldCheck, SlidersHorizontal, UsersRound, X } from 'lucide-react';
+import { CheckSquare, CircleAlert, LogOut, Mail, Menu, Play, RefreshCw, Settings, ShieldCheck, SlidersHorizontal, UsersRound, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
 import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, OperationalTaskRole, OrganizationAgentRule, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationMember, OrganizationMemberInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, ProposedAction, MemberLineDestinationInput, TaskAssignmentProposal, TaskReassignmentReview, TaskRoleAssignment } from './api';
 import { AutomationPage, ConnectionsPage, MailboxTestPage, MembersPage, RulesPage, TasksPage } from './dashboard-pages';
+import { pendingKey } from './pending';
 
 export type Page = 'automation' | 'connections' | 'rules' | 'members' | 'mail-test' | 'tasks';
 
 export const needsGoogleReauthentication = (error: string): boolean =>
   /token has been expired or revoked/iu.test(error);
 
-export const GoogleReauthenticationAction = ({ onClick }: { onClick: () => void }) =>
-  <button className="secondary credential-recovery" onClick={onClick}><ShieldCheck size={16} />Automation Inbox を再接続する</button>;
+export const GoogleReauthenticationAction = ({ onClick, busy = false }: { onClick: () => void; busy?: boolean }) =>
+  <button className="secondary credential-recovery" onClick={onClick} disabled={busy}>
+    {busy ? <RefreshCw className="spin" size={16} /> : <ShieldCheck size={16} />}
+    {busy ? 'Google へ接続中…' : 'Automation Inbox を再接続する'}
+  </button>;
 
 /** Width at which the collapsed navigation panel becomes the inline top bar. */
 export const DESKTOP_NAVIGATION_QUERY = '(min-width: 1101px)';
@@ -37,7 +41,12 @@ export interface DashboardProps {
   page?: Page;
   automation: AutomationStatus | null;
   summary: AutomationSummary | null;
-  busy: boolean;
+  /** True while the named operation runs, so only its own control reports it. */
+  isPending: (key: string) => boolean;
+  /** True for a short while after the named operation succeeded. */
+  isSettled: (key: string) => boolean;
+  /** True while React Router is loading another route's data. */
+  navigating: boolean;
   error: string;
   onRun: () => void;
   onSetEnabled: (enabled: boolean) => void;
@@ -57,25 +66,20 @@ export interface DashboardProps {
   onAiApiKeyChange: (value: string) => void;
   onAiModelChange: (value: string) => void;
   onAiBaseUrlChange: (value: string) => void;
-  lineSettingsBusy: boolean;
-  aiSettingsBusy: boolean;
   attachmentFolderPath: string;
   savedAttachmentFolderPath: string;
   onAttachmentFolderPathChange: (value: string) => void;
-  attachmentFolderBusy: boolean;
   onSaveAttachmentFolderPath: () => void;
   onSaveLineConnection: () => void;
   onSaveAiConnection: () => void;
   aiTestPrompt: string;
   aiTestResult: string;
-  aiTestBusy: boolean;
   onAiTestPromptChange: (value: string) => void;
   onTestAi: () => void;
   mailTestSubject: string;
   mailTestMatches: MailboxTestMatch[];
   mailTestAiRequest: MailboxTestAiRequest | null;
   mailTestPreview: MailboxTestPreview | null;
-  mailTestBusy: boolean;
   mailTestCreatedEventIds: string[];
   mailTestRefreshRequest: MailboxTestRefreshRequest | null;
   mailTestRefreshPlan: MailboxTestRefreshPlan | null;
@@ -90,7 +94,6 @@ export interface DashboardProps {
   onApplyRefresh: (candidateIndexes: number[]) => void;
   organizationRules: OrganizationRule[];
   organizationLists: OrganizationTypedList[];
-  ruleBusy: boolean;
   onCreateRule: (input: OrganizationRuleInput) => Promise<void>;
   onUpdateRule: (ruleId: string, input: Pick<OrganizationRuleInput, 'permittedRecipientListIds' | 'permittedLineListIds'>) => Promise<void>;
   prompts: OrganizationPrompt[];
@@ -117,13 +120,13 @@ export interface DashboardProps {
   onAssignTaskRole: (roleId: string, memberId: string) => void;
   taskReassignment: TaskReassignmentReview;
   taskReassignmentProposals: TaskAssignmentProposal[];
-  taskReassignmentBusy: boolean;
+  /** Task ids an accepted proposal could not be applied to. */
+  taskReassignmentSkipped: string[];
   onSuggestTaskReassignments: () => void;
   onApplyTaskReassignments: (assignments: Array<{ taskId: string; roleId: string }>) => void;
   onDiscardTaskReassignments: () => void;
   organizationMembers: OrganizationMember[];
   lineDestinations: OrganizationLineDestination[];
-  memberBusy: boolean;
   onCreateMember: (input: OrganizationMemberInput) => Promise<OrganizationMember | null>;
   onUpdateMember: (memberId: string, input: Partial<Pick<OrganizationMember, 'name' | 'email' | 'tags' | 'state'>>) => Promise<void>;
   onSetLineDestination: (memberId: string, input: MemberLineDestinationInput) => Promise<void>;
@@ -139,6 +142,7 @@ export const Dashboard = (props: DashboardProps) => {
   const navigate = useNavigate();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
+  const loggingOut = props.isPending(pendingKey.logout);
   const page = props.page ?? 'automation';
   const content = page === 'automation'
     ? <AutomationPage {...props} />
@@ -176,16 +180,16 @@ export const Dashboard = (props: DashboardProps) => {
       <div className="app-brand"><span><Mail size={20} /></span><strong>Mail Automation</strong></div>
       <button type="button" className="topbar-toggle" aria-controls={NAVIGATION_PANEL_ID} aria-expanded={menuOpen} aria-label={menuOpen ? 'メニューを閉じる' : 'メニューを開く'} onClick={() => setMenuOpen((open) => !open)}>{menuOpen ? <X size={20} /> : <Menu size={20} />}</button>
       <div id={NAVIGATION_PANEL_ID} className={menuOpen ? 'topbar-panel open' : 'topbar-panel'}>
-        {props.organizations && props.organizationId && <label className="organization-picker"><span className="sr-only">Organization</span><select aria-label="Organization" value={props.organizationId} onChange={(event) => navigate(`/organizations/${encodeURIComponent(event.target.value)}/automation`)}>{props.organizations.map((organization) => <option key={organization.organizationId} value={organization.organizationId}>{organization.name}</option>)}</select></label>}
+        {props.organizations && props.organizationId && <label className="organization-picker"><span className="sr-only">Organization</span><select aria-label="Organization" value={props.organizationId} disabled={props.navigating} onChange={(event) => navigate(`/organizations/${encodeURIComponent(event.target.value)}/automation`)}>{props.organizations.map((organization) => <option key={organization.organizationId} value={organization.organizationId}>{organization.name}</option>)}</select></label>}
         <nav aria-label="メインナビゲーション">
-          {navigationItems.map((item) => <NavLink key={item.to} to={item.to} className={({ isActive }) => isActive ? 'active' : ''} onClick={() => setMenuOpen(false)}>{item.icon}{item.label}</NavLink>)}
+          {navigationItems.map((item) => <NavLink key={item.to} to={item.to} className={({ isActive, isPending }) => [isActive ? 'active' : '', isPending ? 'loading' : ''].filter(Boolean).join(' ')} onClick={() => setMenuOpen(false)}>{item.icon}{item.label}</NavLink>)}
         </nav>
-        <button className="topbar-logout" onClick={props.onLogout} disabled={props.busy}><LogOut size={16} />ログアウト</button>
+        <button className="topbar-logout" onClick={props.onLogout} disabled={loggingOut}>{loggingOut ? <RefreshCw className="spin" size={16} /> : <LogOut size={16} />}{loggingOut ? 'ログアウト中…' : 'ログアウト'}</button>
       </div>
     </header>
     {menuOpen && <button type="button" className="topbar-scrim" tabIndex={-1} aria-hidden="true" onClick={() => setMenuOpen(false)} />}
-    <main className="app-content">
-      {(props.error || requiresGoogleReauthentication) && <div className="dashboard-error"><p><CircleAlert size={17} />{recoveryMessage}</p>{requiresGoogleReauthentication && <GoogleReauthenticationAction onClick={props.onReauthenticate} />}</div>}
+    <main className={props.navigating ? 'app-content navigating' : 'app-content'} aria-busy={props.navigating}>
+      {(props.error || requiresGoogleReauthentication) && <div className="dashboard-error"><p><CircleAlert size={17} />{recoveryMessage}</p>{requiresGoogleReauthentication && <GoogleReauthenticationAction onClick={props.onReauthenticate} busy={props.isPending(pendingKey.reauthenticate)} />}</div>}
       {content}
     </main>
   </div>;

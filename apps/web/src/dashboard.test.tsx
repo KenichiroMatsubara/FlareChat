@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 
 import { Dashboard, GoogleReauthenticationAction, NAVIGATION_PANEL_ID, needsGoogleReauthentication, type DashboardProps } from './dashboard';
+import { pendingKey } from './pending';
 
 describe('Google credential recovery', () => {
   it('offers an Automation Inbox reconnection action for a revoked or expired token', () => {
@@ -17,25 +18,26 @@ describe('Google credential recovery', () => {
 });
 
 const dashboardProps = (): DashboardProps => ({
-  page: 'automation', automation: null, summary: null, busy: false, error: '',
+  page: 'automation', automation: null, summary: null, error: '',
+  isPending: () => false, isSettled: () => false, navigating: false,
   onRun: vi.fn(), onSetEnabled: vi.fn(), onLogout: vi.fn(), onReauthenticate: vi.fn(),
   organization: { name: 'Example' }, organizationId: 'org-1',
   organizations: [{ organizationId: 'org-1', name: 'Example', status: 'active' }],
   connections: null, lineChannelAccessToken: '', lineChannelSecret: '', aiApiKey: '', aiModel: 'test-model', aiBaseUrl: 'https://ai.example.com/v1',
   onLineChannelAccessTokenChange: vi.fn(), onLineChannelSecretChange: vi.fn(), onAiApiKeyChange: vi.fn(), onAiModelChange: vi.fn(), onAiBaseUrlChange: vi.fn(),
-  lineSettingsBusy: false, aiSettingsBusy: false, onSaveLineConnection: vi.fn(), onSaveAiConnection: vi.fn(), aiTestPrompt: '', aiTestResult: '', aiTestBusy: false,
+  onSaveLineConnection: vi.fn(), onSaveAiConnection: vi.fn(), aiTestPrompt: '', aiTestResult: '',
   onAiTestPromptChange: vi.fn(), onTestAi: vi.fn(), mailTestSubject: '', mailTestMatches: [], mailTestAiRequest: null,
-  mailTestPreview: null, mailTestBusy: false, mailTestCreatedEventIds: [],
+  mailTestPreview: null, mailTestCreatedEventIds: [],
   mailTestRefreshRequest: null, mailTestRefreshPlan: null, mailTestRefreshOutcome: null,
   onPrepareRefresh: vi.fn(), onPlanRefresh: vi.fn(), onApplyRefresh: vi.fn(), onMailTestSubjectChange: vi.fn(), onSearchMailbox: vi.fn(),
-  onPrepareMailbox: vi.fn(), onPreviewMailbox: vi.fn(), onCreateCalendarEvent: vi.fn(), organizationRules: [], ruleBusy: false,
+  onPrepareMailbox: vi.fn(), onPreviewMailbox: vi.fn(), onCreateCalendarEvent: vi.fn(), organizationRules: [],
   organizationLists: [], onCreateRule: vi.fn(), onUpdateRule: vi.fn(), organizationTasks: [], onUpdateTask: vi.fn(), taskRoles: [], taskRoleAssignments: [], taskMembers: [], onCreateTaskRole: vi.fn(), onUpdateTaskRole: vi.fn(), onDeleteTaskRole: vi.fn(), onAssignTaskRole: vi.fn(),
-  taskReassignment: { rolesChangedAt: null, reviewedAt: null, pending: false, openTasks: 0 }, taskReassignmentProposals: [], taskReassignmentBusy: false,
+  taskReassignment: { rolesChangedAt: null, reviewedAt: null, pending: false, openTasks: 0 }, taskReassignmentProposals: [], taskReassignmentSkipped: [],
   onSuggestTaskReassignments: vi.fn(), onApplyTaskReassignments: vi.fn(), onDiscardTaskReassignments: vi.fn(),
   prompts: [], agentRules: [], agentRuns: [], agentTranscript: null, proposedActions: [], onCreatePrompt: vi.fn(), onUpdatePrompt: vi.fn(), onDeletePrompt: vi.fn(), onCreateAgentRule: vi.fn(), onUpdateAgentRule: vi.fn(), onLoadAgentTranscript: vi.fn(), onDecideProposedAction: vi.fn(), onDecideProposedActionBatch: vi.fn(),
-  organizationMembers: [], lineDestinations: [], memberBusy: false, onCreateMember: vi.fn(), onUpdateMember: vi.fn(),
+  organizationMembers: [], lineDestinations: [], onCreateMember: vi.fn(), onUpdateMember: vi.fn(),
   onSetLineDestination: vi.fn(), onUnlinkLineDestination: vi.fn(), onRegisterLineDestination: vi.fn(), onRemoveLineDestination: vi.fn(), onRefreshMembers: vi.fn(),
-  attachmentFolderPath: 'Mail Automation', savedAttachmentFolderPath: 'Mail Automation', onAttachmentFolderPathChange: vi.fn(), attachmentFolderBusy: false, onSaveAttachmentFolderPath: vi.fn(),
+  attachmentFolderPath: 'Mail Automation', savedAttachmentFolderPath: 'Mail Automation', onAttachmentFolderPathChange: vi.fn(), onSaveAttachmentFolderPath: vi.fn(),
   presets: [{ id: 'membership-organization', name: 'Membership organization', description: 'Starting configuration.' }], onApplyPreset: vi.fn(),
 });
 
@@ -692,5 +694,154 @@ describe('AI Task reassignment', () => {
     expect(html).toContain('aria-label="参加費を支払うを会計担当に割り当てる"');
     expect(html).toContain('選んだ1件を適用');
     expect(html).toContain('この案を破棄');
+  });
+});
+
+describe('operation progress', () => {
+  const pendingOnly = (...keys: string[]): DashboardProps['isPending'] => (key: string) => keys.includes(key);
+  const dashboard = (props: Partial<DashboardProps>, page: NonNullable<DashboardProps['page']>, path = 'automation'): string =>
+    renderToStaticMarkup(
+      <MemoryRouter initialEntries={[`/organizations/org-1/${path}`]}>
+        <Dashboard {...dashboardProps()} page={page} {...props} />
+      </MemoryRouter>,
+    );
+
+  it('reports a running mailbox scan on its own control and leaves the switch usable', () => {
+    const automation = {
+      email: 'owner@example.com', displayName: 'Owner', enabled: true, status: 'active' as const,
+      lastSyncedAt: null, lastError: null, failingSince: null, created: 0, skipped: 0, exceptions: 0,
+    };
+    const html = dashboard({ automation, isPending: pendingOnly(pendingKey.automationRun) }, 'automation');
+
+    expect(html).toContain('メールを確認中…');
+    expect(html).toContain('class="lucide lucide-refresh-cw spin"');
+    expect(html).not.toContain('切替中…');
+  });
+
+  it('reports an automation switch that is still being toggled', () => {
+    const automation = {
+      email: 'owner@example.com', displayName: 'Owner', enabled: false, status: 'active' as const,
+      lastSyncedAt: null, lastError: null, failingSince: null, created: 0, skipped: 0, exceptions: 0,
+    };
+    const html = dashboard({ automation, isPending: pendingOnly(pendingKey.automationEnabled) }, 'automation');
+
+    expect(html).toContain('切替中…');
+    expect(html).not.toContain('メールを確認中…');
+  });
+
+  it('never lends one Prompt’s progress to another control', () => {
+    const prompts = [
+      { id: 'prompt-1', organizationId: 'org-1', name: '案内', instructions: '読む', revision: 1, createdAt: '', updatedAt: '' },
+      { id: 'prompt-2', organizationId: 'org-1', name: '請求', instructions: '読む', revision: 1, createdAt: '', updatedAt: '' },
+    ];
+    const html = dashboard({ prompts, isPending: pendingOnly(pendingKey.promptUpdate('prompt-1')) }, 'rules', 'rules');
+
+    expect(html.match(/保存中…/gu)?.length).toBe(2);
+    expect(html).toContain('ルールを作成');
+    expect(html).not.toContain('>作成中…');
+    expect(html).toContain('Promptを削除');
+  });
+
+  it('reports a Proposed Action decision on the action being decided', () => {
+    const html = dashboard({
+      agentTranscript: { runId: 'run-1', source: { subject: '案内', body: '', attachments: [] }, messages: [], finalOutput: '', error: null },
+      proposedActions: [
+        { id: 'action-1', runId: 'run-1', tool: 'send_line_message', arguments: {}, status: 'pending', expiresAt: '2026-08-05' },
+        { id: 'action-2', runId: 'run-1', tool: 'send_line_message', arguments: {}, status: 'pending', expiresAt: '2026-08-05' },
+      ],
+      isPending: pendingOnly(pendingKey.actionDecision('action-1', 'approve')),
+    }, 'rules', 'rules');
+
+    expect(html.match(/承認中…/gu)?.length).toBe(1);
+    expect(html).not.toContain('却下中…');
+    expect(html).toContain('すべて承認');
+  });
+
+  it('reports the one mail whose request is being prepared', () => {
+    const html = dashboard({
+      automation: {
+        email: 'owner@example.com', displayName: 'Owner', enabled: true, status: 'active',
+        lastSyncedAt: null, lastError: null, failingSince: null, created: 0, skipped: 0, exceptions: 0,
+      },
+      mailTestMatches: [
+        { id: 'message-1', subject: '総会案内', sender: 'sender@example.com' },
+        { id: 'message-2', subject: '請求案内', sender: 'sender@example.com' },
+      ],
+      isPending: pendingOnly(pendingKey.mailPrepare('message-1')),
+    }, 'mail-test', 'mailbox-test');
+
+    expect(html.match(/本文と添付を読み込み中…/gu)?.length).toBe(1);
+    expect(html).toContain('Gmailを検索');
+    expect(html).not.toContain('検索中…');
+  });
+
+  it('reports a saved AI connection after the save finishes', () => {
+    const connections = {
+      organizationId: 'org-1', organizationName: 'Example',
+      line: { channelAccessTokenConfigured: false, channelSecretConfigured: false, webhookUrl: 'https://app.example.com/hook' },
+      ai: { apiKeyConfigured: true, model: 'test-model', baseUrl: 'https://ai.example.com/v1' },
+    };
+    const saving = dashboard({ connections, isPending: pendingOnly(pendingKey.aiConnection) }, 'connections', 'connections');
+    const saved = dashboard({ connections, isSettled: (key: string) => key === pendingKey.aiConnection }, 'connections', 'connections');
+
+    expect(saving).toContain('保存中…');
+    expect(saved).toContain('保存しました');
+  });
+
+  it('reports the Task whose row is being written, not the whole table', () => {
+    const task = (id: string, title: string) => ({
+      id, title, deadline: '2026-08-20', assigneeRoleId: 'role-1', assigneeRoleName: '会計担当',
+      assigneeMemberId: 'member-1', assigneeName: '山田', sourceMessageSubject: '総会案内',
+      description: '', remarks: '', completed: false, completedAt: null,
+    });
+    const html = dashboard({
+      organizationTasks: [task('task-1', '参加費を支払う'), task('task-2', '出欠を回答する')],
+      isPending: pendingOnly(pendingKey.taskUpdate('task-1')),
+    }, 'tasks', 'tasks');
+
+    expect(html.match(/保存中…/gu)?.length).toBe(1);
+    expect(html).toContain('aria-busy="true"');
+  });
+
+  it('reports an AI reassignment that is still being judged, and the Tasks it could not move', () => {
+    const judging = dashboard({
+      taskReassignment: { rolesChangedAt: '2026-08-04T00:00:00.000Z', reviewedAt: null, pending: true, openTasks: 4 },
+      isPending: pendingOnly(pendingKey.reassignmentSuggest),
+    }, 'tasks', 'tasks');
+    const skipped = dashboard({
+      taskReassignmentSkipped: ['task-1'],
+      organizationTasks: [{
+        id: 'task-1', title: '参加費を支払う', deadline: '2026-08-20', assigneeRoleId: 'role-1', assigneeRoleName: '会計担当',
+        assigneeMemberId: null, assigneeName: '未割り当て', sourceMessageSubject: '総会案内',
+        description: '', remarks: '', completed: false, completedAt: null,
+      }],
+    }, 'tasks', 'tasks');
+
+    expect(judging).toContain('未完了タスク4件をAIが判定中…');
+    expect(judging).toContain('AIの応答を待っています');
+    expect(skipped).toContain('1件は適用できませんでした');
+    expect(skipped).toContain('参加費を支払う');
+  });
+
+  it('dims the stale page while the route it navigated to is still loading', () => {
+    const html = dashboard({ navigating: true }, 'automation');
+
+    expect(html).toContain('class="app-content navigating"');
+    expect(html).toContain('aria-busy="true"');
+    expect(dashboard({}, 'automation')).toContain('class="app-content"');
+  });
+
+  it('reports the member whose card is being saved and the roster refresh separately', () => {
+    const member = (id: string, name: string) => ({
+      id, organizationId: 'org-1', name, email: '', state: 'active' as const, tags: [],
+      createdAt: '', updatedAt: '', lineDestinations: [],
+    });
+    const html = dashboard({
+      organizationMembers: [member('member-1', '山田'), member('member-2', '鈴木')],
+      isPending: pendingOnly(pendingKey.memberRefresh),
+    }, 'members', 'members');
+
+    expect(html).toContain('更新中…');
+    expect(html).not.toContain('登録中…');
   });
 });
