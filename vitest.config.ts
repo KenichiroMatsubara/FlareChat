@@ -11,5 +11,6 @@ export default defineConfig({
   }],
   test: {
     exclude: [...configDefaults.exclude, '**/*.d1.test.ts'],
+    setupFiles: ['./test/clock.ts'],
   },
 });

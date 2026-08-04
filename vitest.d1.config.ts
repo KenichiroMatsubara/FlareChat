@@ -11,6 +11,7 @@ export default defineWorkersConfig({
   }],
   test: {
     include: ['apps/worker/src/**/*.d1.test.ts'],
+    setupFiles: ['./test/clock.ts'],
     pool: '@cloudflare/vitest-pool-workers',
     poolOptions: {
       workers: {
