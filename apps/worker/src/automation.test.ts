@@ -16,7 +16,7 @@ import {
 } from './automation';
 import { createAutomationTestApp, type AutomationTestApp } from '../test/automation';
 import { encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
-import { createMemoryR2, seedAttendanceRegistration, seedScheduledEvent } from '../test/seed';
+import { createMemoryR2, seedAttendanceRegistration, seedMember, seedScheduledEvent } from '../test/seed';
 import { AGENT_TOKEN_CEILING, MAX_AGENT_TOOL_CALLS } from './agent-runs';
 import { GoogleApiError } from './automation/providers';
 
@@ -882,6 +882,53 @@ describe('Organization Automation Inbox scheduling', () => {
     });
   });
 
+  it('invites every active Member of the roster to the Scheduled Event it creates', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    seedMember(fixture.organization, { id: 'member-1', name: '一郎', email: 'first@example.com' });
+    seedMember(fixture.organization, { id: 'member-2', name: '二郎', email: 'second@example.com' });
+    seedMember(fixture.organization, { id: 'member-3', name: '三郎' });
+    let calendarUrl = '';
+    let calendarRequest: { attendees?: Array<{ email?: string }> } = {};
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('/history')) {
+        return new Response(JSON.stringify({
+          historyId: 'history-after-connection',
+          history: [{ messagesAdded: [{ message: { id: 'gmail-message-1' } }] }],
+        }), { status: 200 });
+      }
+      if (url.includes('/messages/gmail-message-1')) return sourceMessageResponse();
+      if (url.includes('ai.example.com')) return Response.json({ choices: [{ message: { content: JSON.stringify({
+        summary: '例会のお知らせです。',
+        events: [{
+          title: '例会', startsAt: '2026-08-03T19:00:00+09:00', endsAt: '2026-08-03T21:30:00+09:00',
+          timeZone: 'Asia/Tokyo', location: '', description: '例会です。',
+        }],
+        tasks: [],
+      }) } }] });
+      calendarUrl = url;
+      calendarRequest = JSON.parse(init?.body as string) as typeof calendarRequest;
+      return new Response(JSON.stringify({ id: 'calendar-event-1' }), { status: 200 });
+    }));
+
+    await runEnabledAutomations(fixture.environment);
+
+    expect(calendarUrl).toContain('sendUpdates=all');
+    expect(calendarRequest.attendees).toEqual([
+      { email: 'first@example.com' },
+      { email: 'second@example.com' },
+    ]);
+    expect(fixture.organization.rows(
+      "SELECT destination, outcome, external_id FROM deliveries WHERE channel = 'calendar' ORDER BY destination",
+    )).toEqual([
+      { destination: 'first@example.com', outcome: 'succeeded', external_id: 'calendar-event-1' },
+      { destination: 'second@example.com', outcome: 'succeeded', external_id: 'calendar-event-1' },
+    ]);
+    expect(fixture.organization.rows('SELECT member_id, email_snapshot FROM event_recipients ORDER BY member_id')).toEqual([
+      { member_id: 'member-1', email_snapshot: 'first@example.com' },
+      { member_id: 'member-2', email_snapshot: 'second@example.com' },
+    ]);
+  });
+
   it('delivers a Message Summary for a matched Source Message with no Event Candidate', async () => {
     fixture = await createAutomationTestApp({ ai: true });
     fixture.organization.execute(
@@ -1333,11 +1380,13 @@ describe('Organization Automation Inbox scheduling', () => {
 
   it('keeps the Calendar event as a draft when Drive publication fails', async () => {
     fixture = await createAutomationTestApp({ ai: true });
+    seedMember(fixture.organization, { id: 'member-1', name: '一郎', email: 'first@example.com' });
     const markdown = { toMarkdown: vi.fn().mockResolvedValue({
       format: 'markdown', name: '式次第.pdf', mimetype: 'application/pdf', tokens: 4, data: '例会の式次第',
     }) };
     (fixture.environment as unknown as { AI: typeof markdown }).AI = markdown;
-    let calendarRequest: { attachments?: unknown[] } = {};
+    let calendarUrl = '';
+    let calendarRequest: { attachments?: unknown[]; attendees?: unknown[] } = {};
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes('/history')) {
         return new Response(JSON.stringify({
@@ -1374,6 +1423,7 @@ describe('Organization Automation Inbox scheduling', () => {
         tasks: [],
       }) } }] });
       if (url.includes('/calendar/v3/calendars/primary/events') && init?.method === 'POST') {
+        calendarUrl = url;
         calendarRequest = JSON.parse(init.body as string) as typeof calendarRequest;
         return new Response(JSON.stringify({ id: 'calendar-event-draft' }), { status: 200 });
       }
@@ -1386,6 +1436,11 @@ describe('Organization Automation Inbox scheduling', () => {
       fixture.organization.binding,
     )).resolves.toMatchObject({ created: 0, exceptions: 1 });
     expect(calendarRequest.attachments).toEqual([]);
+    expect(calendarRequest.attendees).toEqual([]);
+    expect(calendarUrl).not.toContain('sendUpdates');
+    expect(fixture.organization.rows(
+      "SELECT destination, outcome, external_id FROM deliveries WHERE channel = 'calendar'",
+    )).toEqual([{ destination: 'first@example.com', outcome: 'pending', external_id: null }]);
   });
 });
 
