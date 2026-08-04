@@ -5,10 +5,28 @@ import { completeBaselineSkippedRepair, ensureBaselineSchemaRule } from './basel
 import { fromBase64Url } from './encoding';
 import { buildAiEventDetailsRequest, type AiEventDetailsRequest, type EventDetails, type MailExtraction, type TaskRoleDescription } from './event-details';
 import { calendarEventDescription } from './event-description';
+import type { AttachmentLink } from './event-description';
+import {
+  attributedMessageId,
+  buildEventCorrespondenceRequest,
+  changedCalendarFields,
+  partitionByRefreshWindow,
+  refreshPlan,
+  refreshSearchWindow,
+  sourceMessageAttribution,
+} from './event-refresh';
+import type {
+  AiEventCorrespondenceRequest,
+  CalendarEventFields,
+  DesiredCalendarFields,
+  EventCorrespondence,
+  RefreshPlan,
+} from './event-refresh';
+import { writeRecoveryReceipt } from './recovery-receipts';
 import { resolveSourceMessageFolder } from './attachment-folders';
 import { createTaskWorkflow } from './tasks';
 import { deliverLineBatch, deliverSourceMessageEmail, recordDeliveryAttempt } from './delivery';
-import type { PublishedDriveAttachment, SourceAttachmentContent } from './drive-attachments';
+import type { PublishedDriveAttachment, SourceAttachment, SourceAttachmentContent } from './drive-attachments';
 import type { GoogleTokenSet } from './google';
 import { productionAutomationDependencies } from './automation/providers';
 import { GoogleApiError } from './automation/providers';
@@ -75,6 +93,25 @@ interface GmailPart {
 
 interface CalendarEvent {
   id?: string;
+}
+
+interface CalendarTime {
+  dateTime?: string;
+  date?: string;
+  timeZone?: string;
+}
+
+interface CalendarEventResource extends CalendarEvent {
+  etag?: string;
+  summary?: string;
+  description?: string;
+  location?: string;
+  start?: CalendarTime;
+  end?: CalendarTime;
+}
+
+interface CalendarEventList {
+  items?: CalendarEventResource[];
 }
 
 type AutomationInbox = GoogleConnectionRecord;
@@ -791,6 +828,342 @@ export const createMailboxTestCalendarEvent = async (
   input: { messageId: string; events: EventDetails[] },
 ): Promise<{ eventIds: string[] }> => createMailboxTestCalendarEventsWithGoogle(env, organizationId, database, input, productionDependencies);
 
+const CALENDAR_EVENTS_URL = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
+
+const calendarEventFields = (event: CalendarEventResource): CalendarEventFields | null => {
+  if (!event.id || !event.start?.dateTime || !event.end?.dateTime) return null;
+  return {
+    id: event.id,
+    etag: event.etag ?? null,
+    title: event.summary ?? '',
+    description: event.description ?? '',
+    location: event.location ?? '',
+    startsAt: event.start.dateTime,
+    endsAt: event.end.dateTime,
+    timeZone: event.start.timeZone ?? '',
+  };
+};
+
+/** Finds the Scheduled Events this Source Message already produced, by Source Attribution. */
+const attributedScheduledEvents = async (
+  dependencies: AutomationDependencies,
+  accessToken: string,
+  messageId: string,
+  candidates: EventDetails[],
+): Promise<CalendarEventFields[]> => {
+  const window = refreshSearchWindow(candidates);
+  if (!window) return [];
+  const url = new URL(CALENDAR_EVENTS_URL);
+  url.searchParams.set('q', messageId);
+  url.searchParams.set('timeMin', window.timeMin);
+  url.searchParams.set('timeMax', window.timeMax);
+  url.searchParams.set('showDeleted', 'false');
+  url.searchParams.set('singleEvents', 'false');
+  url.searchParams.set('maxResults', '50');
+  const list = await dependencies.google.request<CalendarEventList>(accessToken, url.toString());
+  return (list.items ?? []).flatMap((item) => {
+    const fields = calendarEventFields(item);
+    return fields && attributedMessageId(fields.description) === messageId ? [fields] : [];
+  });
+};
+
+interface RefreshAttachments {
+  links: AttachmentLink[];
+  calendar: Array<{ fileUrl: string; title: string; mimeType: string }>;
+  /** Accepted attachments no previous run left in the folder; published only when applying. */
+  pending: string[];
+}
+
+/**
+ * Reuses the Public Attachments a previous run already placed in the Source
+ * Message's folder, and publishes only what is missing. Planning never uploads.
+ */
+const resolveRefreshAttachments = async (
+  dependencies: AutomationDependencies,
+  accessToken: string,
+  database: D1Database,
+  message: GmailMessage,
+  messageId: string,
+  publishMissing: boolean,
+): Promise<RefreshAttachments> => {
+  const attachments = sourceAttachments(message.payload);
+  const resolved: RefreshAttachments = { links: [], calendar: [], pending: [] };
+  if (!attachments.length) return resolved;
+  const intake = validateAttachmentIntake(attachments.map((attachment) => attachment.size));
+  if (!intake.accepted) throw new Error('Source Message attachments exceed the configured intake limit.');
+  const db = drizzleOrganizationDatabase(database);
+  const known = await db.select({ id: sourceMessages.id, driveFolderId: sourceMessages.driveFolderId })
+    .from(sourceMessages).where(eq(sourceMessages.gmailMessageId, messageId)).get();
+  const missing: SourceAttachment[] = [];
+  for (const attachment of attachments) {
+    const found = known?.driveFolderId
+      ? await dependencies.attachments.find({ accessToken, filename: attachment.filename, folderId: known.driveFolderId })
+      : null;
+    if (!found) {
+      missing.push(attachment);
+      continue;
+    }
+    resolved.links.push({ filename: attachment.filename, url: found.publicUrl });
+    resolved.calendar.push({ fileUrl: found.publicUrl, title: attachment.filename, mimeType: attachment.mimeType });
+  }
+  if (!missing.length) return resolved;
+  if (!publishMissing) return { ...resolved, pending: missing.map((attachment) => attachment.filename) };
+  const contents = await dependencies.attachments.read({ accessToken, gmailMessageId: messageId, attachments: missing });
+  const folderId = await resolveSourceMessageFolder({
+    database: db,
+    drive: dependencies.attachments,
+    accessToken,
+    subject: subjectOf(message.payload),
+    receivedAt: receivedAtOf(message.internalDate) ?? new Date().toISOString(),
+    recordedFolderId: known?.driveFolderId,
+    ...(known?.id === undefined ? {} : { sourceMessageId: known.id }),
+  });
+  for (const attachment of contents) {
+    const publication = await dependencies.attachments.publish({ accessToken, attachment, parentFolderId: folderId });
+    if (publication.outcome === 'failed' || !publication.publicUrl) {
+      throw new Error(`添付ファイル ${attachment.filename} を公開できませんでした。`);
+    }
+    resolved.links.push({ filename: attachment.filename, url: publication.publicUrl });
+    resolved.calendar.push({ fileUrl: publication.publicUrl, title: attachment.filename, mimeType: attachment.mimeType });
+  }
+  return resolved;
+};
+
+const desiredCalendarFields = (
+  candidate: EventDetails,
+  messageId: string,
+  links: AttachmentLink[],
+): DesiredCalendarFields => ({
+  title: candidate.title,
+  description: calendarEventDescription({
+    summary: candidate.summary,
+    attachments: links,
+    attribution: sourceMessageAttribution(messageId),
+  }),
+  location: candidate.location,
+  startsAt: candidate.startsAt,
+  endsAt: candidate.endsAt,
+  timeZone: candidate.timeZone,
+});
+
+export interface MailboxTestRefreshRequest {
+  existing: CalendarEventFields[];
+  outOfWindow: CalendarEventFields[];
+  request: AiEventCorrespondenceRequest | null;
+}
+
+/** Prepares the correspondence request for review without calling the AI API. */
+const previewEventRefreshRequestWithGoogle = async (
+  env: Bindings,
+  organizationId: string,
+  database: D1Database,
+  input: { messageId: string; events: EventDetails[] },
+  dependencies: AutomationDependencies,
+): Promise<MailboxTestRefreshRequest> => {
+  const accessToken = await accessTokenForInbox(env, organizationId, database, await activeAutomationInbox(database), dependencies);
+  const found = await attributedScheduledEvents(dependencies, accessToken, input.messageId, input.events);
+  const { inWindow, outOfWindow } = partitionByRefreshWindow(input.events, found);
+  return {
+    existing: inWindow,
+    outOfWindow,
+    request: inWindow.length ? buildEventCorrespondenceRequest({ candidates: input.events, existing: inWindow }) : null,
+  };
+};
+
+export interface MailboxTestRefreshPlan extends RefreshPlan {
+  desired: DesiredCalendarFields[];
+  pendingAttachments: string[];
+}
+
+/** Asks the AI for a correspondence and turns it into the plan an Admin approves. */
+const planEventRefreshWithGoogle = async (
+  env: Bindings,
+  organizationId: string,
+  database: D1Database,
+  input: { messageId: string; events: EventDetails[] },
+  dependencies: AutomationDependencies,
+): Promise<MailboxTestRefreshPlan> => {
+  const accessToken = await accessTokenForInbox(env, organizationId, database, await activeAutomationInbox(database), dependencies);
+  const message = await mailboxMessage(dependencies.google, accessToken, input.messageId);
+  const found = await attributedScheduledEvents(dependencies, accessToken, input.messageId, input.events);
+  const { inWindow, outOfWindow } = partitionByRefreshWindow(input.events, found);
+  const attachments = await resolveRefreshAttachments(dependencies, accessToken, database, message, input.messageId, false);
+  const desired = input.events.map((candidate) => desiredCalendarFields(candidate, input.messageId, attachments.links));
+  const correspondences = inWindow.length
+    ? await aiEventCorrespondence(env, organizationId, database, input.events, inWindow, dependencies)
+    : [];
+  const plan = refreshPlan({ candidates: input.events, existing: [...inWindow, ...outOfWindow], correspondences, desired });
+  return { ...plan, desired, pendingAttachments: attachments.pending };
+};
+
+const aiEventCorrespondence = async (
+  env: Bindings,
+  organizationId: string,
+  database: D1Database,
+  candidates: EventDetails[],
+  existing: CalendarEventFields[],
+  dependencies: AutomationDependencies,
+): Promise<EventCorrespondence[]> => {
+  const connection = await drizzleOrganizationDatabase(database).select().from(connections)
+    .where(and(eq(connections.kind, 'ai'), eq(connections.status, 'active'))).limit(1).get();
+  if (!connection) throw new Error('先に OpenAI 互換 API を設定してください。');
+  const key = await organizationKeyFor(env, organizationId);
+  const credential = JSON.parse(await decrypt(JSON.parse(connection.credential), key, `organization-connection:${organizationId}:ai`)) as AiCredential;
+  if (!credential.apiKey || !credential.model) throw new Error('先に OpenAI 互換 API を設定してください。');
+  const correspondences = await dependencies.ai.correspond({
+    apiKey: credential.apiKey,
+    baseUrl: credential.baseUrl || LEGACY_AI_BASE_URL,
+    model: credential.model,
+    candidates,
+    existing,
+  });
+  if (!correspondences) throw new Error('AI が既存予定との対応を判定できませんでした。');
+  return correspondences;
+};
+
+export interface EventRefreshEntry {
+  googleEventId: string | null;
+  etag: string | null;
+  candidate: EventDetails;
+}
+
+export interface EventRefreshConflict {
+  googleEventId: string;
+  etag: string | null;
+  current: CalendarEventFields;
+  changedFields: string[];
+  candidate: EventDetails;
+}
+
+export interface EventRefreshOutcome {
+  updated: string[];
+  created: string[];
+  conflicts: EventRefreshConflict[];
+  failures: Array<{ googleEventId: string | null; title: string; message: string }>;
+}
+
+const recordRefreshEffect = async (
+  env: Bindings,
+  organizationId: string,
+  database: D1Database,
+  input: { googleEventId: string; candidate: EventDetails; messageId: string; effect: 'updated' | 'created' },
+): Promise<void> => {
+  const timestamp = now();
+  if (input.effect === 'updated') {
+    await drizzleOrganizationDatabase(database).update(events).set({
+      title: input.candidate.title,
+      startsAt: input.candidate.startsAt,
+      endsAt: input.candidate.endsAt,
+      location: input.candidate.location,
+      description: input.candidate.description,
+      updatedAt: timestamp,
+    }).where(eq(events.googleEventId, input.googleEventId)).run();
+  }
+  await recordDeliveryAttempt(database, {
+    destination: 'primary',
+    channel: 'calendar',
+    outcome: 'succeeded',
+    externalId: input.googleEventId,
+  });
+  await writeRecoveryReceipt({
+    bucket: env.RECOVERY_RECEIPTS,
+    organizationKey: await organizationKeyFor(env, organizationId),
+    receipt: {
+      organizationId,
+      idempotencyKey: `event-refresh:${input.googleEventId}:${timestamp}`,
+      effectType: 'calendar',
+      externalId: input.googleEventId,
+      destinationFingerprint: `mail-test:${input.messageId}`,
+      succeededAt: timestamp,
+    },
+  });
+};
+
+/**
+ * The Event Refresh exit: rewrites every Calendar field of an already confirmed
+ * Scheduled Event except its attendees, deliberately overwriting Manual
+ * Overrides because an Admin approved this one event's diff.
+ */
+const applyEventRefreshWithGoogle = async (
+  env: Bindings,
+  organizationId: string,
+  database: D1Database,
+  input: { messageId: string; entries: EventRefreshEntry[] },
+  dependencies: AutomationDependencies,
+): Promise<EventRefreshOutcome> => {
+  const accessToken = await accessTokenForInbox(env, organizationId, database, await activeAutomationInbox(database), dependencies);
+  const message = await mailboxMessage(dependencies.google, accessToken, input.messageId);
+  const attachments = await resolveRefreshAttachments(dependencies, accessToken, database, message, input.messageId, true);
+  const outcome: EventRefreshOutcome = { updated: [], created: [], conflicts: [], failures: [] };
+  for (const entry of input.entries) {
+    const desired = desiredCalendarFields(entry.candidate, input.messageId, attachments.links);
+    const body = JSON.stringify({
+      summary: desired.title,
+      description: desired.description,
+      location: desired.location,
+      start: { dateTime: desired.startsAt, timeZone: desired.timeZone },
+      end: { dateTime: desired.endsAt, timeZone: desired.timeZone },
+      attachments: attachments.calendar,
+    });
+    try {
+      if (!entry.googleEventId) {
+        const url = new URL(CALENDAR_EVENTS_URL);
+        url.searchParams.set('sendUpdates', 'none');
+        if (attachments.calendar.length) url.searchParams.set('supportsAttachments', 'true');
+        const created = await dependencies.google.request<CalendarEventResource>(accessToken, url.toString(), { method: 'POST', body });
+        if (!created.id) throw new Error('Google Calendar が予定 ID を返しませんでした。');
+        outcome.created.push(created.id);
+        await recordRefreshEffect(env, organizationId, database, {
+          googleEventId: created.id, candidate: entry.candidate, messageId: input.messageId, effect: 'created',
+        });
+        continue;
+      }
+      const url = new URL(`${CALENDAR_EVENTS_URL}/${encodeURIComponent(entry.googleEventId)}`);
+      url.searchParams.set('sendUpdates', 'none');
+      if (attachments.calendar.length) url.searchParams.set('supportsAttachments', 'true');
+      await dependencies.google.request<CalendarEventResource>(accessToken, url.toString(), {
+        method: 'PATCH',
+        body,
+        ...(entry.etag ? { headers: { 'If-Match': entry.etag } } : {}),
+      });
+      outcome.updated.push(entry.googleEventId);
+      await recordRefreshEffect(env, organizationId, database, {
+        googleEventId: entry.googleEventId, candidate: entry.candidate, messageId: input.messageId, effect: 'updated',
+      });
+    } catch (error) {
+      const conflicted = error instanceof GoogleApiError && (error.status === 412 || error.status === 409);
+      if (!conflicted || !entry.googleEventId) {
+        outcome.failures.push({
+          googleEventId: entry.googleEventId,
+          title: entry.candidate.title,
+          message: error instanceof Error ? error.message : 'Google Calendar の更新に失敗しました。',
+        });
+        continue;
+      }
+      const current = calendarEventFields(await dependencies.google.request<CalendarEventResource>(
+        accessToken,
+        `${CALENDAR_EVENTS_URL}/${encodeURIComponent(entry.googleEventId)}`,
+      ));
+      if (!current) {
+        outcome.failures.push({
+          googleEventId: entry.googleEventId,
+          title: entry.candidate.title,
+          message: '照合後に変更された予定を読み直せませんでした。',
+        });
+        continue;
+      }
+      outcome.conflicts.push({
+        googleEventId: entry.googleEventId,
+        etag: current.etag,
+        current,
+        changedFields: changedCalendarFields(current, desired),
+        candidate: entry.candidate,
+      });
+    }
+  }
+  return outcome;
+};
+
 const processOrganizationMessage = async (
   dependencies: AutomationDependencies,
   env: Bindings,
@@ -1333,6 +1706,12 @@ export const createAutomation = (
         extractMailboxTestPackage(env, input.organizationId, input.database, input.source, input.attachments, input.receivedAt, dependencies),
       previewAiRequest: (input: { database: D1Database; source: string; attachments: SourceAttachmentContent[]; receivedAt?: string }): Promise<AiEventDetailsRequest> =>
         previewMailboxTestAiRequest(env, input),
+      previewRefreshRequest: (input: { organizationId: string; database: D1Database; messageId: string; events: EventDetails[] }): Promise<MailboxTestRefreshRequest> =>
+        previewEventRefreshRequestWithGoogle(env, input.organizationId, input.database, { messageId: input.messageId, events: input.events }, dependencies),
+      planRefresh: (input: { organizationId: string; database: D1Database; messageId: string; events: EventDetails[] }): Promise<MailboxTestRefreshPlan> =>
+        planEventRefreshWithGoogle(env, input.organizationId, input.database, { messageId: input.messageId, events: input.events }, dependencies),
+      applyRefresh: (input: { organizationId: string; database: D1Database; messageId: string; entries: EventRefreshEntry[] }): Promise<EventRefreshOutcome> =>
+        applyEventRefreshWithGoogle(env, input.organizationId, input.database, { messageId: input.messageId, entries: input.entries }, dependencies),
     },
   };
 };

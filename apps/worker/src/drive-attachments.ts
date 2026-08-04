@@ -112,6 +112,36 @@ export const createSourceMessageFolder = async (input: {
   parentId: string;
 }): Promise<string> => createDriveFolder(input);
 
+export interface ReusableDriveAttachment {
+  driveFileId: string;
+  publicUrl: string;
+}
+
+/**
+ * Finds a Public Attachment already stored in the Source Message's folder, so an
+ * Event Refresh links the file that is in place instead of uploading a second
+ * copy. Only a file this application created is visible under the `drive.file`
+ * grant, so a match is by construction one Mail Automation published itself.
+ */
+export const findPublishedDriveAttachment = async (input: {
+  accessToken: string;
+  filename: string;
+  folderId: string;
+}): Promise<ReusableDriveAttachment | null> => {
+  const query = [
+    `name = '${escapeDriveQueryValue(input.filename)}'`,
+    `'${escapeDriveQueryValue(input.folderId)}' in parents`,
+    'trashed = false',
+  ].join(' and ');
+  const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=${
+    encodeURIComponent('files(id,webViewLink)')}&pageSize=10`;
+  const response = await fetch(url, { headers: { Authorization: `Bearer ${input.accessToken}` } });
+  if (!response.ok) return null;
+  const body = await response.json() as { files?: Array<{ id?: string; webViewLink?: string }> };
+  const found = (body.files ?? []).find((file) => file.id && file.webViewLink);
+  return found?.id && found.webViewLink ? { driveFileId: found.id, publicUrl: found.webViewLink } : null;
+};
+
 /**
  * Copies an accepted Gmail attachment into Drive and grants its explicit public
  * reader permission. A Drive URL is withheld unless the permission succeeds.

@@ -5,7 +5,7 @@ import { isRouteErrorResponse, NavLink, Outlet, useLoaderData, useNavigate, useP
 import type { AppState } from '@mail/domain';
 
 import { api } from './api';
-import type { MemberAttendanceStatus, MemberPortal, AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OrganizationAgentRule, OrganizationConnections, OrganizationDashboard, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationMember, OrganizationMemberInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, ProposedAction, MemberLineDestinationInput, TaskRoleConfiguration } from './api';
+import type { MemberAttendanceStatus, MemberPortal, AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, OrganizationAgentRule, OrganizationConnections, OrganizationDashboard, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationMember, OrganizationMemberInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, ProposedAction, MemberLineDestinationInput, TaskRoleConfiguration } from './api';
 import { defaultOrganizationName, setupPhaseLabel, SignedOutEntry } from './entry';
 import { Dashboard } from './dashboard';
 
@@ -199,6 +199,9 @@ interface OrganizationContextValue extends OrganizationRouteData {
   prepareMailbox: (messageId: string) => void;
   previewMailbox: (messageId: string) => void;
   createCalendarEvent: () => void;
+  prepareRefresh: () => void;
+  planRefresh: () => void;
+  applyRefresh: (candidateIndexes: number[]) => void;
   createRule: (input: OrganizationRuleInput) => Promise<void>;
   updateRule: (ruleId: string, input: Pick<OrganizationRuleInput, 'permittedRecipientListIds' | 'permittedLineListIds'>) => Promise<void>;
   agentTranscript: AgentRunTranscript | null;
@@ -238,6 +241,9 @@ interface OrganizationContextValue extends OrganizationRouteData {
   mailTestPreview: MailboxTestPreview | null;
   mailTestBusy: boolean;
   mailTestCreatedEventIds: string[];
+  mailTestRefreshRequest: MailboxTestRefreshRequest | null;
+  mailTestRefreshPlan: MailboxTestRefreshPlan | null;
+  mailTestRefreshOutcome: MailboxTestRefreshOutcome | null;
   lineSettingsBusy: boolean;
   aiSettingsBusy: boolean;
   attachmentFolderPath: string;
@@ -291,6 +297,9 @@ export const OrganizationLayout = () => {
   const [mailTestPreview, setMailTestPreview] = useState<MailboxTestPreview | null>(null);
   const [mailTestBusy, setMailTestBusy] = useState(false);
   const [mailTestCreatedEventIds, setMailTestCreatedEventIds] = useState<string[]>([]);
+  const [mailTestRefreshRequest, setMailTestRefreshRequest] = useState<MailboxTestRefreshRequest | null>(null);
+  const [mailTestRefreshPlan, setMailTestRefreshPlan] = useState<MailboxTestRefreshPlan | null>(null);
+  const [mailTestRefreshOutcome, setMailTestRefreshOutcome] = useState<MailboxTestRefreshOutcome | null>(null);
   const [agentTranscript, setAgentTranscript] = useState<AgentRunTranscript | null>(null);
   const [proposedActions, setProposedActions] = useState<ProposedAction[]>([]);
 
@@ -344,6 +353,36 @@ export const OrganizationLayout = () => {
     setMailTestCreatedEventIds([]);
   }, setMailTestBusy);
   const createCalendarEvent = () => void withError(async () => { if (mailTestPreview) setMailTestCreatedEventIds((await api.createMailboxTestCalendarEvent(data.organization.organizationId, mailTestPreview.confirmationToken)).eventIds); }, setMailTestBusy);
+  const prepareRefresh = () => void withError(async () => {
+    if (!mailTestPreview) throw new Error('先に AI 抽出を実行してください。');
+    setMailTestRefreshPlan(null);
+    setMailTestRefreshOutcome(null);
+    setMailTestRefreshRequest(await api.prepareMailboxTestRefreshRequest(data.organization.organizationId, mailTestPreview.id, mailTestPreview.confirmationToken));
+  }, setMailTestBusy);
+  const planRefresh = () => void withError(async () => {
+    if (!mailTestPreview) throw new Error('先に AI 抽出を実行してください。');
+    setMailTestRefreshOutcome(null);
+    setMailTestRefreshPlan(await api.planMailboxTestRefresh(data.organization.organizationId, mailTestPreview.id, mailTestPreview.confirmationToken));
+  }, setMailTestBusy);
+  const applyRefresh = (candidateIndexes: number[]) => void withError(async () => {
+    if (!mailTestRefreshPlan) throw new Error('先に既存予定と照合してください。');
+    const outcome = await api.applyMailboxTestRefresh(data.organization.organizationId, mailTestRefreshPlan.confirmationToken, candidateIndexes);
+    setMailTestRefreshOutcome(outcome);
+    if (outcome.confirmationToken) {
+      setMailTestRefreshPlan({
+        ...mailTestRefreshPlan,
+        confirmationToken: outcome.confirmationToken,
+        ...(outcome.expiresAt ? { expiresAt: outcome.expiresAt } : {}),
+        entries: outcome.conflicts.map((conflict) => ({
+          candidateIndex: conflict.candidateIndex,
+          candidate: conflict.candidate,
+          target: conflict.current,
+          changedFields: conflict.changedFields,
+          desired: mailTestRefreshPlan.entries.find((entry) => entry.candidateIndex === conflict.candidateIndex)?.desired ?? null,
+        })),
+      });
+    }
+  }, setMailTestBusy);
   const createRule = async (input: OrganizationRuleInput): Promise<void> => withError(async () => { const rule = await api.createOrganizationRule(data.organization.organizationId, input); setData((current) => ({ ...current, rules: [...current.rules, rule] })); }, setRuleBusy);
   const updateRule = async (ruleId: string, input: Pick<OrganizationRuleInput, 'permittedRecipientListIds' | 'permittedLineListIds'>): Promise<void> => withError(async () => {
     const updated = await api.updateOrganizationRule(data.organization.organizationId, ruleId, input);
@@ -459,7 +498,7 @@ export const OrganizationLayout = () => {
   }, setRuleBusy);
   const logout = () => void withError(async () => { await api.logout(); navigate('/', { replace: true }); }, setBusy);
   const reauthenticate = () => void withError(async () => { window.location.assign((await api.reauthorizeAutomationInbox(data.organization.organizationId)).authorizationUrl); }, setBusy);
-  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateRule, agentTranscript, proposedActions, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, decideProposedAction, decideProposedActionBatch, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, createMember, updateMember, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshMembers, applyPreset, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, aiTestBusy, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, lineSettingsBusy, aiSettingsBusy, ruleBusy, memberBusy, attachmentFolderPath, setAttachmentFolderPath, attachmentFolderBusy, saveAttachmentFolderPath, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
+  const value: OrganizationContextValue = { ...data, busy, error, summary, setEnabled, run, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateRule, agentTranscript, proposedActions, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, decideProposedAction, decideProposedActionBatch, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, createMember, updateMember, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshMembers, applyPreset, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, aiTestBusy, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestBusy, mailTestCreatedEventIds, mailTestRefreshRequest, mailTestRefreshPlan, mailTestRefreshOutcome, prepareRefresh, planRefresh, applyRefresh, lineSettingsBusy, aiSettingsBusy, ruleBusy, memberBusy, attachmentFolderPath, setAttachmentFolderPath, attachmentFolderBusy, saveAttachmentFolderPath, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
   return <OrganizationContext.Provider value={value}><Outlet /></OrganizationContext.Provider>;
 };
 
@@ -511,6 +550,12 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     mailTestPreview={value.mailTestPreview}
     mailTestBusy={value.mailTestBusy}
     mailTestCreatedEventIds={value.mailTestCreatedEventIds}
+    mailTestRefreshRequest={value.mailTestRefreshRequest}
+    mailTestRefreshPlan={value.mailTestRefreshPlan}
+    mailTestRefreshOutcome={value.mailTestRefreshOutcome}
+    onPrepareRefresh={value.prepareRefresh}
+    onPlanRefresh={value.planRefresh}
+    onApplyRefresh={value.applyRefresh}
     onMailTestSubjectChange={value.setMailTestSubject}
     onSearchMailbox={value.searchMailbox}
     onPrepareMailbox={value.prepareMailbox}

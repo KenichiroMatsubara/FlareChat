@@ -237,8 +237,16 @@ An AI-classified creation, modification, or cancellation derived from a Source M
 _Avoid_: email action, event update
 
 **Manual Override**:
-A field value changed by an Admin in the GUI or directly on the organizer's Google Calendar that automated Event Changes may not overwrite.
+A field value changed by an Admin in the GUI or directly on the organizer's Google Calendar that automated Event Changes may not overwrite. An Event Refresh is the one exception, because an Admin approves that single rewrite after seeing what it replaces.
 _Avoid_: edit, correction
+
+**Source Attribution**:
+The sentence in a Scheduled Event's Calendar description naming the Source Message it came from, and the correlation between the two.
+_Avoid_: footer, provenance note
+
+**Event Refresh**:
+An Admin-approved rewrite of an existing Scheduled Event's Calendar fields, except its attendees, from a fresh extraction of its Source Message.
+_Avoid_: resync, regenerate, backfill
 
 **Significant Change**:
 A change to a Scheduled Event's date, time, location, or Registration Deadline that warrants a Member-facing LINE notification.

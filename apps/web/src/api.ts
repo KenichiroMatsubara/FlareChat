@@ -295,6 +295,74 @@ export interface MailboxTestAiRequest extends MailboxTestMatch {
   request: Record<string, unknown>;
 }
 
+export interface MailboxTestEventCandidate {
+  title: string;
+  startsAt: string;
+  endsAt: string;
+  timeZone: string;
+  location: string;
+  description: string;
+  summary: string;
+}
+
+/** An existing Scheduled Event as it stands in Google Calendar right now. */
+export interface ScheduledEventFields {
+  id: string;
+  etag: string | null;
+  title: string;
+  description: string;
+  location: string;
+  startsAt: string;
+  endsAt: string;
+  timeZone: string;
+}
+
+export interface MailboxTestRefreshRequest {
+  existing: ScheduledEventFields[];
+  outOfWindow: ScheduledEventFields[];
+  request: Record<string, unknown> | null;
+}
+
+export interface MailboxTestRefreshEntry {
+  candidateIndex: number;
+  candidate: MailboxTestEventCandidate;
+  target: ScheduledEventFields | null;
+  changedFields: string[];
+  desired: {
+    title: string;
+    description: string;
+    location: string;
+    startsAt: string;
+    endsAt: string;
+    timeZone: string;
+  } | null;
+}
+
+export interface MailboxTestRefreshPlan {
+  entries: MailboxTestRefreshEntry[];
+  unmatched: ScheduledEventFields[];
+  outOfWindow: ScheduledEventFields[];
+  pendingAttachments: string[];
+  confirmationToken: string;
+  expiresAt: string;
+}
+
+export interface MailboxTestRefreshOutcome {
+  updated: string[];
+  created: string[];
+  conflicts: Array<{
+    candidateIndex: number;
+    googleEventId: string;
+    etag: string | null;
+    current: ScheduledEventFields;
+    changedFields: string[];
+    candidate: MailboxTestEventCandidate;
+  }>;
+  failures: Array<{ googleEventId: string | null; title: string; message: string }>;
+  confirmationToken: string | null;
+  expiresAt: string | null;
+}
+
 const responseBody = async <T>(response: Response): Promise<(ApiResult<T> & ApiFailure) | null> => {
   const text = await response.text();
   if (!text) return null;
@@ -459,6 +527,18 @@ export const api = {
   createMailboxTestCalendarEvent: (organizationId: string, confirmationToken: string): Promise<{ eventIds: string[] }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/calendar`, {
     method: 'POST',
     body: JSON.stringify({ confirmationToken }),
+  }),
+  prepareMailboxTestRefreshRequest: (organizationId: string, messageId: string, confirmationToken: string): Promise<MailboxTestRefreshRequest> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/${encodeURIComponent(messageId)}/refresh-request`, {
+    method: 'POST',
+    body: JSON.stringify({ confirmationToken }),
+  }),
+  planMailboxTestRefresh: (organizationId: string, messageId: string, confirmationToken: string): Promise<MailboxTestRefreshPlan> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/${encodeURIComponent(messageId)}/refresh-plan`, {
+    method: 'POST',
+    body: JSON.stringify({ confirmationToken }),
+  }),
+  applyMailboxTestRefresh: (organizationId: string, confirmationToken: string, candidateIndexes: number[]): Promise<MailboxTestRefreshOutcome> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/refresh`, {
+    method: 'POST',
+    body: JSON.stringify({ confirmationToken, candidateIndexes }),
   }),
   runAutomation: (organizationId: string): Promise<AutomationSummary> => request(`/api/organizations/${encodeURIComponent(organizationId)}/automation/run`, { method: 'POST' }),
   setEnabled: (organizationId: string, enabled: boolean): Promise<{ enabled: boolean }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/automation/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }),

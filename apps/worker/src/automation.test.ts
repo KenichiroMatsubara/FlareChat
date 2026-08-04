@@ -17,6 +17,7 @@ import {
 import { createAutomationTestApp, type AutomationTestApp } from '../test/automation';
 import { createMemoryR2, seedAttendanceRegistration, seedScheduledEvent } from '../test/seed';
 import { AGENT_TOKEN_CEILING, MAX_AGENT_TOOL_CALLS } from './agent-runs';
+import { GoogleApiError } from './automation/providers';
 
 let fixture: AutomationTestApp | undefined;
 
@@ -442,6 +443,7 @@ describe('Organization Automation Inbox scheduling', () => {
       agent: { complete },
       ai: {
         extract: async () => ({ summary: '例会のお知らせです。', events: [], tasks: [], warnings: [] }),
+        correspond: async () => [],
       },
     });
 
@@ -503,8 +505,9 @@ describe('Organization Automation Inbox scheduling', () => {
         publish: async () => ({ outcome: 'succeeded', driveFileId: 'drive-1', publicUrl: 'https://drive.example/agenda' }),
         ensurePath: async () => 'attachment-folder-path',
         createMessageFolder: async () => 'source-message-folder',
+        find: async () => null,
       },
-      ai: { extract },
+      ai: { extract, correspond: async () => [] },
       agent: { complete },
     });
 
@@ -776,6 +779,7 @@ describe('Organization Automation Inbox scheduling', () => {
         },
       },
       ai: {
+        correspond: async () => [],
         extract: async () => ({
           summary: '例会のお知らせです。',
           events: [{
@@ -1614,5 +1618,237 @@ describe('Manual mailbox test', () => {
       expect.objectContaining({ name: expect.stringContaining('名古屋名城RAC30周年記念式典のご案内'), parents: ['drive-folder-1'] }),
     ]);
     expect(uploadMetadata.parents).toEqual(['drive-folder-2']);
+  });
+});
+
+describe('the Event Refresh exit', () => {
+  const CANDIDATE: EventDetails = {
+    title: '30周年記念式典',
+    startsAt: '2026-08-18T14:30:00+09:00',
+    endsAt: '2026-08-18T16:00:00+09:00',
+    timeZone: 'Asia/Tokyo',
+    location: '市民ホール',
+    description: '記念式典',
+    summary: '30周年を祝う記念式典です。会費は5,000円です。',
+  };
+
+  const staleEvent = (description: string) => ({
+    id: 'calendar-event-1',
+    etag: '"etag-1"',
+    summary: '記念式典',
+    description,
+    location: '',
+    start: { dateTime: '2026-08-18T14:30:00+09:00', timeZone: 'Asia/Tokyo' },
+    end: { dateTime: '2026-08-18T16:00:00+09:00', timeZone: 'Asia/Tokyo' },
+  });
+
+  const gmailMessage = {
+    id: 'gmail-refresh-1',
+    payload: {
+      headers: [
+        { name: 'Subject', value: '30周年記念式典のご案内' },
+        { name: 'From', value: 'member@example.com' },
+      ],
+      body: { data: gmailBody('式典のご案内です。') },
+    },
+    internalDate: '1786000000000',
+  };
+
+  const attachmentPort = {
+    read: async () => [],
+    publish: async () => ({ outcome: 'succeeded' as const, driveFileId: 'drive-1', publicUrl: 'https://drive.example/a' }),
+    ensurePath: async () => 'attachment-folder-path',
+    createMessageFolder: async () => 'source-message-folder',
+    find: async () => null,
+  };
+
+  it('plans an update for the Scheduled Event this message already produced', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    let correspondenceInput: { existing: Array<{ id: string }> } | undefined;
+    const automation = createAutomation(fixture.environment, {
+      attachments: attachmentPort,
+      google: {
+        request: async <T>(_accessToken: string, url: string): Promise<T> => {
+          if (url.includes('/calendar/v3/calendars/primary/events?')) {
+            return { items: [
+              staleEvent('Mail Automation が Gmail メッセージ gmail-refresh-1 から作成しました。'),
+              {
+                ...staleEvent('Mail Automation が Gmail メッセージ gmail-refresh-1 から作成しました。'),
+                id: 'calendar-event-far',
+                start: { dateTime: '2026-11-18T14:30:00+09:00', timeZone: 'Asia/Tokyo' },
+                end: { dateTime: '2026-11-18T16:00:00+09:00', timeZone: 'Asia/Tokyo' },
+              },
+              { ...staleEvent('手で作った予定です。'), id: 'calendar-event-manual' },
+            ] } as T;
+          }
+          if (url.includes('/messages/gmail-refresh-1')) return gmailMessage as T;
+          throw new Error(`Unexpected Google request: ${url}`);
+        },
+      },
+      ai: {
+        extract: async () => null,
+        correspond: async (input) => {
+          correspondenceInput = input;
+          return [{ candidateIndex: 0, eventId: 'calendar-event-1' }];
+        },
+      },
+    });
+
+    const plan = await automation.mailboxTest.planRefresh({
+      organizationId: 'organization-1',
+      database: fixture.organization.binding,
+      messageId: 'gmail-refresh-1',
+      events: [CANDIDATE],
+    });
+
+    expect(correspondenceInput?.existing.map((event) => event.id)).toEqual(['calendar-event-1']);
+    expect(plan.entries[0]?.target?.id).toBe('calendar-event-1');
+    expect(plan.entries[0]?.changedFields).toEqual(['title', 'description', 'location']);
+    expect(plan.outOfWindow.map((event) => event.id)).toEqual(['calendar-event-far']);
+    expect(plan.desired[0]?.description).toContain('Mail Automation が Gmail メッセージ gmail-refresh-1 から作成しました。');
+  });
+
+  it('rewrites every field but the attendees, and records the effect', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    fixture.organization.execute(
+      `INSERT INTO events
+        (id, organization_id, rule_id, google_event_id, title, starts_at, ends_at, location, description, status, created_at, updated_at)
+       VALUES (?, 'organization-1', 'rule-1', 'calendar-event-1', ?, ?, ?, '', '', 'scheduled', ?, ?)`,
+      'event-1',
+      '記念式典',
+      '2026-08-18T14:30:00+09:00',
+      '2026-08-18T16:00:00+09:00',
+      '2026-07-25T00:00:00.000Z',
+      '2026-07-25T00:00:00.000Z',
+    );
+    let patched: { url: string; body: Record<string, unknown>; headers: Record<string, string> } | undefined;
+    const automation = createAutomation(fixture.environment, {
+      attachments: attachmentPort,
+      google: {
+        request: async <T>(_accessToken: string, url: string, init?: RequestInit): Promise<T> => {
+          if (url.includes('/messages/gmail-refresh-1')) return gmailMessage as T;
+          if (init?.method === 'PATCH') {
+            patched = {
+              url,
+              body: JSON.parse(String(init.body)) as Record<string, unknown>,
+              headers: init.headers as Record<string, string>,
+            };
+            return { id: 'calendar-event-1', etag: '"etag-2"' } as T;
+          }
+          throw new Error(`Unexpected Google request: ${url}`);
+        },
+      },
+    });
+
+    const outcome = await automation.mailboxTest.applyRefresh({
+      organizationId: 'organization-1',
+      database: fixture.organization.binding,
+      messageId: 'gmail-refresh-1',
+      entries: [{ googleEventId: 'calendar-event-1', etag: '"etag-1"', candidate: CANDIDATE }],
+    });
+
+    expect(outcome.updated).toEqual(['calendar-event-1']);
+    expect(patched?.headers['If-Match']).toBe('"etag-1"');
+    expect(patched?.url).toContain('sendUpdates=none');
+    expect(patched?.body).toMatchObject({
+      summary: '30周年記念式典',
+      location: '市民ホール',
+      start: { dateTime: '2026-08-18T14:30:00+09:00', timeZone: 'Asia/Tokyo' },
+    });
+    expect(patched?.body.attendees).toBeUndefined();
+    expect(String(patched?.body.description)).toContain('Mail Automation が Gmail メッセージ gmail-refresh-1 から作成しました。');
+    expect(fixture.organization.row<{ title: string; location: string }>(
+      'SELECT title, location FROM events WHERE google_event_id = ?', 'calendar-event-1',
+    )).toMatchObject({ title: '30周年記念式典', location: '市民ホール' });
+    expect(fixture.organization.rows<{ channel: string; external_id: string }>(
+      "SELECT channel, external_id FROM deliveries WHERE channel = 'calendar'",
+    )).toEqual([{ channel: 'calendar', external_id: 'calendar-event-1' }]);
+  });
+
+  it('re-offers a Scheduled Event the Calendar changed after the plan, instead of overwriting it', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    const automation = createAutomation(fixture.environment, {
+      attachments: attachmentPort,
+      google: {
+        request: async <T>(_accessToken: string, url: string, init?: RequestInit): Promise<T> => {
+          if (url.includes('/messages/gmail-refresh-1')) return gmailMessage as T;
+          if (init?.method === 'PATCH') throw new GoogleApiError('Precondition Failed', 412, url);
+          return {
+            ...staleEvent('Mail Automation が Gmail メッセージ gmail-refresh-1 から作成しました。'),
+            etag: '"etag-9"',
+            location: '別会場',
+          } as T;
+        },
+      },
+    });
+
+    const outcome = await automation.mailboxTest.applyRefresh({
+      organizationId: 'organization-1',
+      database: fixture.organization.binding,
+      messageId: 'gmail-refresh-1',
+      entries: [{ googleEventId: 'calendar-event-1', etag: '"etag-1"', candidate: CANDIDATE }],
+    });
+
+    expect(outcome.updated).toEqual([]);
+    expect(outcome.conflicts).toHaveLength(1);
+    expect(outcome.conflicts[0]?.etag).toBe('"etag-9"');
+    expect(outcome.conflicts[0]?.current.location).toBe('別会場');
+    expect(outcome.conflicts[0]?.changedFields).toContain('location');
+  });
+
+  it('reuses a Public Attachment a previous run already placed in the folder', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    fixture.organization.execute(
+      `INSERT INTO source_messages
+        (id, gmail_message_id, gmail_history_id, sender, subject, drive_folder_id, received_at, processed_at, state)
+       VALUES (?, 'gmail-refresh-1', 'history-1', ?, ?, 'source-message-folder', ?, ?, 'processed')`,
+      'source-message-1',
+      'member@example.com',
+      '30周年記念式典のご案内',
+      '2026-07-25T00:00:00.000Z',
+      '2026-07-25T00:00:00.000Z',
+    );
+    const publish = vi.fn();
+    let patchedDescription = '';
+    const automation = createAutomation(fixture.environment, {
+      attachments: {
+        ...attachmentPort,
+        publish,
+        find: async () => ({ driveFileId: 'drive-existing', publicUrl: 'https://drive.example/existing' }),
+      },
+      google: {
+        request: async <T>(_accessToken: string, url: string, init?: RequestInit): Promise<T> => {
+          if (url.includes('/messages/gmail-refresh-1')) {
+            return {
+              ...gmailMessage,
+              payload: {
+                ...gmailMessage.payload,
+                parts: [{
+                  filename: '案内.pdf',
+                  mimeType: 'application/pdf',
+                  body: { attachmentId: 'attachment-1', size: 1_024 },
+                }],
+              },
+            } as T;
+          }
+          if (init?.method === 'PATCH') {
+            patchedDescription = String((JSON.parse(String(init.body)) as { description?: string }).description);
+            return { id: 'calendar-event-1' } as T;
+          }
+          throw new Error(`Unexpected Google request: ${url}`);
+        },
+      },
+    });
+
+    await automation.mailboxTest.applyRefresh({
+      organizationId: 'organization-1',
+      database: fixture.organization.binding,
+      messageId: 'gmail-refresh-1',
+      entries: [{ googleEventId: 'calendar-event-1', etag: null, candidate: CANDIDATE }],
+    });
+
+    expect(publish).not.toHaveBeenCalled();
+    expect(patchedDescription).toContain('https://drive.example/existing');
+    expect(patchedDescription).toContain('案内.pdf');
   });
 });
