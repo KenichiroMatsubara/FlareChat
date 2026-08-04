@@ -1,5 +1,5 @@
 ---
-status: superseded by ADR-0116
+status: superseded by ADR-0118
 ---
 
 # Project operational Task Assignments to Organization D1

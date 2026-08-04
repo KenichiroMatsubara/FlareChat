@@ -4,4 +4,4 @@ A Task Assignment names a Member through a real foreign key within one Organizat
 
 ## Consequences
 
-Extraction is unaffected, because ADR 0102 already has the model choose an Operational Task Role rather than a person. Existing assignments name the shared Organization account and are reset to unassigned during the ADR 0115 rename migration, which ADR 0103 already treats as a normal state rather than an error.
+Extraction is unaffected, because ADR 0102 already has the model choose an Operational Task Role rather than a person. Existing assignments name the shared Organization account and are reset to unassigned during the ADR 0117 rename migration, which ADR 0103 already treats as a normal state rather than an error.

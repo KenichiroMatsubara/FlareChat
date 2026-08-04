@@ -1,5 +1,5 @@
 ---
-status: superseded by ADR-0117
+status: superseded by ADR-0119
 ---
 
 # Use revocable registration links

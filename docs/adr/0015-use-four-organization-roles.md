@@ -1,5 +1,5 @@
 ---
-status: superseded by ADR-0114
+status: superseded by ADR-0116
 ---
 
 # Use four organization roles
