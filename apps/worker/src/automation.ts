@@ -25,7 +25,7 @@ import type {
 import { writeRecoveryReceipt } from './recovery-receipts';
 import { resolveSourceMessageFolder } from './attachment-folders';
 import { createTaskWorkflow } from './tasks';
-import { deliverLineBatch, deliverSourceMessageEmail, recordDeliveryAttempt } from './delivery';
+import { activeMemberInvitees, deliverLineBatch, deliverSourceMessageEmail, recordDeliveryAttempt, recordEventInvitations } from './delivery';
 import type { PublishedDriveAttachment, SourceAttachment, SourceAttachmentContent } from './drive-attachments';
 import { GoogleGrantRejectedError } from './google';
 import type { GoogleTokenSet } from './google';
@@ -1546,8 +1546,12 @@ const processOrganizationMessage = async (
     title: attachment.filename,
     mimeType: attachment.mimeType,
   }] : []);
+  const invitees = await activeMemberInvitees(database);
+  /** An unpublished attachment keeps the event an administrative draft, so its Members are not invited yet. */
+  const attendees = publicationFailed ? [] : invitees;
   const calendarUrl = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
   if (calendarAttachments.length) calendarUrl.searchParams.set('supportsAttachments', 'true');
+  if (attendees.length) calendarUrl.searchParams.set('sendUpdates', 'all');
   for (const candidate of candidates) {
     const event = await dependencies.google.request<CalendarEvent>(accessToken, calendarUrl.toString(), {
       method: 'POST',
@@ -1561,6 +1565,7 @@ const processOrganizationMessage = async (
         start: { dateTime: candidate.startsAt, timeZone: 'Asia/Tokyo' },
         end: { dateTime: candidate.endsAt, timeZone: 'Asia/Tokyo' },
         attachments: calendarAttachments,
+        attendees: attendees.map(({ email }) => ({ email })),
       }),
     });
     if (!event.id) throw new Error('Google Calendar did not return an event ID.');
@@ -1579,6 +1584,13 @@ const processOrganizationMessage = async (
       createdAt: eventCreatedAt,
       updatedAt: eventCreatedAt,
     }).run();
+    await recordEventInvitations({
+      database,
+      eventId,
+      googleEventId: event.id,
+      invitees,
+      outcome: publicationFailed ? 'pending' : 'succeeded',
+    });
     for (const { attachment, publication } of publications) {
       await db.insert(eventAttachments).values({
         id: crypto.randomUUID(),

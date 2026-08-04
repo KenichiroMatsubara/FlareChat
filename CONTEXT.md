@@ -52,6 +52,8 @@ Organization connection credentials are encrypted with an Organization-specific 
 
 A Scheduled Event's Calendar description states its Event Summary first, then each Public Attachment as a link labelled with its filename, then the sentence naming the Source Message it came from. Google Calendar renders a small HTML subset, so untrusted extracted text and filenames are escaped and only absolute http(s) links are written.
 
+A Scheduled Event created from a Source Message invites every active Member that carries an address as a Google Calendar attendee of the Automation Inbox's event, so the invitation reaches that Member's own Google account and calendar. The invited Members are frozen as the event's Recipient Snapshot when it is created, and one Delivery Record per Member records the invitation, so a later roster change never rewrites who an already delivered event reached.
+
 If Google Drive policy prevents an attachment from becoming a Public Attachment, the event is retained only on the Automation Inbox's Calendar as an administrative draft. Recipient invitations and Member notifications are withheld until publication succeeds, and an Automation Exception supports retry after policy correction.
 
 Completed Delivery Records and audit history older than twelve months are moved from Organization D1 into encrypted, compressed monthly R2 archives. Organization D1 retains archive indexes for GUI retrieval; active rules, recipients, credentials, pending Jobs, attendance for active events, and future events are never archived by this process.

@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { archiveExpiredDeliveryRecords } from './delivery-archive';
-import { deliverCalendarInvitation, deliverLineBatch, recordDeliveryAttempt } from './delivery';
+import { activeMemberInvitees, deliverCalendarInvitation, deliverLineBatch, recordDeliveryAttempt, recordEventInvitations } from './delivery';
 import { masterKey } from './cryptography';
 import { createMigratedTestD1, type TestD1Database } from '../test/d1';
-import { createMemoryR2, seedScheduledEvent } from '../test/seed';
+import { createMemoryR2, seedMember, seedScheduledEvent } from '../test/seed';
 
 const openDatabases: TestD1Database[] = [];
 
@@ -103,6 +103,59 @@ describe('Delivery Records', () => {
 
     expect(result).toMatchObject({ destination: 'guest@example.com', outcome: 'failed', externalId: null });
     await expect(archivedRecordCount(database)).resolves.toBe(1);
+  });
+
+  it('invites every active Member that carries a usable address, once', async () => {
+    const database = deliveryDatabase();
+    seedMember(database, { id: 'member-1', name: '一郎', email: 'first@example.com' });
+    seedMember(database, { id: 'member-2', name: '二郎', email: 'FIRST@example.com' });
+    seedMember(database, { id: 'member-3', name: '三郎', email: '' });
+    seedMember(database, { id: 'member-4', name: '四郎', email: 'not-an-address' });
+    seedMember(database, { id: 'member-5', name: '五郎', email: 'fifth@example.com' });
+    database.execute("UPDATE members SET state = 'inactive' WHERE id = 'member-5'");
+
+    await expect(activeMemberInvitees(database.binding)).resolves.toEqual([
+      { memberId: 'member-1', name: '一郎', email: 'first@example.com' },
+    ]);
+  });
+
+  it('snapshots each invited Member and records one Delivery Record per invitation', async () => {
+    const database = deliveryDatabase();
+    seedMember(database, { id: 'member-1', name: '一郎', email: 'first@example.com' });
+    seedMember(database, { id: 'member-2', name: '二郎', email: 'second@example.com' });
+
+    const results = await recordEventInvitations({
+      database: database.binding,
+      eventId: 'event-1',
+      googleEventId: 'calendar-event-1',
+      invitees: await activeMemberInvitees(database.binding),
+      outcome: 'succeeded',
+    });
+
+    expect(results.map(({ destination, outcome, externalId }) => ({ destination, outcome, externalId }))).toEqual([
+      { destination: 'first@example.com', outcome: 'succeeded', externalId: 'calendar-event-1' },
+      { destination: 'second@example.com', outcome: 'succeeded', externalId: 'calendar-event-1' },
+    ]);
+    expect(database.rows('SELECT member_id, name_snapshot, email_snapshot FROM event_recipients ORDER BY member_id')).toEqual([
+      { member_id: 'member-1', name_snapshot: '一郎', email_snapshot: 'first@example.com' },
+      { member_id: 'member-2', name_snapshot: '二郎', email_snapshot: 'second@example.com' },
+    ]);
+  });
+
+  it('records a withheld invitation as pending work rather than a delivered one', async () => {
+    const database = deliveryDatabase();
+    seedMember(database, { id: 'member-1', name: '一郎', email: 'first@example.com' });
+
+    const results = await recordEventInvitations({
+      database: database.binding,
+      eventId: 'event-1',
+      googleEventId: 'calendar-event-1',
+      invitees: await activeMemberInvitees(database.binding),
+      outcome: 'pending',
+    });
+
+    expect(results).toMatchObject([{ destination: 'first@example.com', outcome: 'pending', externalId: null }]);
+    expect(database.rows('SELECT member_id FROM event_recipients')).toEqual([{ member_id: 'member-1' }]);
   });
 
   it('sends one ordered LINE batch and leaves one durable outcome per intended message', async () => {
