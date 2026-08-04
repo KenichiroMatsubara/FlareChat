@@ -345,6 +345,18 @@ export const taskRoleAssignments = sqliteTable('task_role_assignments', {
   updatedAt: text('updated_at').notNull(),
 });
 
+/**
+ * When the Organization's Operational Task Role set last changed, and when an
+ * Admin last reviewed the open Tasks against it. One row, keyed `current`.
+ */
+export const taskRoleRevisions = sqliteTable('task_role_revisions', {
+  id: text('id').primaryKey(),
+  revision: integer('revision').notNull().default(0),
+  reviewedRevision: integer('reviewed_revision').notNull().default(0),
+  changedAt: text('changed_at').notNull(),
+  reviewedAt: text('reviewed_at'),
+});
+
 export const tasks = sqliteTable('tasks', {
   id: text('id').primaryKey(),
   organizationId: text('organization_id').notNull(),
