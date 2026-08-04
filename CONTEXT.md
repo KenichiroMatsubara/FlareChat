@@ -6,23 +6,27 @@ Mail Automation is general. It knows Organizations, roles, rules, and destinatio
 
 The deployment uses the Workers Paid plan and is designed to remain near its $5 monthly minimum under the intended small-organization workload. Cloudflare usage above included allowances may incur additional charges, so this is a cost target rather than a hard spending guarantee. Google, LINE, and AI provider quotas, plans, and charges remain separate Organization-managed constraints.
 
-The deployment uses one Control D1 database plus one Organization D1 database per Organization. Control D1 contains only identities, Organization routing, memberships, and deployment capacity state; each Organization D1 contains that Organization's rules, events, recipients, Jobs, credentials, and history. Application-owned Durable Objects are not used.
+The deployment uses one Control D1 database plus one Organization D1 database per Organization. Control D1 contains only identities, Organization routing, memberships, and deployment capacity state; each Organization D1 contains that Organization's rules, events, Members, Jobs, credentials, and history. Application-owned Durable Objects are not used.
 
 Organization registration derives a human-readable D1 name from the confirmed Automation Inbox address using `flarechat-organization-{normalized-address}-{address-hash}`. Provisioning resolves that exact Cloudflare database before creating one, applies only unapplied schema migrations, attaches the deterministic binding, verifies access, and only then activates the Organization. A stored Cloudflare database UUID is a routing cache rather than the sole means of rediscovering the database; provisioning never selects an arbitrary available production database.
 
 Production Worker releases are gated on Control D1 migration and a verified migration of every recorded Organization D1, including suspended Organizations and databases allocated by in-progress provisioning. A release barrier pauses only new Organization provisioning while the fleet is prepared and verified. All runtime Organization D1 access also passes through a schema-ready seam that repairs safe missing migrations before returning the database, so login, scheduled work, webhooks, and background automation share the same guarantee.
 
-Application entry has two explicit Google intents. Existing members use identity-only login with `openid`, `email`, and `profile`; it resolves the Identity by Google `sub`, creates only an application session, and never creates or resumes Organization setup. Organization creation uses one separate complete authorization. The authorized account becomes both the Automation Inbox and the initial Owner identity, and its display name is the editable Organization-name default. D1 provisioning starts only after Google returns the complete required grant: identity, `gmail.readonly`, `gmail.send`, `calendar.events.owned`, and `drive.file`. Partial consent creates no Organization or D1 database; no separate application login allowlist is required for the private pilot.
+Application entry has two explicit Google intents. Existing Admins and Members use identity-only login with `openid`, `email`, and `profile`; it resolves the Identity by Google `sub`, creates only an application session, and never creates or resumes Organization setup. Organization creation uses one separate complete authorization. The authorized account becomes both the Automation Inbox and the initial Admin identity, and its display name is the editable Organization-name default. D1 provisioning starts only after Google returns the complete required grant: identity, `gmail.readonly`, `gmail.send`, `calendar.events.owned`, and `drive.file`. Partial consent creates no Organization or D1 database; no separate application login allowlist is required for the private pilot.
 
 If Organization creation identifies an Identity that already has an active Organization Membership, Mail Automation discards the broader Google credential and completes ordinary application login instead. It creates no Organization setup, Organization, or D1 database.
 
 The browser carries only the application session cookie. A bootstrap interface derives one discriminated application state from durable Control D1 records: signed out, unassigned, confirming Organization, provisioning, provisioning failed, or ready. Short-lived OAuth attempts, name-confirmation setup, and retryable provisioning are separate records. Automation Inbox ownership is claimed by the stable Google `sub`, with the email address retained as current display and delivery data rather than as identity.
 
-The Automation Inbox remains an Organization-owned Google Connection rather than a human membership record, even when its Google identity also identifies the initial Owner. Setup requires neither Owner email re-entry nor passkey registration.
+The Automation Inbox remains an Organization-owned Google Connection rather than a human membership record, even when its Google identity also identifies the initial Admin. Setup requires neither Admin email re-entry nor passkey registration.
+
+An Organization has one authorization role. An Admin signs into the management GUI and may perform every administrative operation; a Member holds no administrative authorization at all. Because the initial Admin is the Organization's own shared account rather than a person, no second Admin is provided; if one is ever wanted it is promoted from a Member, whose Google account is already bound.
+
+A Member signs into a single Member Portal to register attendance, write comments, and complete the Tasks assigned to them. A Member may read every Task in the Organization but may complete only their own. A Member reaches the Portal for the first time through a single-use link delivered to their linked LINE Destination; a Member with no linked LINE Destination has no Portal access and is administered entirely by an Admin.
 
 An Organization setup session expires fifteen minutes after the Automation Inbox grant while the installer confirms the editable Organization name. If confirmation is not completed in time, Mail Automation revokes and deletes the Google credential and creates no Organization D1 database.
 
-After Google authorization and name confirmation succeed, a failed D1 provisioning operation may retain the encrypted Google credential and initial Owner record for at most twenty-four hours while explicit and automatic idempotent retries remain available. The failed phase and concrete error remain visible. Expiry revokes the grant, deletes the pending credential, and requires a new setup.
+After Google authorization and name confirmation succeed, a failed D1 provisioning operation may retain the encrypted Google credential and initial Admin record for at most twenty-four hours while explicit and automatic idempotent retries remain available. The failed phase and concrete error remain visible. Expiry revokes the grant, deletes the pending credential, and requires a new setup.
 
 When an estimated included Cloudflare allowance or configured cost threshold approaches exhaustion, interactive attendance, administration, and authentication traffic takes precedence. New inbox processing, AI extraction, and ordinary LINE delivery are retained as pending work and resume oldest-first after capacity recovers.
 
@@ -44,7 +48,7 @@ Organization connection credentials are encrypted with an Organization-specific 
 
 A Scheduled Event's Calendar description states its Event Summary first, then each Public Attachment as a link labelled with its filename, then the sentence naming the Source Message it came from. Google Calendar renders a small HTML subset, so untrusted extracted text and filenames are escaped and only absolute http(s) links are written.
 
-If Google Drive policy prevents an attachment from becoming a Public Attachment, the event is retained only on the Automation Inbox's Calendar as an administrative draft. Recipient invitations and member notifications are withheld until publication succeeds, and an Automation Exception supports retry after policy correction.
+If Google Drive policy prevents an attachment from becoming a Public Attachment, the event is retained only on the Automation Inbox's Calendar as an administrative draft. Recipient invitations and Member notifications are withheld until publication succeeds, and an Automation Exception supports retry after policy correction.
 
 Completed Delivery Records and audit history older than twelve months are moved from Organization D1 into encrypted, compressed monthly R2 archives. Organization D1 retains archive indexes for GUI retrieval; active rules, recipients, credentials, pending Jobs, attendance for active events, and future events are never archived by this process.
 
@@ -52,31 +56,19 @@ The initial deployment creates no separate daily D1 backup. It relies on Workers
 
 Every successful external effect also creates an encrypted immutable Recovery Receipt in private R2 for thirty-five days. After an Organization D1 Time Travel restore, automation remains suspended until receipts newer than the restore point have rebuilt the missing idempotency and Delivery Records.
 
-An Organization Owner may request a Time Travel restore, but only the deployment operator may execute it. Restore suspends the Organization, exports its current D1 state, performs recovery, and reconciles Recovery Receipts before resumption. A dedicated restore-request GUI is deferred beyond the initial delivery; the same policy may initially be followed through an operator runbook.
+An Organization Admin may request a Time Travel restore, but only the deployment operator may execute it. The deployment operator runs the service itself and is not an Organization role. Restore suspends the Organization, exports its current D1 state, performs recovery, and reconciles Recovery Receipts before resumption. A dedicated restore-request GUI is deferred beyond the initial delivery; the same policy may initially be followed through an operator runbook.
 
 Attachment intake initially permits at most 20 MiB per attachment and 40 MiB across one Source Message. An Organization may configure smaller limits. Exceeding either limit withholds the message from automatic event delivery and creates an Automation Exception.
 
 ## Language
 
 **Organization**:
-A security and ownership scope whose members jointly manage Google Connections, typed lists, Automation Rules, Scheduled Events, and audit history.
+A security and ownership scope whose Admins manage Google Connections, typed lists, Automation Rules, Scheduled Events, and audit history for its Members.
 _Avoid_: tenant, team, workspace
 
-**Owner**:
-An Organization member who controls membership, connections, settings, and all automation operations.
-_Avoid_: super admin
-
 **Admin**:
-An Organization member who manages connections, typed lists, Automation Rules, and Automation Exceptions.
-_Avoid_: administrator
-
-**Operator**:
-An Organization member who operates typed lists and Automation Rules and may pause, resume, or retry automation.
-_Avoid_: editor
-
-**Viewer**:
-An Organization member with read-only access to Scheduled Events, Delivery Records, and Automation Exceptions.
-_Avoid_: read-only user
+The Organization's only authorization role, held by an account that signs into the management GUI and may perform every administrative and automation operation.
+_Avoid_: owner, operator, viewer, administrator, super admin
 
 **Source Message**:
 A Gmail message selected for automation, including its body and attachments.
@@ -94,6 +86,10 @@ _Avoid_: temporary file, blocked file
 A safe attachment stored once in Drive and readable without Google login by anyone who possesses its unindexed link.
 _Avoid_: shared file, public document
 
+**Attachment Folder Path**:
+The Drive location an Organization writes for itself, beneath which Mail Automation creates one folder per Source Message and stores that message's Public Attachments.
+_Avoid_: save location, drive path, output folder
+
 **Attachment Association**:
 A relevance link between one safe source attachment and one Event Candidate; either side may participate in multiple associations.
 _Avoid_: attachment assignment, event file
@@ -103,24 +99,24 @@ An authorized Google account owned by one Organization with an explicit set of G
 _Avoid_: Google user, member account
 
 **Automation Inbox**:
-A single Google Connection authorized by an Organization to read Source Messages, send operational and recipient email, own Scheduled Events, and store their attachments. It never grants mailbox access to a Recipient Profile.
+A single Google Connection authorized by an Organization to read Source Messages, send operational and recipient email, own Scheduled Events, and store their attachments. It never grants mailbox access to a Member.
 _Avoid_: shared Gmail, monitored account
 
 **Member Address**:
-A member's email address used only as a Calendar invitation destination, without OAuth or mailbox access.
+A Member's email address used only as a Calendar invitation destination, without OAuth or mailbox access.
 _Avoid_: member Gmail connection, monitored user
 
-**Recipient Profile**:
-A person who may receive calendar or LINE deliveries, identified by a name, Member Addresses, LINE Destinations, membership status, and Organization-defined tags without needing application access.
-_Avoid_: user, contact, account
+**Member**:
+A person belonging to an Organization, identified by a name, Member Addresses, LINE Destinations, membership status, and Organization-defined tags. A Member holds Operational Task Roles, receives deliveries, and signs into the Member Portal, but holds no administrative authorization.
+_Avoid_: recipient profile, user, contact, account
 
-**Recipient Link**:
-A short-lived, single-use association that proves a LINE Destination belongs to one Recipient Profile without requiring application login or Google OAuth.
-_Avoid_: invite, account link
+**Member Link**:
+A short-lived, single-use association that proves a LINE Destination belongs to one Member.
+_Avoid_: recipient link, invite, account link
 
-**Registration Link**:
-A revocable, unguessable link scoped to one Recipient Profile and one Scheduled Event that permits attendance and comment changes until the Registration Deadline.
-_Avoid_: login link, public form
+**Member Portal**:
+The signed-in page where a Member registers attendance, writes comments, and completes their own Tasks. First entry binds that Member to a Google account by its stable `sub`; afterwards that account alone identifies them.
+_Avoid_: registration link, login link, public form
 
 **LINE Connection**:
 An authorized LINE Messaging API channel owned by one Organization and used as the sender for notifications.
@@ -131,7 +127,7 @@ An Organization-owned model provider authorization used to derive Event Details,
 _Avoid_: endpoint, model account
 
 **LINE Destination**:
-A LINE user, group, or room discovered through a verified webhook, or entered manually by an Owner, Admin, or Operator, on one LINE Connection and named by an Organization member. Its source, webhook or manual, remains recorded and visible.
+A LINE user, group, or room discovered through a verified webhook, or entered manually by an Admin, on one LINE Connection and named by an Admin. Its source, webhook or manual, remains recorded and visible.
 _Avoid_: LINE contact, webhook source
 
 **Automation Rule**:
@@ -151,7 +147,7 @@ The highest-priority Automation Rule in a Rule Match Set whose AI Connection and
 _Avoid_: winning rule, extraction rule
 
 **Owning Rule**:
-The Primary Rule retained by a Scheduled Event for interpreting its later Event Changes unless an Operator explicitly reassigns it.
+The Primary Rule retained by a Scheduled Event for interpreting its later Event Changes unless an Admin explicitly reassigns it.
 _Avoid_: event rule, pinned rule
 
 **Schema Rule**:
@@ -179,11 +175,11 @@ The Draft, Active, Suspended, or Archived lifecycle status that determines wheth
 _Avoid_: enabled flag, rule status
 
 **Execution Mode**:
-Whether an Agent Rule may only read, may write once a member approves each proposal, or may write unattended.
+Whether an Agent Rule may only read, may write once an Admin approves each proposal, or may write unattended.
 _Avoid_: permission level, safety setting
 
 **Proposed Action**:
-One external effect an Agent Rule's run recorded instead of performing, held with its exact arguments until a member approves it, rejects it, or it expires.
+One external effect an Agent Rule's run recorded instead of performing, held with its exact arguments until an Admin approves it, rejects it, or it expires.
 _Avoid_: pending delivery, draft action
 
 **Run Transcript**:
@@ -235,11 +231,11 @@ An AI-classified creation, modification, or cancellation derived from a Source M
 _Avoid_: email action, event update
 
 **Manual Override**:
-A field value changed by an authorized member in the GUI or directly on the organizer's Google Calendar that automated Event Changes may not overwrite.
+A field value changed by an Admin in the GUI or directly on the organizer's Google Calendar that automated Event Changes may not overwrite.
 _Avoid_: edit, correction
 
 **Significant Change**:
-A change to a Scheduled Event's date, time, location, or Registration Deadline that warrants a member-facing LINE notification.
+A change to a Scheduled Event's date, time, location, or Registration Deadline that warrants a Member-facing LINE notification.
 _Avoid_: important update, event edit
 
 **Calendar Revision**:
@@ -275,7 +271,7 @@ A named set of LINE Destinations reachable through one LINE Connection that may 
 _Avoid_: LINE recipient list
 
 **Operations Destination List**:
-The Organization's dedicated LINE Destination List for Automation Warnings, Automation Exceptions, and connection health alerts rather than member-facing event notifications.
+The Organization's dedicated LINE Destination List for Automation Warnings, Automation Exceptions, and connection health alerts rather than Member-facing event notifications.
 _Avoid_: admin group, error channel
 
 **Delivery Record**:
@@ -307,11 +303,11 @@ One dated occurrence within an Event Series with its own Recipient Snapshot, Reg
 _Avoid_: instance, session
 
 **Attendance Registration**:
-A Recipient Profile's authoritative attending, not-attending, or unanswered decision for a Scheduled Event, changeable until that event's registration deadline.
+A Member's authoritative attending, not-attending, or unanswered decision for a Scheduled Event, changeable until that event's registration deadline.
 _Avoid_: Calendar RSVP, attendance response
 
 **Eligible Recipient**:
-A Recipient Profile invited to a Scheduled Event and allowed to submit an Attendance Registration, without being presumed to attend.
+A Member invited to a Scheduled Event and allowed to submit an Attendance Registration, without being presumed to attend.
 _Avoid_: participant, confirmed attendee
 
 **Recipient Snapshot**:
@@ -319,7 +315,7 @@ A versioned set of Eligible Recipients resolved from executed Routing Policies, 
 _Avoid_: recipient cache, resolved list
 
 **Registration Deadline**:
-The instant after which Attendance Registrations are locked unless reopened by an authorized Organization member, extracted from the source or supplied by an Automation Rule default.
+The instant after which Attendance Registrations are locked unless reopened by an Admin, extracted from the source or supplied by an Automation Rule default.
 _Avoid_: RSVP deadline, cutoff
 
 **Reminder Eligibility**:
@@ -331,11 +327,11 @@ A note attached to an Attendance Registration and visible to all Eligible Recipi
 _Avoid_: Calendar comment, public note
 
 **Organizer Note**:
-A note attached to an Attendance Registration and visible only to Owners, Admins, and Operators.
+A note attached to an Attendance Registration and visible only to Admins.
 _Avoid_: private comment, admin memo
 
 **Recipient**:
-A Recipient Profile selected by an Automation Rule to receive a Scheduled Event invitation or LINE notification.
+A Member selected by an Automation Rule to receive a Scheduled Event invitation or LINE notification.
 _Avoid_: user, attendee
 
 **Task**:
@@ -343,9 +339,9 @@ An Organization-owned, deadline-bearing work item extracted once from a Source M
 _Avoid_: reminder, to-do
 
 **Operational Task Role**:
-An Organization-defined responsibility used to route a Task, distinct from an Organization member's application authorization role. Every Organization defines its own set; an Automation Rule selects the subset it may assign, and a Task Assignment names the holder once per Organization rather than once per rule.
+An Organization-defined responsibility used to route a Task, distinct from Admin authorization. Every Organization defines its own set; an Automation Rule selects the subset it may assign, and a Task Assignment names the holder once per Organization rather than once per rule.
 _Avoid_: member role, permission
 
 **Task Assignment**:
-The current named Organization member who holds an Operational Task Role; each Task retains the assignee identity and name captured when it was created.
+The current Member who holds an Operational Task Role; each Task retains the assignee identity and name captured when it was created.
 _Avoid_: recipient assignment, authorization
