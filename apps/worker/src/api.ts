@@ -183,6 +183,50 @@ const isMailExtraction = (value: unknown): value is MailExtraction => {
     && Array.isArray(extraction.warnings);
 };
 
+/** One approved Event Refresh row: the Scheduled Event to rewrite, pinned server-side. */
+interface MailTestRefreshEntry {
+  candidateIndex: number;
+  googleEventId: string | null;
+  etag: string | null;
+  candidate: EventDetails;
+}
+
+interface MailTestRefreshConfirmation {
+  messageId: string;
+  entries: MailTestRefreshEntry[];
+  expiresAt: string;
+}
+
+const isRefreshEntry = (value: unknown): value is MailTestRefreshEntry => {
+  if (!value || typeof value !== 'object') return false;
+  const entry = value as Partial<MailTestRefreshEntry>;
+  return typeof entry.candidateIndex === 'number' && Number.isInteger(entry.candidateIndex)
+    && (entry.googleEventId === null || typeof entry.googleEventId === 'string')
+    && (entry.etag === null || typeof entry.etag === 'string')
+    && isEventDetails(entry.candidate);
+};
+
+const isRefreshConfirmation = (value: unknown): value is MailTestRefreshConfirmation => {
+  if (!value || typeof value !== 'object') return false;
+  const confirmation = value as Partial<MailTestRefreshConfirmation>;
+  return typeof confirmation.messageId === 'string'
+    && Array.isArray(confirmation.entries) && confirmation.entries.every(isRefreshEntry)
+    && typeof confirmation.expiresAt === 'string';
+};
+
+const mailTestRefreshContext = (organizationId: string): string => `mail-test-refresh:${organizationId}`;
+const MAIL_TEST_TOKEN_LIMIT = 60_000;
+
+const refreshToken = async (
+  env: Bindings,
+  organizationId: string,
+  confirmation: MailTestRefreshConfirmation,
+): Promise<string> => JSON.stringify(await encrypt(
+  JSON.stringify(confirmation),
+  await organizationKeyForRequest(env, organizationId),
+  mailTestRefreshContext(organizationId),
+));
+
 const connectionContext = (organizationId: string, kind: 'line' | 'ai'): string => `organization-connection:${organizationId}:${kind}`;
 const lineWebhookUrl = (appUrl: string, organizationId: string): string =>
   `${appUrl.replace(/\/$/u, '')}/api/public/organizations/${encodeURIComponent(organizationId)}/line/webhook`;
@@ -477,6 +521,147 @@ app.post('/api/organizations/:organizationId/mail-tests/calendar', async (contex
     }), 201);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Google Calendar へのテスト予定作成に失敗しました。';
+    return failure(context, message, message === 'Authentication is required.' ? 401 : 500);
+  }
+});
+
+/** Reads the confirmed extraction back out of a Mailbox Test preview token. */
+const confirmedExtraction = async (
+  env: Bindings,
+  organizationId: string,
+  token: string,
+): Promise<MailTestConfirmation | null> => {
+  const confirmation = JSON.parse(await decrypt(
+    JSON.parse(token) as CipherEnvelope,
+    await organizationKeyForRequest(env, organizationId),
+    mailTestContext(organizationId),
+  )) as Partial<MailTestConfirmation>;
+  if (typeof confirmation.messageId !== 'string' || !isMailExtraction(confirmation.extraction)
+    || typeof confirmation.expiresAt !== 'string' || Date.parse(confirmation.expiresAt) <= Date.now()) return null;
+  return confirmation as MailTestConfirmation;
+};
+
+/** Prepares the correspondence request against the Scheduled Events this message already produced. */
+app.post('/api/organizations/:organizationId/mail-tests/:messageId/refresh-request', async (context) => {
+  try {
+    const organizationId = context.req.param('organizationId');
+    const access = await organizationForRequest(context.req.raw, context.env, organizationId);
+    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
+    const input = await context.req.json<{ confirmationToken?: string }>();
+    if (!input.confirmationToken || input.confirmationToken.length > MAIL_TEST_TOKEN_LIMIT) return failure(context, '確認用トークンがありません。先に AI 抽出を実行してください。');
+    const confirmation = await confirmedExtraction(context.env, organizationId, input.confirmationToken);
+    if (!confirmation) return failure(context, 'プレビューの有効期限が切れました。もう一度 AI 抽出を実行してください。', 409);
+    if (confirmation.messageId !== context.req.param('messageId')) return failure(context, '確認用トークンが別のメールのものです。', 409);
+    return json(context, await createAutomation(context.env).mailboxTest.previewRefreshRequest({
+      organizationId,
+      database: access.database,
+      messageId: confirmation.messageId,
+      events: confirmation.extraction.events,
+    }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '既存予定の照合準備に失敗しました。';
+    return failure(context, message, message === 'Authentication is required.' ? 401 : 500);
+  }
+});
+
+/** Runs the correspondence decision and returns the plan an Admin approves. */
+app.post('/api/organizations/:organizationId/mail-tests/:messageId/refresh-plan', async (context) => {
+  try {
+    const organizationId = context.req.param('organizationId');
+    const access = await organizationForRequest(context.req.raw, context.env, organizationId);
+    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
+    const input = await context.req.json<{ confirmationToken?: string }>();
+    if (!input.confirmationToken || input.confirmationToken.length > MAIL_TEST_TOKEN_LIMIT) return failure(context, '確認用トークンがありません。先に AI 抽出を実行してください。');
+    const confirmation = await confirmedExtraction(context.env, organizationId, input.confirmationToken);
+    if (!confirmation) return failure(context, 'プレビューの有効期限が切れました。もう一度 AI 抽出を実行してください。', 409);
+    if (confirmation.messageId !== context.req.param('messageId')) return failure(context, '確認用トークンが別のメールのものです。', 409);
+    const plan = await createAutomation(context.env).mailboxTest.planRefresh({
+      organizationId,
+      database: access.database,
+      messageId: confirmation.messageId,
+      events: confirmation.extraction.events,
+    });
+    const approvable: MailTestRefreshConfirmation = {
+      messageId: confirmation.messageId,
+      entries: plan.entries.map((entry) => ({
+        candidateIndex: entry.candidateIndex,
+        googleEventId: entry.target?.id ?? null,
+        etag: entry.target?.etag ?? null,
+        candidate: entry.candidate,
+      })),
+      expiresAt: expiresIn(MAIL_TEST_WINDOW_MS),
+    };
+    return json(context, {
+      entries: plan.entries.map((entry) => ({
+        candidateIndex: entry.candidateIndex,
+        candidate: entry.candidate,
+        target: entry.target,
+        changedFields: entry.changedFields,
+        desired: plan.desired[entry.candidateIndex] ?? null,
+      })),
+      unmatched: plan.unmatched,
+      outOfWindow: plan.outOfWindow,
+      pendingAttachments: plan.pendingAttachments,
+      confirmationToken: await refreshToken(context.env, organizationId, approvable),
+      expiresAt: approvable.expiresAt,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '既存予定との照合に失敗しました。';
+    return failure(context, message, message === 'Authentication is required.' ? 401 : 500);
+  }
+});
+
+/** Applies the approved Event Refresh, and re-offers anything the Calendar changed underneath it. */
+app.post('/api/organizations/:organizationId/mail-tests/refresh', async (context) => {
+  try {
+    const organizationId = context.req.param('organizationId');
+    const access = await organizationForRequest(context.req.raw, context.env, organizationId);
+    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
+    const input = await context.req.json<{ confirmationToken?: string; candidateIndexes?: unknown }>();
+    if (!input.confirmationToken || input.confirmationToken.length > MAIL_TEST_TOKEN_LIMIT) return failure(context, '確認用トークンがありません。先に既存予定と照合してください。');
+    const selected = Array.isArray(input.candidateIndexes) && input.candidateIndexes.every((value) => typeof value === 'number')
+      ? new Set(input.candidateIndexes as number[])
+      : null;
+    if (!selected?.size) return failure(context, '更新する予定を選択してください。');
+    const confirmation = JSON.parse(await decrypt(
+      JSON.parse(input.confirmationToken) as CipherEnvelope,
+      await organizationKeyForRequest(context.env, organizationId),
+      mailTestRefreshContext(organizationId),
+    )) as unknown;
+    if (!isRefreshConfirmation(confirmation) || Date.parse(confirmation.expiresAt) <= Date.now()) {
+      return failure(context, '照合結果の有効期限が切れました。もう一度既存予定と照合してください。', 409);
+    }
+    const entries = confirmation.entries.filter((entry) => selected.has(entry.candidateIndex));
+    if (!entries.length) return failure(context, '選択された予定が照合結果に含まれていません。', 409);
+    const outcome = await createAutomation(context.env).mailboxTest.applyRefresh({
+      organizationId,
+      database: access.database,
+      messageId: confirmation.messageId,
+      entries: entries.map((entry) => ({ googleEventId: entry.googleEventId, etag: entry.etag, candidate: entry.candidate })),
+    });
+    if (!outcome.conflicts.length) return json(context, { ...outcome, confirmationToken: null, expiresAt: null });
+    const indexOf = new Map(entries.map((entry) => [entry.candidate.title + entry.candidate.startsAt, entry.candidateIndex]));
+    const retry: MailTestRefreshConfirmation = {
+      messageId: confirmation.messageId,
+      entries: outcome.conflicts.map((conflict) => ({
+        candidateIndex: indexOf.get(conflict.candidate.title + conflict.candidate.startsAt) ?? 0,
+        googleEventId: conflict.googleEventId,
+        etag: conflict.etag,
+        candidate: conflict.candidate,
+      })),
+      expiresAt: expiresIn(MAIL_TEST_WINDOW_MS),
+    };
+    return json(context, {
+      ...outcome,
+      conflicts: outcome.conflicts.map((conflict) => ({
+        ...conflict,
+        candidateIndex: indexOf.get(conflict.candidate.title + conflict.candidate.startsAt) ?? 0,
+      })),
+      confirmationToken: await refreshToken(context.env, organizationId, retry),
+      expiresAt: retry.expiresAt,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '既存予定の更新に失敗しました。';
     return failure(context, message, message === 'Authentication is required.' ? 401 : 500);
   }
 });

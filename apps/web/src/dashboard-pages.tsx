@@ -1,5 +1,5 @@
 import { CalendarDays, CheckCircle2, Copy, Eye, EyeOff, Mail, MessageCircle, Pencil, Play, RefreshCw, Save, Search, Settings, SlidersHorizontal, UserPlus, UsersRound, X } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import type { DashboardProps } from './dashboard';
@@ -326,6 +326,80 @@ export const PresetSettings = ({ presets, hasConfiguration, busy, onApply }: {
   </section>;
 };
 
+const FIELD_LABELS: Record<string, string> = {
+  title: 'タイトル',
+  description: '説明',
+  location: '場所',
+  startsAt: '開始',
+  endsAt: '終了',
+  timeZone: 'タイムゾーン',
+};
+
+const ScheduledEventSummary = ({ event }: { event: { title: string; startsAt: string; endsAt: string; location: string } }) =>
+  <span>{event.title}（{formatted(event.startsAt)} 〜 {formatted(event.endsAt)}{event.location ? `・${event.location}` : ''}）</span>;
+
+/**
+ * The Event Refresh exit: an Admin sees, one Scheduled Event at a time, exactly
+ * what the rewrite replaces before approving it.
+ */
+export const MailboxRefreshSections = (props: DashboardProps) => {
+  const plan = props.mailTestRefreshPlan;
+  const [selected, setSelected] = useState<number[]>([]);
+  const token = plan?.confirmationToken ?? '';
+  useEffect(() => {
+    if (!plan) return;
+    setSelected(plan.entries.filter((entry) => entry.target && entry.changedFields.length).map((entry) => entry.candidateIndex));
+  }, [token]);
+  if (!props.mailTestPreview) return null;
+  const request = props.mailTestRefreshRequest;
+  const outcome = props.mailTestRefreshOutcome;
+  const toggle = (candidateIndex: number, checked: boolean): void =>
+    setSelected((current) => checked ? [...new Set([...current, candidateIndex])] : current.filter((value) => value !== candidateIndex));
+  return <>
+    <section className="test-card event-preview">
+      <div><p>5. MATCH EXISTING EVENTS</p><h2>このメールから作られた既存予定を照合</h2><span>同じメールの出典が書かれた予定だけを探します。日時が7日以上離れている予定は更新対象になりません。</span></div>
+      <button className="secondary" onClick={props.onPrepareRefresh} disabled={props.mailTestBusy}>{props.mailTestBusy ? '照合中…' : '既存予定をCalendarから探す'}</button>
+      {request && <>
+        <p className="mail-summary">更新対象の候補 {request.existing.length}件{request.outOfWindow.length ? ` ・ 対象外（7日以上離れている）${request.outOfWindow.length}件` : ''}</p>
+        {request.outOfWindow.length > 0 && <ul className="refresh-out-of-window">{request.outOfWindow.map((event) => <li key={event.id}><ScheduledEventSummary event={event} />：日時が離れているため触りません</li>)}</ul>}
+        {request.request
+          ? <><pre className="ai-request">{JSON.stringify(request.request, null, 2)}</pre><div className="mail-test-actions"><button className="primary" onClick={props.onPlanRefresh} disabled={props.mailTestBusy}>{props.mailTestBusy ? 'API に送信中…' : '設定済みの API で対応付けを判定'}</button></div></>
+          : <p>更新できる既存予定はありません。新規作成のみ可能です。</p>}
+      </>}
+    </section>
+    {plan && <section className="test-card event-preview">
+      <div><p>6. REVIEW DIFF AND UPDATE</p><h2>差分を確認して更新</h2><span>選択した予定は参加者以外の全項目が書き換わります。手動で編集した内容も上書きされます。</span></div>
+      {plan.pendingAttachments.length > 0 && <p className="dashboard-warning">添付 {plan.pendingAttachments.length}件（{plan.pendingAttachments.join('、')}）はフォルダに未配置のため、更新時に公開します。</p>}
+      {plan.entries.map((entry) => <article key={entry.candidateIndex} className="refresh-entry">
+        <label>
+          <input
+            type="checkbox"
+            checked={selected.includes(entry.candidateIndex)}
+            onChange={(event) => toggle(entry.candidateIndex, event.target.checked)}
+          />
+          <strong>{entry.candidate.title}</strong>
+          <small>{entry.target ? (entry.changedFields.length ? `更新：${entry.changedFields.map((field) => FIELD_LABELS[field] ?? field).join('、')}` : '変更なし') : '新規作成'}</small>
+        </label>
+        {entry.target && <dl>
+          <dt>現在</dt><dd><ScheduledEventSummary event={entry.target} /></dd>
+          <dt>更新後</dt><dd>{entry.desired ? <ScheduledEventSummary event={entry.desired} /> : '—'}</dd>
+          <dt>現在の説明</dt><dd className="refresh-description">{entry.target.description || '（なし）'}</dd>
+          <dt>更新後の説明</dt><dd className="refresh-description">{entry.desired?.description || '（なし）'}</dd>
+        </dl>}
+      </article>)}
+      {plan.unmatched.length > 0 && <><h3>対応付かなかった既存予定（{plan.unmatched.length}件）</h3><ul className="refresh-out-of-window">{plan.unmatched.map((event) => <li key={event.id}><ScheduledEventSummary event={event} />：削除も更新もしません</li>)}</ul></>}
+      <button className="primary" onClick={() => props.onApplyRefresh(selected)} disabled={props.mailTestBusy || !selected.length}>{props.mailTestBusy ? '更新中…' : `選択した ${selected.length}件を更新`}</button>
+    </section>}
+    {outcome && <section className="test-card event-preview">
+      <div><p>RESULT</p><h2>更新結果</h2><span>成功した予定は取り消されません。</span></div>
+      {outcome.updated.length > 0 && <p className="dashboard-success"><CheckCircle2 size={17} />{outcome.updated.length}件を更新しました。</p>}
+      {outcome.created.length > 0 && <p className="dashboard-success"><CheckCircle2 size={17} />{outcome.created.length}件を新規作成しました。</p>}
+      {outcome.conflicts.length > 0 && <><p className="dashboard-warning">{outcome.conflicts.length}件は照合後に Calendar 側が変更されたため更新していません。上の差分は最新の内容に更新されました。もう一度押すと、その内容を上書きします。</p><ul className="refresh-out-of-window">{outcome.conflicts.map((conflict) => <li key={conflict.googleEventId}><ScheduledEventSummary event={conflict.current} /></li>)}</ul></>}
+      {outcome.failures.length > 0 && <ul className="refresh-out-of-window">{outcome.failures.map((failedEntry) => <li key={`${failedEntry.googleEventId ?? 'new'}-${failedEntry.title}`}>{failedEntry.title}：{failedEntry.message}</li>)}</ul>}
+    </section>}
+  </>;
+};
+
 export const MailboxTestPage = (props: DashboardProps) => {
   const settingsReady = Boolean(props.organization);
   const hasConfiguredAiApi = Boolean(props.connections?.ai.apiKeyConfigured);
@@ -351,6 +425,7 @@ export const MailboxTestPage = (props: DashboardProps) => {
       {props.mailTestMatches.length > 0 && <section className="test-card"><div><p>2. PREPARE AI REQUEST</p><h2>AI への送信内容を確認</h2><span>対象メールを選ぶと、OpenAI 互換形式のリクエスト本文を生成します。この時点では AI に送信しません。</span></div><div className="mail-matches">{props.mailTestMatches.map((message) => <button key={message.id} className="mail-match" onClick={() => props.onPrepareMailbox(message.id)} disabled={props.mailTestBusy}><strong>{message.subject}</strong><small>{message.sender || '差出人なし'}</small></button>)}</div></section>}
       {props.mailTestAiRequest && <section className="test-card event-preview"><div className="ai-request-heading"><div><p>3. REVIEW OPENAI-COMPATIBLE REQUEST</p><h2>OpenAI 互換リクエスト本文</h2><span>API キーは含まれません。送信先の model を指定すれば、任意の OpenAI 互換 API で利用できます。</span></div><button className={`secondary copy-request-button${aiRequestCopied ? ' copied' : ''}`} onClick={copyPreparedAiRequest} aria-live="polite">{aiRequestCopied ? <CheckCircle2 size={16} /> : <Copy size={16} />}{aiRequestCopied ? <span key={copyFeedbackId} className="copy-feedback">コピーしました</span> : 'リクエスト全文をコピー'}</button></div><pre className="ai-request">{JSON.stringify(props.mailTestAiRequest.request, null, 2)}</pre><div className="mail-test-actions">{hasConfiguredAiApi ? <button className="primary" onClick={sendPreparedAiRequest} disabled={props.mailTestBusy}>{props.mailTestBusy ? 'API に送信中…' : '設定済みの API で予定を抽出'}</button> : <p className="dashboard-warning api-configuration-prompt"><span>OpenAI 互換 API が設定されていません</span><Link to={props.organizationId ? `/organizations/${encodeURIComponent(props.organizationId)}/connections` : '../connections'}>APIを設定する</Link></p>}</div></section>}
       {props.mailTestPreview && <section className="test-card event-preview"><div><p>4. REVIEW AND CREATE</p><h2>要約・予定・タスク候補を確認</h2><span>予定は確認後にだけ Google Calendar へ作成します。要約とタスク候補はメール全体に対して一度だけ抽出されます。</span></div><h3>メールの要約</h3><p className="mail-summary">{props.mailTestPreview.summary}</p><h3>予定（{props.mailTestPreview.events.length}件）</h3>{props.mailTestPreview.events.map((event, index) => <dl key={`${event.title}-${event.startsAt}`}><dt>予定 {index + 1}</dt><dd>{event.title}</dd><dt>日時</dt><dd>{formatted(event.startsAt)} 〜 {formatted(event.endsAt)}</dd><dt>場所</dt><dd>{event.location || '指定なし'}</dd><dt>説明</dt><dd>{event.description || '指定なし'}</dd><dt>要約</dt><dd>{event.summary || '指定なし'}</dd></dl>)}<h3>期限タスク候補（{props.mailTestPreview.tasks.length}件）</h3>{props.mailTestPreview.tasks.length ? props.mailTestPreview.tasks.map((task) => <dl key={`${task.assigneeRoleId}-${task.deadline}-${task.title}`}><dt>{props.taskRoles.find((role) => role.id === task.assigneeRoleId)?.displayName ?? '未割り当て'}</dt><dd>{task.title}</dd><dt>期限</dt><dd>{task.deadline}</dd><dt>内容</dt><dd>{task.description}</dd></dl>) : <p>明示された登録・振込期限はありません。</p>}<button className="primary" onClick={props.onCreateCalendarEvent} disabled={props.mailTestBusy || Boolean(props.mailTestCreatedEventIds.length)}>{props.mailTestCreatedEventIds.length ? 'Calendarに作成済み' : props.mailTestBusy ? '作成中…' : `${props.mailTestPreview.events.length}件を Calendar に追加`}</button>{props.mailTestCreatedEventIds.length > 0 && <p className="dashboard-success"><CheckCircle2 size={17} />テスト予定 {props.mailTestCreatedEventIds.length}件を作成しました。</p>}</section>}
+      {props.mailTestPreview && <MailboxRefreshSections {...props} />}
     </>}
   </section>;
 };

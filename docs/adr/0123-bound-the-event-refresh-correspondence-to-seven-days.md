@@ -1,0 +1,9 @@
+# Bound the Event Refresh correspondence to seven days
+
+One Source Message produces several Event Candidates (ADR 0041) and may already have produced several Scheduled Events, in numbers that do not match: an earlier extraction merged two programs, or split one, or read the wrong time. Deciding which candidate refreshes which event is a judgement about what each program is, so it is asked of the AI in a separate, product-defined request that carries only the Calendar fields of the correlated events and the extracted candidates — never the message body, which the extraction has already read. The answer is a proposal; the Admin approves the correspondence together with the diff.
+
+The AI's choices are constrained by the response schema to the event IDs actually sent plus a literal for "create a new one", each existing event may be claimed once, and the whole answer is rejected when it names anything else. The prompt is product-defined rather than an Organization-editable Prompt (ADR 0108): a mistaken correspondence writes one meeting's details over another meeting, which is not a per-Organization preference.
+
+Any correspondence whose two start times are more than seven days apart is then dropped, however confident the AI was. A `PATCH` keeps the event's attendees, so accepting a distant match would move an existing invitation list onto a different meeting — the one failure this feature must not have. Seven days still absorbs the realistic extraction errors, a wrong time of day or a date off by a day or two, while an error of weeks — a registration deadline read as the event date — becomes a new event instead, leaving the stale one for a human to delete.
+
+The search itself reaches further than the correspondence window, so an event just outside it is listed as out of scope rather than silently absent. A stale duplicate the Admin cannot see is one they cannot clean up.

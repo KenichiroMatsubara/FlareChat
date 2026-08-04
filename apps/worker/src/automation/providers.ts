@@ -25,9 +25,11 @@ export interface AutomationDependencies {
     publish: typeof publishDriveAttachment;
     ensurePath: typeof ensureAttachmentFolderPath;
     createMessageFolder: typeof createSourceMessageFolder;
+    find: typeof findPublishedDriveAttachment;
   };
   ai: {
     extract: typeof extractAiEventDetails;
+    correspond: typeof decideEventCorrespondence;
   };
   agent: {
     complete: typeof completeAgentTurn;
@@ -58,16 +60,19 @@ export const productionAutomationDependencies: AutomationDependencies = {
     publish: publishDriveAttachment,
     ensurePath: ensureAttachmentFolderPath,
     createMessageFolder: createSourceMessageFolder,
+    find: findPublishedDriveAttachment,
   },
-  ai: { extract: extractAiEventDetails },
+  ai: { extract: extractAiEventDetails, correspond: decideEventCorrespondence },
   agent: { complete: completeAgentTurn },
   tokens: { refresh: refreshGoogleToken },
 };
 import { extractAiEventDetails } from '../event-details';
+import { decideEventCorrespondence } from '../event-refresh';
 import { completeAgentTurn } from '../agent-runs';
 import {
   createSourceMessageFolder,
   ensureAttachmentFolderPath,
+  findPublishedDriveAttachment,
   publishDriveAttachment,
   readGmailAttachments,
 } from '../drive-attachments';
