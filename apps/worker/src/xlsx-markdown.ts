@@ -8,8 +8,8 @@ const splitCells = (line: string): string[] => {
   return source.split(/(?<!\\)\|/u).map((cell) => cell.trim());
 };
 
-const compactTable = (block: string): string => {
-  let rows = block.split('\n').filter((line) => line.trim()).map(splitCells);
+const compactTable = (logicalRows: string[]): string => {
+  let rows = logicalRows.filter((row) => row.trim()).map(splitCells);
   rows = rows.filter((row) => !row.every((cell) => separatorCell.test(cell)));
   if (!rows.length) return '';
 
@@ -34,7 +34,45 @@ const compactTable = (block: string): string => {
     while (values.at(-1) === '') values.pop();
     output.push(values);
   }
-  return output.map((row) => row.join('\t')).join('\n') + '\n';
+  return output.map((row) => row.join('\t')).join('\n');
+};
+
+const startsTableRow = (line: string): boolean => /^[ \t]*\|/u.test(line);
+const endsTableRow = (line: string): boolean => /(?<!\\)\|[ \t]*$/u.test(line);
+
+interface LogicalTableBlock {
+  nextLine: number;
+  rows: string[];
+}
+
+const logicalTableBlockAt = (lines: string[], startLine: number): LogicalTableBlock | undefined => {
+  if (!startsTableRow(lines[startLine] ?? '')) return undefined;
+
+  const rows: string[] = [];
+  let rowLines: string[] = [];
+  let lineIndex = startLine;
+  let hasExplicitEnd = false;
+
+  while (lineIndex < lines.length) {
+    const line = lines[lineIndex] ?? '';
+    if (rowLines.length && startsTableRow(line)) {
+      rows.push(rowLines.join('\n'));
+      rowLines = [];
+    }
+    rowLines.push(line);
+    lineIndex += 1;
+
+    if (endsTableRow(line)) {
+      hasExplicitEnd = true;
+      rows.push(rowLines.join('\n'));
+      rowLines = [];
+      if (!startsTableRow(lines[lineIndex] ?? '')) break;
+    }
+  }
+
+  if (!hasExplicitEnd) return undefined;
+  if (rowLines.length) rows.push(rowLines.join('\n'));
+  return { nextLine: lineIndex, rows };
 };
 
 /**
@@ -42,5 +80,20 @@ const compactTable = (block: string): string => {
  * their contents semantically: layout padding, synthetic headers, and blank
  * rectangle cells become TSV's much smaller representation.
  */
-export const compactXlsxMarkdown = (markdown: string): string =>
-  markdown.replace(/(?:^[ \t]*\|.*\|[ \t]*(?:\n|$))+/gmu, compactTable);
+export const compactXlsxMarkdown = (markdown: string): string => {
+  const lines = markdown.split('\n');
+  const output: string[] = [];
+  let lineIndex = 0;
+  while (lineIndex < lines.length) {
+    const block = logicalTableBlockAt(lines, lineIndex);
+    if (!block) {
+      output.push(lines[lineIndex] ?? '');
+      lineIndex += 1;
+      continue;
+    }
+    const compacted = compactTable(block.rows);
+    if (compacted) output.push(compacted);
+    lineIndex = block.nextLine;
+  }
+  return output.join('\n');
+};

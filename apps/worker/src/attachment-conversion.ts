@@ -87,7 +87,7 @@ const convertedAttachment = async (
     throw new Error(`${attachment.filename} の変換結果が空です。`);
   }
   const sourceText = result.data.trim();
-  const compacted = result.format === 'markdown' && isXlsx(attachment) ? compactXlsxMarkdown(sourceText) : sourceText;
+  const compacted = isXlsx(attachment) ? compactXlsxMarkdown(sourceText) : sourceText;
   const text = cleanupConvertedMarkdown(compacted, attachment.filename);
   if (!text) throw new Error(`${attachment.filename} の圧縮後の変換結果が空です。`);
   return {

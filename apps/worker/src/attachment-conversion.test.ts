@@ -78,6 +78,39 @@ describe('attachment conversion for Event Details', () => {
     expect(converted?.selectedTokens).toBeLessThan(10);
   });
 
+  it('compacts XLSX tables even when Workers AI labels the conversion as text', async () => {
+    const blankCells = Array.from({ length: 2_000 }, () => '             ');
+    const source = [
+      'シート名\t内容\t期限',
+      'ご案内\t登録方法\t8月21日',
+      '|         | 注意',
+      '水色セルは直接入力しないでください。',
+      '|         | 出席義務者です。',
+      'クラブ会長・幹事も登録してください。',
+      `その他の会員も登録できます。 | ${blankCells.join(' | ')} |`,
+    ].join('\n');
+    const [converted] = await convertAttachmentsForEventExtraction([{
+      attachmentId: 'text-format-xlsx',
+      filename: 'registration.xlsx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      size: 3,
+      data: 'eGxzeA==',
+    }], { toMarkdown: vi.fn().mockResolvedValue({
+      format: 'text', name: 'registration.xlsx', mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', tokens: 10_000, data: source,
+    }) });
+
+    expect(converted?.text).toBe([
+      'シート名\t内容\t期限',
+      'ご案内\t登録方法\t8月21日',
+      '注意',
+      '水色セルは直接入力しないでください。',
+      '出席義務者です。',
+      'クラブ会長・幹事も登録してください。',
+      'その他の会員も登録できます。',
+    ].join('\n'));
+    expect(converted?.selectedTokens).toBeLessThan(50);
+  });
+
   it('passes all Workers AI Markdown without a shared token budget or truncation', async () => {
     const markdown = {
       toMarkdown: vi.fn(async (document: { name: string }) => ({
