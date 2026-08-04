@@ -7,7 +7,7 @@ import {
 } from '../database-access';
 import type { Bindings, OrganizationRow, SessionRow } from '../types';
 import { controlDatabase } from '../storage/database';
-import { identities, members, organizationKeys, organizations, sessions } from '../storage/control-schema';
+import { admins, identities, organizationKeys, organizations, sessions } from '../storage/control-schema';
 
 export interface OrganizationAccess {
   session: SessionRow;
@@ -57,14 +57,14 @@ export const createRequestContext = (request: Request, env: Bindings): RequestCo
       const currentSession = await session();
       if (!currentSession) throw new Error('Authentication is required.');
       const membership = await controlDatabase(env.CONTROL_DB).select({
-        role: members.role,
+        role: admins.role,
         id: organizations.id,
         name: organizations.name,
         status: organizations.status,
         database_id: organizations.databaseId,
         binding_name: organizations.bindingName,
-      }).from(members).innerJoin(organizations, eq(organizations.id, members.organizationId))
-        .where(and(eq(members.identityId, currentSession.identity_id), eq(members.organizationId, organizationId), eq(members.state, 'active')))
+      }).from(admins).innerJoin(organizations, eq(organizations.id, admins.organizationId))
+        .where(and(eq(admins.identityId, currentSession.identity_id), eq(admins.organizationId, organizationId), eq(admins.state, 'active')))
         .get();
       if (!membership) throw new Error('この組織へのアクセス権がありません。');
       if (membership.status !== 'active') throw new Error('この組織は現在利用できません。');

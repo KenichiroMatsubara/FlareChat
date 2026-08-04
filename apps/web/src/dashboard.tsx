@@ -2,7 +2,7 @@ import { CheckSquare, CircleAlert, LogOut, Mail, Menu, Play, Settings, ShieldChe
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
-import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OperationalTaskRole, OrganizationAgentRule, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationRecipient, OrganizationRecipientInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, ProposedAction, RecipientLineDestinationInput, TaskRoleAssignment } from './api';
+import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, OperationalTaskRole, OrganizationAgentRule, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationMember, OrganizationMemberInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, ProposedAction, MemberLineDestinationInput, TaskRoleAssignment } from './api';
 import { AutomationPage, ConnectionsPage, MailboxTestPage, MembersPage, RulesPage, TasksPage } from './dashboard-pages';
 
 export type Page = 'automation' | 'connections' | 'rules' | 'members' | 'mail-test' | 'tasks';
@@ -105,16 +105,16 @@ export interface DashboardProps {
   onUpdateTaskRole: (roleId: string, input: { displayName?: string; description?: string }) => Promise<void>;
   onDeleteTaskRole: (roleId: string) => Promise<void>;
   onAssignTaskRole: (roleId: string, identityId: string) => void;
-  organizationRecipients: OrganizationRecipient[];
+  organizationMembers: OrganizationMember[];
   lineDestinations: OrganizationLineDestination[];
   memberBusy: boolean;
-  onCreateRecipient: (input: OrganizationRecipientInput) => Promise<OrganizationRecipient | null>;
-  onUpdateRecipient: (recipientId: string, input: Partial<Pick<OrganizationRecipient, 'name' | 'email' | 'tags' | 'state'>>) => Promise<void>;
-  onSetLineDestination: (recipientId: string, input: RecipientLineDestinationInput) => Promise<void>;
-  onUnlinkLineDestination: (recipientId: string, lineDestinationId: string) => Promise<void>;
-  onRegisterLineDestination: (input: RecipientLineDestinationInput) => Promise<void>;
+  onCreateMember: (input: OrganizationMemberInput) => Promise<OrganizationMember | null>;
+  onUpdateMember: (memberId: string, input: Partial<Pick<OrganizationMember, 'name' | 'email' | 'tags' | 'state'>>) => Promise<void>;
+  onSetLineDestination: (memberId: string, input: MemberLineDestinationInput) => Promise<void>;
+  onUnlinkLineDestination: (memberId: string, lineDestinationId: string) => Promise<void>;
+  onRegisterLineDestination: (input: MemberLineDestinationInput) => Promise<void>;
   onRemoveLineDestination: (lineDestinationId: string) => Promise<void>;
-  onRefreshRecipients: () => void;
+  onRefreshMembers: () => void;
   presets: PresetSummary[];
   onApplyPreset: (presetId: string, conflictPolicy?: 'duplicate') => void;
 }

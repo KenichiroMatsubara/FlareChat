@@ -17,9 +17,9 @@ import { loginReturnOrigin } from './origin';
 import { createDatabaseAccess } from './database-access';
 import { controlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
 import {
+  admins,
   automationInboxClaims,
   identities,
-  members,
   oauthFlows,
   organizationKeys,
   organizationSetups,
@@ -165,10 +165,10 @@ export const completeGoogleEntry = async (
       return await completeAsLogin(target);
     }
     if (!recoveryOrganizationId) {
-      const existingMembership = await control.select({ organizationId: members.organizationId }).from(members)
+      const existingMembership = await control.select({ organizationId: admins.organizationId }).from(admins)
         .where(and(
-          eq(members.identityId, owner.id),
-          eq(members.state, 'active'),
+          eq(admins.identityId, owner.id),
+          eq(admins.state, 'active'),
         )).get();
       if (existingMembership) {
         return await completeAsLogin(new URL('/', flow.returnOrigin));
@@ -187,11 +187,11 @@ export const completeGoogleEntry = async (
         id: organizations.id,
         databaseId: organizations.databaseId,
         bindingName: organizations.bindingName,
-      }).from(members).innerJoin(organizations, eq(organizations.id, members.organizationId)).where(and(
-        eq(members.organizationId, recoveryOrganizationId),
-        eq(members.identityId, owner.id),
-        eq(members.state, 'active'),
-        inArray(members.role, ['owner', 'admin']),
+      }).from(admins).innerJoin(organizations, eq(organizations.id, admins.organizationId)).where(and(
+        eq(admins.organizationId, recoveryOrganizationId),
+        eq(admins.identityId, owner.id),
+        eq(admins.state, 'active'),
+        inArray(admins.role, ['owner', 'admin']),
         eq(organizations.status, 'active'),
       )).get();
       if (!authorizedOrganization) throw new Error('この Automation Inbox を再接続する権限がありません。');

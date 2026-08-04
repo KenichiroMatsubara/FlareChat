@@ -8,7 +8,7 @@ import { failure } from '../response';
 import { createRequestContext } from './request-context';
 import type { Bindings } from '../types';
 import { controlDatabase } from '../storage/database';
-import { members, organizations, sessions } from '../storage/control-schema';
+import { admins, organizations, sessions } from '../storage/control-schema';
 
 export const entryRoutes = new Hono<{ Bindings: Bindings }>();
 export const oauthRoutes = new Hono<{ Bindings: Bindings }>();
@@ -93,12 +93,12 @@ entryRoutes.get('/auth/me', async (context) => {
   const session = await createRequestContext(context.req.raw, context.env).session();
   if (!session) return failure(context, 'Authentication is required.', 401);
   const memberships = await controlDatabase(context.env.CONTROL_DB).select({
-    organizationId: members.organizationId,
-    role: members.role,
+    organizationId: admins.organizationId,
+    role: admins.role,
     name: organizations.name,
     status: organizations.status,
-  }).from(members).innerJoin(organizations, eq(organizations.id, members.organizationId))
-    .where(and(eq(members.identityId, session.identity_id), eq(members.state, 'active'), isNotNull(organizations.databaseId))).all();
+  }).from(admins).innerJoin(organizations, eq(organizations.id, admins.organizationId))
+    .where(and(eq(admins.identityId, session.identity_id), eq(admins.state, 'active'), isNotNull(organizations.databaseId))).all();
   return json(context, { email: session.email, displayName: session.display_name, organizations: memberships });
 });
 

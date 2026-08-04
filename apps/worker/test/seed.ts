@@ -184,7 +184,7 @@ export const seedOrganizationMember = (
     CREATED_AT,
   );
   control.execute(
-    'INSERT INTO members (organization_id, identity_id, role, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+    'INSERT INTO admins (organization_id, identity_id, role, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
     input.organizationId ?? 'organization-1',
     input.identityId,
     input.role,

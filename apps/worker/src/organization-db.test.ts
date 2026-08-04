@@ -132,6 +132,7 @@ describe('Organization database resolver', () => {
       { name: '0011_agent_runs.sql' },
       { name: '0012_event_agent_owners.sql' },
       { name: '0013_agent_rule_writes.sql' },
+      { name: '0014_members.sql' },
     ]);
   });
 

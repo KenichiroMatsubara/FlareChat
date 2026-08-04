@@ -29,8 +29,8 @@ const dashboardProps = (): DashboardProps => ({
   onPrepareMailbox: vi.fn(), onPreviewMailbox: vi.fn(), onCreateCalendarEvent: vi.fn(), organizationRules: [], ruleBusy: false,
   organizationLists: [], onCreateRule: vi.fn(), onUpdateRule: vi.fn(), organizationTasks: [], onUpdateTask: vi.fn(), taskRoles: [], taskRoleAssignments: [], taskMembers: [], onCreateTaskRole: vi.fn(), onUpdateTaskRole: vi.fn(), onDeleteTaskRole: vi.fn(), onAssignTaskRole: vi.fn(),
   prompts: [], agentRules: [], agentRuns: [], agentTranscript: null, proposedActions: [], onCreatePrompt: vi.fn(), onUpdatePrompt: vi.fn(), onDeletePrompt: vi.fn(), onCreateAgentRule: vi.fn(), onUpdateAgentRule: vi.fn(), onLoadAgentTranscript: vi.fn(), onDecideProposedAction: vi.fn(), onDecideProposedActionBatch: vi.fn(),
-  organizationRecipients: [], lineDestinations: [], memberBusy: false, onCreateRecipient: vi.fn(), onUpdateRecipient: vi.fn(),
-  onSetLineDestination: vi.fn(), onUnlinkLineDestination: vi.fn(), onRegisterLineDestination: vi.fn(), onRemoveLineDestination: vi.fn(), onRefreshRecipients: vi.fn(),
+  organizationMembers: [], lineDestinations: [], memberBusy: false, onCreateMember: vi.fn(), onUpdateMember: vi.fn(),
+  onSetLineDestination: vi.fn(), onUnlinkLineDestination: vi.fn(), onRegisterLineDestination: vi.fn(), onRemoveLineDestination: vi.fn(), onRefreshMembers: vi.fn(),
   presets: [{ id: 'membership-organization', name: 'Membership organization', description: 'Starting configuration.' }], onApplyPreset: vi.fn(),
 });
 
@@ -235,7 +235,7 @@ describe('member roster', () => {
             ai: { apiKeyConfigured: false, model: '', baseUrl: '' },
             line: { channelAccessTokenConfigured: true, channelSecretConfigured: true, webhookUrl: 'https://app.example.com/api/public/organizations/org-1/line/webhook' },
           }}
-          organizationRecipients={[{
+          organizationMembers={[{
             id: 'recipient-1',
             organizationId: 'org-1',
             name: '山田 太郎',
@@ -261,7 +261,7 @@ describe('member roster', () => {
             status: 'discovered',
             source: 'webhook',
             discoveredAt: '2026-07-30T00:00:00.000Z',
-            recipientProfileId: null,
+            memberId: null,
           }]}
         />
       </MemoryRouter>,
@@ -292,7 +292,7 @@ describe('member roster', () => {
             ai: { apiKeyConfigured: false, model: '', baseUrl: '' },
             line: { channelAccessTokenConfigured: true, channelSecretConfigured: true, webhookUrl: 'https://app.example.com/api/public/organizations/org-1/line/webhook' },
           }}
-          organizationRecipients={[]}
+          organizationMembers={[]}
           lineDestinations={[
             {
               id: 'line-webhook',
@@ -302,7 +302,7 @@ describe('member roster', () => {
               status: 'discovered',
               source: 'webhook',
               discoveredAt: '2026-07-30T00:00:00.000Z',
-              recipientProfileId: null,
+              memberId: null,
             },
             {
               id: 'line-manual-pending',
@@ -312,7 +312,7 @@ describe('member roster', () => {
               status: 'discovered',
               source: 'manual',
               discoveredAt: '2026-07-30T00:00:00.000Z',
-              recipientProfileId: null,
+              memberId: null,
             },
           ]}
         />
@@ -338,7 +338,7 @@ describe('member roster', () => {
             ai: { apiKeyConfigured: false, model: '', baseUrl: '' },
             line: { channelAccessTokenConfigured: true, channelSecretConfigured: true, webhookUrl: 'https://app.example.com/api/public/organizations/org-1/line/webhook' },
           }}
-          organizationRecipients={[{
+          organizationMembers={[{
             id: 'recipient-1',
             organizationId: 'org-1',
             name: '手動 花子',

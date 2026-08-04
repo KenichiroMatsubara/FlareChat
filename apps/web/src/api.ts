@@ -214,7 +214,7 @@ export interface OrganizationTask {
   id: string; title: string; deadline: string; assigneeRoleId: string; assigneeRoleName: string; assigneeIdentityId: string | null; assigneeName: string; sourceMessageSubject: string; description: string; remarks: string; completed: boolean; completedAt: string | null;
 }
 
-export interface RecipientLineDestination {
+export interface MemberLineDestination {
   id: string;
   destinationId: string;
   displayName: string;
@@ -223,7 +223,7 @@ export interface RecipientLineDestination {
   source: 'webhook' | 'manual';
 }
 
-export interface OrganizationRecipient {
+export interface OrganizationMember {
   id: string;
   organizationId: string;
   name: string;
@@ -232,22 +232,22 @@ export interface OrganizationRecipient {
   tags: string[];
   createdAt: string;
   updatedAt: string;
-  lineDestinations: RecipientLineDestination[];
+  lineDestinations: MemberLineDestination[];
 }
 
-export interface OrganizationLineDestination extends RecipientLineDestination {
+export interface OrganizationLineDestination extends MemberLineDestination {
   discoveredAt: string;
-  recipientProfileId: string | null;
+  memberId: string | null;
 }
 
-export interface OrganizationRecipientInput {
+export interface OrganizationMemberInput {
   name: string;
   email?: string;
   tags?: string[];
   lineDestinationId?: string;
 }
 
-export interface RecipientLineDestinationInput {
+export interface MemberLineDestinationInput {
   destinationId: string;
   kind?: 'user' | 'group' | 'room';
   displayName?: string;
@@ -311,38 +311,38 @@ export const api = {
   }),
   organizationDeliveryAudit: (organizationId: string): Promise<DeliveryAuditRecord[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/audit/deliveries`),
   organizationTasks: (organizationId: string): Promise<OrganizationTask[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/tasks`),
-  organizationRecipients: (organizationId: string): Promise<OrganizationRecipient[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/recipients`),
+  organizationMembers: (organizationId: string): Promise<OrganizationMember[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/members`),
   organizationLineDestinations: (organizationId: string): Promise<OrganizationLineDestination[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/line-destinations`),
-  createOrganizationRecipient: (organizationId: string, input: OrganizationRecipientInput): Promise<OrganizationRecipient> => request(`/api/organizations/${encodeURIComponent(organizationId)}/recipients`, {
+  createOrganizationMember: (organizationId: string, input: OrganizationMemberInput): Promise<OrganizationMember> => request(`/api/organizations/${encodeURIComponent(organizationId)}/members`, {
     method: 'POST',
     body: JSON.stringify(input),
   }),
-  updateOrganizationRecipient: (
+  updateOrganizationMember: (
     organizationId: string,
-    recipientId: string,
-    input: Partial<Pick<OrganizationRecipient, 'name' | 'email' | 'tags' | 'state'>>,
-  ): Promise<Partial<OrganizationRecipient> & { id: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/recipients/${encodeURIComponent(recipientId)}`, {
+    memberId: string,
+    input: Partial<Pick<OrganizationMember, 'name' | 'email' | 'tags' | 'state'>>,
+  ): Promise<Partial<OrganizationMember> & { id: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(memberId)}`, {
     method: 'PATCH',
     body: JSON.stringify(input),
   }),
-  setRecipientLineDestination: (
+  setMemberLineDestination: (
     organizationId: string,
-    recipientId: string,
-    input: RecipientLineDestinationInput,
-  ): Promise<RecipientLineDestination> => request(`/api/organizations/${encodeURIComponent(organizationId)}/recipients/${encodeURIComponent(recipientId)}/line-destination`, {
+    memberId: string,
+    input: MemberLineDestinationInput,
+  ): Promise<MemberLineDestination> => request(`/api/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(memberId)}/line-destination`, {
     method: 'PUT',
     body: JSON.stringify(input),
   }),
-  removeRecipientLineDestination: (
+  removeMemberLineDestination: (
     organizationId: string,
-    recipientId: string,
+    memberId: string,
     lineDestinationId: string,
-  ): Promise<{ id: string; unlinked: boolean }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/recipients/${encodeURIComponent(recipientId)}/line-destination/${encodeURIComponent(lineDestinationId)}`, {
+  ): Promise<{ id: string; unlinked: boolean }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(memberId)}/line-destination/${encodeURIComponent(lineDestinationId)}`, {
     method: 'DELETE',
   }),
   registerLineDestination: (
     organizationId: string,
-    input: RecipientLineDestinationInput,
+    input: MemberLineDestinationInput,
   ): Promise<OrganizationLineDestination> => request(`/api/organizations/${encodeURIComponent(organizationId)}/line-destinations`, {
     method: 'POST',
     body: JSON.stringify(input),

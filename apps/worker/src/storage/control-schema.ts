@@ -23,7 +23,7 @@ export const identities = sqliteTable('identities', {
   updatedAt: text('updated_at').notNull(),
 });
 
-export const members = sqliteTable('members', {
+export const admins = sqliteTable('admins', {
   organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
   identityId: text('identity_id').notNull().references(() => identities.id, { onDelete: 'cascade' }),
   role: text('role', { enum: ['owner', 'admin', 'operator', 'viewer'] }).notNull(),
@@ -32,9 +32,9 @@ export const members = sqliteTable('members', {
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
   primaryKey({ columns: [table.organizationId, table.identityId] }),
-  check('members_role_check', sql`${table.role} in ('owner', 'admin', 'operator', 'viewer')`),
-  check('members_state_check', sql`${table.state} in ('pending', 'active', 'suspended', 'removed')`),
-  index('members_identity_idx').on(table.identityId, table.state),
+  check('admins_role_check', sql`${table.role} in ('owner', 'admin', 'operator', 'viewer')`),
+  check('admins_state_check', sql`${table.state} in ('pending', 'active', 'suspended', 'removed')`),
+  index('admins_identity_idx').on(table.identityId, table.state),
 ]);
 
 export const sessions = sqliteTable('sessions', {

@@ -15,8 +15,8 @@ import {
 import { availablePresets } from './presets';
 import { controlDatabase } from './storage/database';
 import {
+  admins,
   automationInboxClaims,
-  members,
   organizationProvisionings,
   organizations,
   organizationSetups,
@@ -108,7 +108,7 @@ const beginProvisioning = async (
       createdAt,
       updatedAt: createdAt,
     }),
-    control.insert(members).values({
+    control.insert(admins).values({
       organizationId,
       identityId: setup.ownerIdentityId,
       role: 'owner',
@@ -203,16 +203,16 @@ export const applicationState = async (env: Bindings, session: SessionRow): Prom
   const identity = { email: session.email, displayName: session.display_name };
   const control = controlDatabase(env.CONTROL_DB);
   const memberships = await control.select({
-    organizationId: members.organizationId,
-    role: members.role,
+    organizationId: admins.organizationId,
+    role: admins.role,
     name: organizations.name,
     status: organizations.status,
     databaseId: organizations.databaseId,
     bindingName: organizations.bindingName,
-  }).from(members).innerJoin(organizations, eq(organizations.id, members.organizationId))
+  }).from(admins).innerJoin(organizations, eq(organizations.id, admins.organizationId))
     .where(and(
-      eq(members.identityId, session.identity_id),
-      eq(members.state, 'active'),
+      eq(admins.identityId, session.identity_id),
+      eq(admins.state, 'active'),
       isNotNull(organizations.databaseId),
     )).all();
   if (memberships.length > 0) {

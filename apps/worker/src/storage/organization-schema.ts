@@ -374,7 +374,7 @@ export const deliveryArchives = sqliteTable('delivery_archives', {
   createdAt: text('created_at').notNull(),
 });
 
-export const recipientProfiles = sqliteTable('recipient_profiles', {
+export const members = sqliteTable('members', {
   id: text('id').primaryKey(),
   organizationId: text('organization_id').notNull(),
   name: text('name').notNull(),
@@ -384,18 +384,18 @@ export const recipientProfiles = sqliteTable('recipient_profiles', {
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
-  check('recipient_profiles_state_check', sql`${table.state} in ('active', 'inactive')`),
-  uniqueIndex('recipient_profiles_email_unique').on(table.email).where(sql`${table.email} <> ''`),
+  check('members_state_check', sql`${table.state} in ('active', 'inactive')`),
+  uniqueIndex('members_email_unique').on(table.email).where(sql`${table.email} <> ''`),
 ]);
 
 export const eventRecipients = sqliteTable('event_recipients', {
   eventId: text('event_id').notNull().references(() => events.id, { onDelete: 'cascade' }),
-  recipientProfileId: text('recipient_profile_id').notNull().references(() => recipientProfiles.id),
+  memberId: text('member_id').notNull().references(() => members.id),
   nameSnapshot: text('name_snapshot').notNull(),
   emailSnapshot: text('email_snapshot').notNull(),
   createdAt: text('created_at').notNull(),
 }, (table) => [
-  primaryKey({ columns: [table.eventId, table.recipientProfileId] }),
+  primaryKey({ columns: [table.eventId, table.memberId] }),
 ]);
 
 export const lineDestinations = sqliteTable('line_destinations', {
@@ -414,21 +414,21 @@ export const lineDestinations = sqliteTable('line_destinations', {
   uniqueIndex('line_destinations_connection_destination_idx').on(table.connectionId, table.destinationId),
 ]);
 
-export const recipientLinkTokens = sqliteTable('recipient_link_tokens', {
+export const memberLinkTokens = sqliteTable('member_link_tokens', {
   token: text('token').primaryKey(),
-  recipientProfileId: text('recipient_profile_id').notNull().references(() => recipientProfiles.id, { onDelete: 'cascade' }),
+  memberId: text('member_id').notNull().references(() => members.id, { onDelete: 'cascade' }),
   expiresAt: text('expires_at').notNull(),
   usedAt: text('used_at'),
   createdAt: text('created_at').notNull(),
 });
 
-export const recipientLineDestinations = sqliteTable('recipient_line_destinations', {
-  recipientProfileId: text('recipient_profile_id').notNull().references(() => recipientProfiles.id, { onDelete: 'cascade' }),
+export const memberLineDestinations = sqliteTable('member_line_destinations', {
+  memberId: text('member_id').notNull().references(() => members.id, { onDelete: 'cascade' }),
   lineDestinationId: text('line_destination_id').notNull().references(() => lineDestinations.id, { onDelete: 'cascade' }),
   createdAt: text('created_at').notNull(),
 }, (table) => [
-  primaryKey({ columns: [table.recipientProfileId, table.lineDestinationId] }),
-  uniqueIndex('recipient_line_destinations_destination_unique').on(table.lineDestinationId),
+  primaryKey({ columns: [table.memberId, table.lineDestinationId] }),
+  uniqueIndex('member_line_destinations_destination_unique').on(table.lineDestinationId),
 ]);
 
 export const eventAttachments = sqliteTable('event_attachments', {

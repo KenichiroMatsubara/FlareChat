@@ -8,7 +8,7 @@ import { agentWritePortForApproval, createAutomation, LEGACY_AI_BASE_URL } from 
 import { decrypt, encrypt } from './cryptography';
 import { randomToken } from './encoding';
 import { readRecoveryReceipt, restoreDeliveryRecordFromReceipt } from './recovery-receipts';
-import { exportRecipientCsv, previewRecipientCsv } from './recipients';
+import { exportMemberCsv, previewMemberCsv } from './roster';
 import { failure, json } from './response';
 import { entryRoutes, oauthRoutes } from './routes/entry';
 import { automationRoutes } from './routes/automation';
@@ -22,7 +22,7 @@ import { createTaskWorkflow } from './tasks';
 import { applyPreset, availablePresets, PresetConfigurationConflictError } from './presets';
 import { controlDatabase as drizzleControlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
 import { createOrganizationStore } from './storage/organization-store';
-import { identities, members, organizations, recoveryRequests } from './storage/control-schema';
+import { admins, identities, organizations, recoveryRequests } from './storage/control-schema';
 import {
   agentRuleRevisions,
   agentRulePermittedLineLists,
@@ -42,9 +42,9 @@ import {
   lineDestinations,
   listItems,
   lists as organizationLists,
-  recipientLineDestinations,
-  recipientLinkTokens,
-  recipientProfiles,
+  memberLineDestinations,
+  memberLinkTokens,
+  members,
   ruleRevisions,
   rulePermittedLineLists,
   rulePermittedRecipientLists,
@@ -1088,29 +1088,29 @@ app.patch('/api/organizations/:organizationId/rules/:ruleId', async (context) =>
   }
 });
 
-app.get('/api/organizations/:organizationId/recipients', async (context) => {
+app.get('/api/organizations/:organizationId/members', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
     if (!access.database) throw new Error('Organization database is not available.');
     const rows = await drizzleOrganizationDatabase(access.database).select({
-      id: recipientProfiles.id,
-      name: recipientProfiles.name,
-      email: recipientProfiles.email,
-      state: recipientProfiles.state,
-      tags: recipientProfiles.tags,
-      createdAt: recipientProfiles.createdAt,
-      updatedAt: recipientProfiles.updatedAt,
+      id: members.id,
+      name: members.name,
+      email: members.email,
+      state: members.state,
+      tags: members.tags,
+      createdAt: members.createdAt,
+      updatedAt: members.updatedAt,
       lineDestinationRowId: lineDestinations.id,
       lineDestinationId: lineDestinations.destinationId,
       lineDisplayName: lineDestinations.displayName,
       lineKind: lineDestinations.kind,
       lineStatus: lineDestinations.status,
       lineSource: lineDestinations.source,
-    }).from(recipientProfiles)
-      .leftJoin(recipientLineDestinations, eq(recipientLineDestinations.recipientProfileId, recipientProfiles.id))
-      .leftJoin(lineDestinations, eq(lineDestinations.id, recipientLineDestinations.lineDestinationId))
-      .orderBy(asc(recipientProfiles.name)).all();
-    const recipients = new Map<string, {
+    }).from(members)
+      .leftJoin(memberLineDestinations, eq(memberLineDestinations.memberId, members.id))
+      .leftJoin(lineDestinations, eq(lineDestinations.id, memberLineDestinations.lineDestinationId))
+      .orderBy(asc(members.name)).all();
+    const roster = new Map<string, {
       id: string;
       organizationId: string;
       name: string;
@@ -1129,7 +1129,7 @@ app.get('/api/organizations/:organizationId/recipients', async (context) => {
       }>;
     }>();
     for (const row of rows) {
-      const recipient = recipients.get(row.id) ?? {
+      const member = roster.get(row.id) ?? {
         id: row.id,
         organizationId: access.organization.id,
         name: row.name,
@@ -1143,7 +1143,7 @@ app.get('/api/organizations/:organizationId/recipients', async (context) => {
         lineDestinations: [],
       };
       if (row.lineDestinationRowId && row.lineDestinationId && row.lineKind && row.lineStatus) {
-        recipient.lineDestinations.push({
+        member.lineDestinations.push({
           id: row.lineDestinationRowId,
           destinationId: displayLineDestinationId(row.lineDestinationId),
           displayName: row.lineDisplayName ?? '',
@@ -1152,11 +1152,11 @@ app.get('/api/organizations/:organizationId/recipients', async (context) => {
           source: row.lineSource ?? 'webhook',
         });
       }
-      recipients.set(row.id, recipient);
+      roster.set(row.id, member);
     }
-    return json(context, [...recipients.values()]);
+    return json(context, [...roster.values()]);
   } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Recipient Profiles could not be loaded.', 403);
+    return failure(context, error instanceof Error ? error.message : 'Members could not be loaded.', 403);
   }
 });
 
@@ -1172,9 +1172,9 @@ app.get('/api/organizations/:organizationId/line-destinations', async (context) 
       status: lineDestinations.status,
       source: lineDestinations.source,
       discoveredAt: lineDestinations.discoveredAt,
-      recipientProfileId: recipientLineDestinations.recipientProfileId,
+      memberId: memberLineDestinations.memberId,
     }).from(lineDestinations)
-      .leftJoin(recipientLineDestinations, eq(recipientLineDestinations.lineDestinationId, lineDestinations.id))
+      .leftJoin(memberLineDestinations, eq(memberLineDestinations.lineDestinationId, lineDestinations.id))
       .orderBy(desc(lineDestinations.discoveredAt)).all();
     return json(context, rows.map((row) => ({
       ...row,
@@ -1203,12 +1203,12 @@ app.post('/api/organizations/:organizationId/line-destinations', async (context)
     if (!connection) return failure(context, 'A LINE Connection must be configured before a LINE Destination can be entered manually.', 409);
     const existing = await database.select({
       id: lineDestinations.id,
-      recipientProfileId: recipientLineDestinations.recipientProfileId,
+      memberId: memberLineDestinations.memberId,
     }).from(lineDestinations)
-      .leftJoin(recipientLineDestinations, eq(recipientLineDestinations.lineDestinationId, lineDestinations.id))
+      .leftJoin(memberLineDestinations, eq(memberLineDestinations.lineDestinationId, lineDestinations.id))
       .where(and(eq(lineDestinations.connectionId, connection.id), eq(lineDestinations.destinationId, destinationId)))
       .get();
-    if (existing?.recipientProfileId) return failure(context, 'This LINE ID is already linked to a member.', 409);
+    if (existing?.memberId) return failure(context, 'This LINE ID is already linked to a member.', 409);
     const timestamp = now();
     if (existing) {
       await database.update(lineDestinations).set({
@@ -1225,7 +1225,7 @@ app.post('/api/organizations/:organizationId/line-destinations', async (context)
         status: 'discovered' as const,
         source: 'manual' as const,
         discoveredAt: timestamp,
-        recipientProfileId: null,
+        memberId: null,
       });
     }
     const id = crypto.randomUUID();
@@ -1248,7 +1248,7 @@ app.post('/api/organizations/:organizationId/line-destinations', async (context)
       status: 'discovered' as const,
       source: 'manual' as const,
       discoveredAt: timestamp,
-      recipientProfileId: null,
+      memberId: null,
     }, 201);
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'LINE Destination could not be registered.', 409);
@@ -1264,13 +1264,13 @@ app.delete('/api/organizations/:organizationId/line-destinations/:lineDestinatio
     const database = drizzleOrganizationDatabase(access.database);
     const existing = await database.select({
       id: lineDestinations.id,
-      recipientProfileId: recipientLineDestinations.recipientProfileId,
+      memberId: memberLineDestinations.memberId,
     }).from(lineDestinations)
-      .leftJoin(recipientLineDestinations, eq(recipientLineDestinations.lineDestinationId, lineDestinations.id))
+      .leftJoin(memberLineDestinations, eq(memberLineDestinations.lineDestinationId, lineDestinations.id))
       .where(eq(lineDestinations.id, lineDestinationId))
       .get();
     if (!existing) return failure(context, 'LINE Destination was not found.', 404);
-    if (existing.recipientProfileId) return failure(context, 'Unlink this LINE Destination from its member before removing it.', 409);
+    if (existing.memberId) return failure(context, 'Unlink this LINE Destination from its member before removing it.', 409);
     await database.delete(lineDestinations).where(eq(lineDestinations.id, lineDestinationId)).run();
     return json(context, { id: lineDestinationId, removed: true });
   } catch (error) {
@@ -1278,31 +1278,31 @@ app.delete('/api/organizations/:organizationId/line-destinations/:lineDestinatio
   }
 });
 
-app.get('/api/organizations/:organizationId/recipients/export', async (context) => {
+app.get('/api/organizations/:organizationId/members/export', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
     if (!access.database) throw new Error('Organization database is not available.');
     const rows = await drizzleOrganizationDatabase(access.database).select({
-      name: recipientProfiles.name,
-      email: recipientProfiles.email,
-    }).from(recipientProfiles).where(eq(recipientProfiles.state, 'active')).orderBy(asc(recipientProfiles.name)).all();
-    return new Response(exportRecipientCsv(rows), { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="recipients.csv"' } });
-  } catch (error) { return failure(context, error instanceof Error ? error.message : 'Recipient export could not be created.', 403); }
+      name: members.name,
+      email: members.email,
+    }).from(members).where(eq(members.state, 'active')).orderBy(asc(members.name)).all();
+    return new Response(exportMemberCsv(rows), { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="members.csv"' } });
+  } catch (error) { return failure(context, error instanceof Error ? error.message : 'Member export could not be created.', 403); }
 });
 
-app.post('/api/organizations/:organizationId/recipients', async (context) => {
+app.post('/api/organizations/:organizationId/members', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Recipient Profiles can only be changed by an Owner, Admin, or Operator.', 403);
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Members can only be changed by an Owner, Admin, or Operator.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ name?: string; email?: string; tags?: unknown; lineDestinationId?: string }>();
     const name = input.name?.trim();
     const email = input.email?.trim().toLowerCase() ?? '';
-    if (!name) return failure(context, 'Recipient name is required.');
-    if (email && !email.includes('@')) return failure(context, 'Recipient email address must be valid when provided.');
+    if (!name) return failure(context, 'Member name is required.');
+    if (email && !email.includes('@')) return failure(context, 'Member email address must be valid when provided.');
     const tags = input.tags === undefined ? [] : input.tags;
     if (!Array.isArray(tags) || tags.some((tag) => typeof tag !== 'string' || !tag.trim())) {
-      return failure(context, 'Recipient tags must be non-empty strings.');
+      return failure(context, 'Member tags must be non-empty strings.');
     }
     const normalizedTags = tags.map((tag) => String(tag).trim());
     const database = drizzleOrganizationDatabase(access.database);
@@ -1315,11 +1315,11 @@ app.post('/api/organizations/:organizationId/recipients', async (context) => {
         kind: lineDestinations.kind,
         status: lineDestinations.status,
       }).from(lineDestinations)
-        .leftJoin(recipientLineDestinations, eq(recipientLineDestinations.lineDestinationId, lineDestinations.id))
+        .leftJoin(memberLineDestinations, eq(memberLineDestinations.lineDestinationId, lineDestinations.id))
         .where(and(
           eq(lineDestinations.id, requestedLineDestinationId),
           eq(lineDestinations.status, 'discovered'),
-          isNull(recipientLineDestinations.recipientProfileId),
+          isNull(memberLineDestinations.memberId),
         )).get()
       : null;
     if (requestedLineDestinationId && !lineDestination) {
@@ -1327,7 +1327,7 @@ app.post('/api/organizations/:organizationId/recipients', async (context) => {
     }
     const id = crypto.randomUUID();
     const timestamp = now();
-    const recipientInsert = database.insert(recipientProfiles).values({
+    const memberInsert = database.insert(members).values({
       id,
       organizationId: access.organization.id,
       name,
@@ -1339,15 +1339,15 @@ app.post('/api/organizations/:organizationId/recipients', async (context) => {
     });
     if (lineDestination) {
       await database.batch([
-        recipientInsert,
-        database.insert(recipientLineDestinations).values({
-          recipientProfileId: id,
+        memberInsert,
+        database.insert(memberLineDestinations).values({
+          memberId: id,
           lineDestinationId: lineDestination.id,
           createdAt: timestamp,
         }),
       ]);
     } else {
-      await recipientInsert.run();
+      await memberInsert.run();
     }
     return json(context, {
       id,
@@ -1364,89 +1364,89 @@ app.post('/api/organizations/:organizationId/recipients', async (context) => {
       }] : [],
     }, 201);
   } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Recipient Profile could not be created.', 409);
+    return failure(context, error instanceof Error ? error.message : 'Member could not be created.', 409);
   }
 });
 
-app.patch('/api/organizations/:organizationId/recipients/:recipientId', async (context) => {
+app.patch('/api/organizations/:organizationId/members/:memberId', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Recipient Profiles can only be changed by an Owner, Admin, or Operator.', 403);
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Members can only be changed by an Owner, Admin, or Operator.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ name?: string; email?: string; tags?: unknown; state?: string }>();
-    const updates: Partial<typeof recipientProfiles.$inferInsert> = {};
+    const updates: Partial<typeof members.$inferInsert> = {};
     if (input.name !== undefined) {
       const name = input.name.trim();
-      if (!name) return failure(context, 'Recipient name cannot be empty.');
+      if (!name) return failure(context, 'Member name cannot be empty.');
       updates.name = name;
     }
     if (input.email !== undefined) {
       const email = input.email.trim().toLowerCase();
-      if (email && !email.includes('@')) return failure(context, 'Recipient email address must be valid when provided.');
+      if (email && !email.includes('@')) return failure(context, 'Member email address must be valid when provided.');
       updates.email = email;
     }
     let tags: string[] | undefined;
     if (input.tags !== undefined) {
-      if (!Array.isArray(input.tags) || input.tags.some((tag) => typeof tag !== 'string' || !tag.trim())) return failure(context, 'Recipient tags must be non-empty strings.');
+      if (!Array.isArray(input.tags) || input.tags.some((tag) => typeof tag !== 'string' || !tag.trim())) return failure(context, 'Member tags must be non-empty strings.');
       tags = input.tags.map((tag) => tag.trim());
       updates.tags = JSON.stringify(tags);
     }
     if (input.state !== undefined) {
-      if (!['active', 'inactive'].includes(input.state)) return failure(context, 'Unsupported Recipient state.');
+      if (!['active', 'inactive'].includes(input.state)) return failure(context, 'Unsupported Member state.');
       updates.state = input.state as 'active' | 'inactive';
     }
-    if (Object.keys(updates).length === 0) return failure(context, 'At least one Recipient field is required.');
-    const updated = await drizzleOrganizationDatabase(access.database).update(recipientProfiles)
+    if (Object.keys(updates).length === 0) return failure(context, 'At least one Member field is required.');
+    const updated = await drizzleOrganizationDatabase(access.database).update(members)
       .set({ ...updates, updatedAt: now() })
-      .where(eq(recipientProfiles.id, context.req.param('recipientId')))
-      .returning({ id: recipientProfiles.id }).get();
-    if (!updated) return failure(context, 'Recipient Profile was not found.', 404);
+      .where(eq(members.id, context.req.param('memberId')))
+      .returning({ id: members.id }).get();
+    if (!updated) return failure(context, 'Member was not found.', 404);
     return json(context, {
-      id: context.req.param('recipientId'),
+      id: context.req.param('memberId'),
       ...(input.name === undefined ? {} : { name: input.name.trim() }),
       ...(input.email === undefined ? {} : { email: input.email.trim().toLowerCase() }),
       ...(tags === undefined ? {} : { tags }),
       ...(input.state === undefined ? {} : { state: input.state }),
     });
   } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Recipient Profile could not be updated.', 409);
+    return failure(context, error instanceof Error ? error.message : 'Member could not be updated.', 409);
   }
 });
 
-app.post('/api/organizations/:organizationId/recipients/:recipientId/line-links', async (context) => {
+app.post('/api/organizations/:organizationId/members/:memberId/line-links', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Recipient Links can only be issued by an Owner, Admin, or Operator.', 403);
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Member Links can only be issued by an Owner, Admin, or Operator.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const token = randomToken(24);
     const timestamp = now();
     const expiresAt = expiresIn(RECIPIENT_LINK_WINDOW_MS);
     const database = drizzleOrganizationDatabase(access.database);
     await database.batch([
-      database.update(recipientLinkTokens).set({ usedAt: timestamp }).where(and(
-        eq(recipientLinkTokens.recipientProfileId, context.req.param('recipientId')),
-        isNull(recipientLinkTokens.usedAt),
+      database.update(memberLinkTokens).set({ usedAt: timestamp }).where(and(
+        eq(memberLinkTokens.memberId, context.req.param('memberId')),
+        isNull(memberLinkTokens.usedAt),
       )),
-      database.insert(recipientLinkTokens).values({
+      database.insert(memberLinkTokens).values({
         token,
-        recipientProfileId: context.req.param('recipientId'),
+        memberId: context.req.param('memberId'),
         expiresAt,
         usedAt: null,
         createdAt: timestamp,
       }),
     ]);
     return json(context, {
-      recipientProfileId: context.req.param('recipientId'),
+      memberId: context.req.param('memberId'),
       token,
       expiresAt,
       linkUrl: `${context.env.APP_URL.replace(/\/$/u, '')}/api/public/organizations/${encodeURIComponent(access.organization.id)}/line-links/${encodeURIComponent(token)}`,
     }, 201);
   } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Recipient Link could not be issued.', 409);
+    return failure(context, error instanceof Error ? error.message : 'Member Link could not be issued.', 409);
   }
 });
 
-app.put('/api/organizations/:organizationId/recipients/:recipientId/line-destination', async (context) => {
+app.put('/api/organizations/:organizationId/members/:memberId/line-destination', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
     if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'LINE Destinations can only be changed by an Owner, Admin, or Operator.', 403);
@@ -1456,11 +1456,11 @@ app.put('/api/organizations/:organizationId/recipients/:recipientId/line-destina
     if (!LINE_DESTINATION_ID_PATTERN.test(destinationId)) return failure(context, 'A valid LINE ID is required.');
     const kind: 'user' | 'group' | 'room' = input.kind === 'group' || input.kind === 'room' ? input.kind : 'user';
     const displayName = input.displayName?.trim() ?? '';
-    const recipientId = context.req.param('recipientId');
+    const memberId = context.req.param('memberId');
     const database = drizzleOrganizationDatabase(access.database);
-    const recipient = await database.select({ id: recipientProfiles.id })
-      .from(recipientProfiles).where(eq(recipientProfiles.id, recipientId)).get();
-    if (!recipient) return failure(context, 'Recipient Profile was not found.', 404);
+    const member = await database.select({ id: members.id })
+      .from(members).where(eq(members.id, memberId)).get();
+    if (!member) return failure(context, 'Member was not found.', 404);
     const connection = await database.select({ id: organizationConnections.id }).from(organizationConnections).where(and(
       eq(organizationConnections.kind, 'line'),
       eq(organizationConnections.status, 'active'),
@@ -1469,18 +1469,18 @@ app.put('/api/organizations/:organizationId/recipients/:recipientId/line-destina
     const existing = await database.select({
       id: lineDestinations.id,
       source: lineDestinations.source,
-      recipientProfileId: recipientLineDestinations.recipientProfileId,
+      memberId: memberLineDestinations.memberId,
     }).from(lineDestinations)
-      .leftJoin(recipientLineDestinations, eq(recipientLineDestinations.lineDestinationId, lineDestinations.id))
+      .leftJoin(memberLineDestinations, eq(memberLineDestinations.lineDestinationId, lineDestinations.id))
       .where(and(eq(lineDestinations.connectionId, connection.id), eq(lineDestinations.destinationId, destinationId)))
       .get();
-    if (existing?.recipientProfileId && existing.recipientProfileId !== recipientId) {
+    if (existing?.memberId && existing.memberId !== memberId) {
       return failure(context, 'This LINE ID is already linked to another member.', 409);
     }
     const previousManual = await database.select({ id: lineDestinations.id }).from(lineDestinations)
-      .innerJoin(recipientLineDestinations, eq(recipientLineDestinations.lineDestinationId, lineDestinations.id))
+      .innerJoin(memberLineDestinations, eq(memberLineDestinations.lineDestinationId, lineDestinations.id))
       .where(and(
-        eq(recipientLineDestinations.recipientProfileId, recipientId),
+        eq(memberLineDestinations.memberId, memberId),
         eq(lineDestinations.source, 'manual'),
         ne(lineDestinations.id, existing?.id ?? ''),
       )).get();
@@ -1507,9 +1507,9 @@ app.put('/api/organizations/:organizationId/recipients/:recipientId/line-destina
         updatedAt: timestamp,
       }).run();
     }
-    if (!existing?.recipientProfileId) {
-      await database.insert(recipientLineDestinations).values({
-        recipientProfileId: recipientId,
+    if (!existing?.memberId) {
+      await database.insert(memberLineDestinations).values({
+        memberId,
         lineDestinationId,
         createdAt: timestamp,
       }).run();
@@ -1527,30 +1527,30 @@ app.put('/api/organizations/:organizationId/recipients/:recipientId/line-destina
   }
 });
 
-app.delete('/api/organizations/:organizationId/recipients/:recipientId/line-destination/:lineDestinationId', async (context) => {
+app.delete('/api/organizations/:organizationId/members/:memberId/line-destination/:lineDestinationId', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
     if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'LINE Destinations can only be changed by an Owner, Admin, or Operator.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
-    const recipientId = context.req.param('recipientId');
+    const memberId = context.req.param('memberId');
     const lineDestinationId = context.req.param('lineDestinationId');
     const database = drizzleOrganizationDatabase(access.database);
     const link = await database.select({
-      lineDestinationId: recipientLineDestinations.lineDestinationId,
+      lineDestinationId: memberLineDestinations.lineDestinationId,
       source: lineDestinations.source,
-    }).from(recipientLineDestinations)
-      .innerJoin(lineDestinations, eq(lineDestinations.id, recipientLineDestinations.lineDestinationId))
+    }).from(memberLineDestinations)
+      .innerJoin(lineDestinations, eq(lineDestinations.id, memberLineDestinations.lineDestinationId))
       .where(and(
-        eq(recipientLineDestinations.recipientProfileId, recipientId),
-        eq(recipientLineDestinations.lineDestinationId, lineDestinationId),
+        eq(memberLineDestinations.memberId, memberId),
+        eq(memberLineDestinations.lineDestinationId, lineDestinationId),
       )).get();
     if (!link) return failure(context, 'LINE Destination link was not found.', 404);
     if (link.source === 'manual') {
       await database.delete(lineDestinations).where(eq(lineDestinations.id, lineDestinationId)).run();
     } else {
-      await database.delete(recipientLineDestinations).where(and(
-        eq(recipientLineDestinations.recipientProfileId, recipientId),
-        eq(recipientLineDestinations.lineDestinationId, lineDestinationId),
+      await database.delete(memberLineDestinations).where(and(
+        eq(memberLineDestinations.memberId, memberId),
+        eq(memberLineDestinations.lineDestinationId, lineDestinationId),
       )).run();
     }
     return json(context, { id: lineDestinationId, unlinked: true });
@@ -1559,42 +1559,42 @@ app.delete('/api/organizations/:organizationId/recipients/:recipientId/line-dest
   }
 });
 
-app.post('/api/organizations/:organizationId/recipients/import/preview', async (context) => {
+app.post('/api/organizations/:organizationId/members/import/preview', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Recipient imports can only be previewed by an Owner, Admin, or Operator.', 403);
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Member imports can only be previewed by an Owner, Admin, or Operator.', 403);
     const input = await context.req.json<{ csv?: string }>();
     if (typeof input.csv !== 'string') return failure(context, 'CSV content is required.');
-    return json(context, previewRecipientCsv(input.csv));
+    return json(context, previewMemberCsv(input.csv));
   } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Recipient import could not be previewed.', 409);
+    return failure(context, error instanceof Error ? error.message : 'Member import could not be previewed.', 409);
   }
 });
 
-app.post('/api/organizations/:organizationId/recipients/import', async (context) => {
+app.post('/api/organizations/:organizationId/members/import', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Recipient imports can only be confirmed by an Owner, Admin, or Operator.', 403);
+    if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Member imports can only be confirmed by an Owner, Admin, or Operator.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ csv?: string }>();
     if (typeof input.csv !== 'string') return failure(context, 'CSV content is required.');
-    const preview = previewRecipientCsv(input.csv);
+    const preview = previewMemberCsv(input.csv);
     const timestamp = now();
     const database = drizzleOrganizationDatabase(access.database);
-    const writes = await Promise.all(preview.accepted.map((recipient) => database.insert(recipientProfiles).values({
+    const writes = await Promise.all(preview.accepted.map((member) => database.insert(members).values({
       id: crypto.randomUUID(),
       organizationId: access.organization.id,
-      name: recipient.name,
-      email: recipient.email,
+      name: member.name,
+      email: member.email,
       state: 'active',
       tags: '[]',
       createdAt: timestamp,
       updatedAt: timestamp,
-    }).onConflictDoNothing().returning({ id: recipientProfiles.id }).get()));
+    }).onConflictDoNothing().returning({ id: members.id }).get()));
     const imported = writes.filter(Boolean).length;
     return json(context, { imported, duplicates: preview.duplicates, invalid: preview.invalid }, 201);
   } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Recipient import could not be completed.', 409);
+    return failure(context, error instanceof Error ? error.message : 'Member import could not be completed.', 409);
   }
 });
 
@@ -1623,7 +1623,7 @@ app.get('/api/organizations/:organizationId/dashboard', async (context) => {
   }
 });
 
-app.patch('/api/organizations/:organizationId/members/:identityId', async (context) => {
+app.patch('/api/organizations/:organizationId/admins/:identityId', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
     if (access.role !== 'owner') return failure(context, 'Only an Owner can change member roles.', 403);
@@ -1631,13 +1631,13 @@ app.patch('/api/organizations/:organizationId/members/:identityId', async (conte
     if (input.role !== undefined && !['owner', 'admin', 'operator', 'viewer'].includes(input.role)) return failure(context, 'Unsupported member role.');
     if (input.state !== undefined && !['active', 'suspended'].includes(input.state)) return failure(context, 'Unsupported member state.');
     if (input.role === undefined && input.state === undefined) return failure(context, 'A member role or state is required.');
-    const updates: Partial<typeof members.$inferInsert> = { updatedAt: now() };
+    const updates: Partial<typeof admins.$inferInsert> = { updatedAt: now() };
     if (input.role !== undefined) updates.role = input.role as 'owner' | 'admin' | 'operator' | 'viewer';
     if (input.state !== undefined) updates.state = input.state as 'active' | 'suspended';
-    const updated = await drizzleControlDatabase(context.env.CONTROL_DB).update(members).set(updates).where(and(
-      eq(members.organizationId, access.organization.id),
-      eq(members.identityId, context.req.param('identityId')),
-    )).returning({ identityId: members.identityId }).get();
+    const updated = await drizzleControlDatabase(context.env.CONTROL_DB).update(admins).set(updates).where(and(
+      eq(admins.organizationId, access.organization.id),
+      eq(admins.identityId, context.req.param('identityId')),
+    )).returning({ identityId: admins.identityId }).get();
     if (!updated) return failure(context, 'Member was not found.', 404);
     return json(context, { identityId: context.req.param('identityId'), ...(input.role === undefined ? {} : { role: input.role }), ...(input.state === undefined ? {} : { state: input.state }) });
   } catch (error) {
@@ -1707,12 +1707,12 @@ app.put('/api/organizations/:organizationId/task-roles/:roleId/assignment', asyn
     const input = await context.req.json<{ identityId?: string }>();
     if (!input.identityId) return failure(context, 'An active Organization member is required.');
     const member = await drizzleControlDatabase(context.env.CONTROL_DB).select({
-      identityId: members.identityId,
+      identityId: admins.identityId,
       displayName: identities.displayName,
-    }).from(members).innerJoin(identities, eq(identities.id, members.identityId)).where(and(
-      eq(members.organizationId, organizationId),
-      eq(members.identityId, input.identityId),
-      eq(members.state, 'active'),
+    }).from(admins).innerJoin(identities, eq(identities.id, admins.identityId)).where(and(
+      eq(admins.organizationId, organizationId),
+      eq(admins.identityId, input.identityId),
+      eq(admins.state, 'active'),
     )).get();
     if (!member) return failure(context, 'Task roles can only be assigned to an active Organization member.', 409);
     await createTaskWorkflow(database).assignRole({
@@ -1732,11 +1732,11 @@ app.get('/api/organizations/:organizationId/task-roles', async (context) => {
     const access = await organizationForRequest(context.req.raw, context.env, organizationId);
     if (!access.database) return failure(context, '組織DBに接続できません。', 503);
     const membersForTasks = await drizzleControlDatabase(context.env.CONTROL_DB).select({
-      identityId: members.identityId,
+      identityId: admins.identityId,
       displayName: identities.displayName,
-    }).from(members).innerJoin(identities, eq(identities.id, members.identityId)).where(and(
-      eq(members.organizationId, organizationId),
-      eq(members.state, 'active'),
+    }).from(admins).innerJoin(identities, eq(identities.id, admins.identityId)).where(and(
+      eq(admins.organizationId, organizationId),
+      eq(admins.state, 'active'),
     )).all();
     const database = drizzleOrganizationDatabase(access.database);
     const [roles, assignments] = await Promise.all([
@@ -1989,23 +1989,23 @@ app.post('/api/organizations/:organizationId/events/:eventId/recipient-snapshots
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
     if (!['owner', 'admin', 'operator'].includes(access.role)) return failure(context, 'Recipient snapshots can only be created by an Owner, Admin, or Operator.', 403);
     if (!access.database) throw new Error('Organization database is not available.');
-    const input = await context.req.json<{ recipientProfileIds?: unknown }>();
-    if (!Array.isArray(input.recipientProfileIds) || !input.recipientProfileIds.length || input.recipientProfileIds.some((id) => typeof id !== 'string' || !id.trim())) return failure(context, 'At least one Recipient Profile is required.');
-    const recipientProfileIds = [...new Set(input.recipientProfileIds.map((id) => id.trim()))];
+    const input = await context.req.json<{ memberIds?: unknown }>();
+    if (!Array.isArray(input.memberIds) || !input.memberIds.length || input.memberIds.some((id) => typeof id !== 'string' || !id.trim())) return failure(context, 'At least one Member is required.');
+    const memberIds = [...new Set(input.memberIds.map((id) => id.trim()))];
     const database = drizzleOrganizationDatabase(access.database);
     const recipients = await database.select({
-      id: recipientProfiles.id,
-      name: recipientProfiles.name,
-      email: recipientProfiles.email,
-    }).from(recipientProfiles).where(and(
-      inArray(recipientProfiles.id, recipientProfileIds),
-      eq(recipientProfiles.state, 'active'),
+      id: members.id,
+      name: members.name,
+      email: members.email,
+    }).from(members).where(and(
+      inArray(members.id, memberIds),
+      eq(members.state, 'active'),
     )).all();
-    if (recipients.length !== recipientProfileIds.length) return failure(context, 'One or more active Recipient Profiles were not found.', 404);
+    if (recipients.length !== memberIds.length) return failure(context, 'One or more active Members were not found.', 404);
     const timestamp = now();
     await Promise.all(recipients.map((recipient) => database.insert(eventRecipients).values({
       eventId: context.req.param('eventId'),
-      recipientProfileId: recipient.id,
+      memberId: recipient.id,
       nameSnapshot: recipient.name,
       emailSnapshot: recipient.email,
       createdAt: timestamp,
@@ -2131,40 +2131,40 @@ app.post('/api/public/organizations/:organizationId/line-links/:token', async (c
   try {
     const organizationId = context.req.param('organizationId');
     const database = await activeOrganizationDatabase(context.env, organizationId);
-    if (!database) return failure(context, 'Recipient Link was not found.', 404);
+    if (!database) return failure(context, 'Member Link was not found.', 404);
     const organizationDb = drizzleOrganizationDatabase(database);
     const input = await context.req.json<{ destinationId?: string }>();
     if (!input.destinationId?.trim()) return failure(context, 'A discovered LINE Destination is required.');
     const link = await organizationDb.select({
-      recipientProfileId: recipientLinkTokens.recipientProfileId,
-    }).from(recipientLinkTokens).where(and(
-      eq(recipientLinkTokens.token, context.req.param('token')),
-      isNull(recipientLinkTokens.usedAt),
-      gt(recipientLinkTokens.expiresAt, now()),
+      memberId: memberLinkTokens.memberId,
+    }).from(memberLinkTokens).where(and(
+      eq(memberLinkTokens.token, context.req.param('token')),
+      isNull(memberLinkTokens.usedAt),
+      gt(memberLinkTokens.expiresAt, now()),
     )).get();
-    if (!link) return failure(context, 'Recipient Link has expired or was already used.', 410);
+    if (!link) return failure(context, 'Member Link has expired or was already used.', 410);
     const destination = await organizationDb.select({ id: lineDestinations.id }).from(lineDestinations).where(and(
       eq(lineDestinations.destinationId, input.destinationId.trim()),
       eq(lineDestinations.status, 'discovered'),
     )).limit(1).get();
     if (!destination) return failure(context, 'LINE Destination was not found.', 404);
     const timestamp = now();
-    await organizationDb.insert(recipientLineDestinations).values({
-      recipientProfileId: link.recipientProfileId,
+    await organizationDb.insert(memberLineDestinations).values({
+      memberId: link.memberId,
       lineDestinationId: destination.id,
       createdAt: timestamp,
     }).onConflictDoNothing().run();
-    const consumed = await organizationDb.update(recipientLinkTokens).set({ usedAt: timestamp }).where(and(
-      eq(recipientLinkTokens.token, context.req.param('token')),
-      isNull(recipientLinkTokens.usedAt),
-    )).returning({ token: recipientLinkTokens.token }).get();
-    if (!consumed) return failure(context, 'Recipient Link was already used.', 410);
+    const consumed = await organizationDb.update(memberLinkTokens).set({ usedAt: timestamp }).where(and(
+      eq(memberLinkTokens.token, context.req.param('token')),
+      isNull(memberLinkTokens.usedAt),
+    )).returning({ token: memberLinkTokens.token }).get();
+    if (!consumed) return failure(context, 'Member Link was already used.', 410);
     return json(context, {
-      recipientProfileId: link.recipientProfileId,
+      memberId: link.memberId,
       destinationId: displayLineDestinationId(input.destinationId.trim()),
     });
   } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Recipient Link could not be consumed.', 409);
+    return failure(context, error instanceof Error ? error.message : 'Member Link could not be consumed.', 409);
   }
 });
 
@@ -2177,11 +2177,11 @@ app.patch('/api/organizations/:organizationId/suspension', async (context) => {
     const membership = await control.select({
       id: organizations.id,
       status: organizations.status,
-      role: members.role,
-    }).from(members).innerJoin(organizations, eq(organizations.id, members.organizationId)).where(and(
-      eq(members.identityId, session.identity_id),
-      eq(members.organizationId, organizationId),
-      eq(members.state, 'active'),
+      role: admins.role,
+    }).from(admins).innerJoin(organizations, eq(organizations.id, admins.organizationId)).where(and(
+      eq(admins.identityId, session.identity_id),
+      eq(admins.organizationId, organizationId),
+      eq(admins.state, 'active'),
     )).get();
     if (!membership || membership.role !== 'owner') return failure(context, 'Only an Owner can suspend or resume an Organization.', 403);
     const input = await context.req.json<{ suspended?: boolean }>();
