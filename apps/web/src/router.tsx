@@ -78,6 +78,7 @@ const rootRoute = (client: RouterClient) => ({
   path: '/',
   loader: stateLoader(client),
   element: <RootLayout />,
+  hydrateFallbackElement: <LoadingRoute />,
   errorElement: <RouteError logout={client.logout} />,
   children: [
     { index: true, element: <OAuthError /> },
