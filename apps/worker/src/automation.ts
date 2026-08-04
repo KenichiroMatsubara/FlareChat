@@ -27,7 +27,16 @@ import { resolveSourceMessageFolder } from './attachment-folders';
 import { createTaskWorkflow } from './tasks';
 import { deliverLineBatch, deliverSourceMessageEmail, recordDeliveryAttempt } from './delivery';
 import type { PublishedDriveAttachment, SourceAttachment, SourceAttachmentContent } from './drive-attachments';
+import { GoogleGrantRejectedError } from './google';
 import type { GoogleTokenSet } from './google';
+import {
+  administratorEmails,
+  alertAdministrators,
+  automationAlertMessage,
+  AutomationConfigurationError,
+  classifyAutomationFailure,
+  shouldAlertAdministrators,
+} from './health';
 import { productionAutomationDependencies } from './automation/providers';
 import { GoogleApiError } from './automation/providers';
 import type { AutomationDependencies, GoogleAutomationPort } from './automation/providers';
@@ -200,13 +209,6 @@ export const decodedBody = (part: GmailPart | undefined): string => {
   return bodyTextParts(part).join('\n').replace(/\s+/gu, ' ').trim();
 };
 
-class AutomationConfigurationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'AutomationConfigurationError';
-  }
-}
-
 const requireActiveAiConnection = async (database: D1Database): Promise<void> => {
   const connection = await drizzleOrganizationDatabase(database).select({ id: connections.id }).from(connections)
     .where(and(eq(connections.kind, 'ai'), eq(connections.status, 'active'))).limit(1).get();
@@ -278,6 +280,27 @@ const organizationKeyFor = async (env: Bindings, organizationId: string): Promis
   return unwrapOrganizationKey({ masterKeyVersion: record.masterKeyVersion, envelope: JSON.parse(record.wrappedKeyEnvelope) }, await masterKey(env.CREDENTIAL_MASTER_KEY), organizationId);
 };
 
+/**
+ * Refreshing well ahead of expiry buys two things unattended operation needs: a
+ * transient token-endpoint outage can be ridden out on the token already in
+ * hand, and a rejected grant still leaves a live token for the Administrator
+ * notice that reports it.
+ */
+const ACCESS_TOKEN_REFRESH_MARGIN_MS = 15 * 60 * 1_000;
+
+/** Below this the stored token can no longer be trusted to carry one request. */
+const ACCESS_TOKEN_USABLE_MARGIN_MS = 60_000;
+
+const storedInboxToken = async (
+  env: Bindings,
+  organizationId: string,
+  inbox: AutomationInbox,
+): Promise<{ key: CryptoKey; token: GoogleTokenSet }> => {
+  const key = await organizationKeyFor(env, organizationId);
+  const token = JSON.parse(await decrypt(JSON.parse(inbox.tokenEnvelope), key, `google-connection:${organizationId}:automation-inbox`)) as GoogleTokenSet;
+  return { key, token };
+};
+
 const accessTokenForInbox = async (
   env: Bindings,
   organizationId: string,
@@ -285,20 +308,94 @@ const accessTokenForInbox = async (
   inbox: AutomationInbox,
   dependencies: AutomationDependencies,
 ): Promise<string> => {
-  const key = await organizationKeyFor(env, organizationId);
-  const token = JSON.parse(await decrypt(JSON.parse(inbox.tokenEnvelope), key, `google-connection:${organizationId}:automation-inbox`)) as GoogleTokenSet;
-  if (Date.parse(token.expiresAt) > Date.now() + 60_000) return token.accessToken;
-  const refreshed = await dependencies.tokens.refresh({
-    refreshToken: token.refreshToken,
-    clientId: env.GOOGLE_CLIENT_ID,
-    clientSecret: env.GOOGLE_CLIENT_SECRET,
-  });
+  const { key, token } = await storedInboxToken(env, organizationId, inbox);
+  const remaining = Date.parse(token.expiresAt) - Date.now();
+  if (remaining > ACCESS_TOKEN_REFRESH_MARGIN_MS) return token.accessToken;
+  let refreshed: GoogleTokenSet;
+  try {
+    refreshed = await dependencies.tokens.refresh({
+      refreshToken: token.refreshToken,
+      clientId: env.GOOGLE_CLIENT_ID,
+      clientSecret: env.GOOGLE_CLIENT_SECRET,
+    });
+  } catch (error) {
+    if (error instanceof GoogleGrantRejectedError || remaining <= ACCESS_TOKEN_USABLE_MARGIN_MS) throw error;
+    return token.accessToken;
+  }
   const envelope = await encrypt(JSON.stringify(refreshed), key, `google-connection:${organizationId}:automation-inbox`);
   await drizzleOrganizationDatabase(database).update(googleConnections)
     .set({ tokenEnvelope: JSON.stringify(envelope), updatedAt: now() })
     .where(eq(googleConnections.id, inbox.id))
     .run();
   return refreshed.accessToken;
+};
+
+/** The stored access token when it can still carry the Administrator notice, otherwise nothing. */
+const notifiableAccessToken = async (
+  env: Bindings,
+  organizationId: string,
+  inbox: AutomationInbox,
+): Promise<string | null> => {
+  try {
+    const { token } = await storedInboxToken(env, organizationId, inbox);
+    return Date.parse(token.expiresAt) - Date.now() > ACCESS_TOKEN_USABLE_MARGIN_MS ? token.accessToken : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Records one failed Automation run and, once the failure has outlived its
+ * retry budget, mails every Administrator through the Automation Inbox. Only a
+ * grant Google rejected suspends the Inbox; every other failure leaves it
+ * active so the next scheduled run retries without anyone signing in.
+ */
+const recordAutomationFailure = async (input: {
+  env: Bindings;
+  organizationId: string;
+  database: D1Database;
+  inbox: AutomationInbox;
+  error: unknown;
+  dependencies: AutomationDependencies;
+}): Promise<void> => {
+  const db = drizzleOrganizationDatabase(input.database);
+  const kind = classifyAutomationFailure(input.error);
+  const lastError = input.error instanceof Error ? input.error.message : 'Automation Inbox failed.';
+  const at = now();
+  const failingSince = input.inbox.failingSince ?? at;
+  await db.update(googleConnections).set({
+    ...(kind === 'credential' ? { status: 'reauthentication_required' as const } : {}),
+    lastError,
+    failingSince,
+    updatedAt: at,
+  }).where(eq(googleConnections.id, input.inbox.id)).run();
+  if (!shouldAlertAdministrators({ kind, failingSince, alertedAt: input.inbox.alertedAt, at })) return;
+  try {
+    const [destinations, accessToken] = await Promise.all([
+      administratorEmails(input.env, input.organizationId),
+      notifiableAccessToken(input.env, input.organizationId, input.inbox),
+    ]);
+    if (!destinations.length || !accessToken) return;
+    const message = automationAlertMessage({
+      kind,
+      inboxAddress: input.inbox.inboxAddress,
+      failingSince,
+      lastError,
+      appUrl: input.env.APP_URL,
+    });
+    const delivered = await alertAdministrators({
+      google: input.dependencies.google,
+      accessToken,
+      destinations,
+      subject: message.subject,
+      body: message.body,
+    });
+    if (!delivered) return;
+    await db.update(googleConnections).set({ alertedAt: at, updatedAt: at })
+      .where(eq(googleConnections.id, input.inbox.id)).run();
+  } catch {
+    // An undelivered notice stays unrecorded, so the next scheduled run retries it.
+  }
 };
 
 const verifyOrganizationInboxCredentialWithDependencies = async (
@@ -316,11 +413,7 @@ const verifyOrganizationInboxCredentialWithDependencies = async (
   try {
     await accessTokenForInbox(env, organizationId, database, inbox, dependencies);
   } catch (error) {
-    await db.update(googleConnections).set({
-      status: 'reauthentication_required',
-      lastError: error instanceof Error ? error.message : 'Automation Inbox token refresh failed.',
-      updatedAt: now(),
-    }).where(eq(googleConnections.id, inbox.id)).run();
+    await recordAutomationFailure({ env, organizationId, database, inbox, error, dependencies });
   }
 };
 
@@ -1590,7 +1683,14 @@ const runOrganizationInbox = async (
   } while (pageToken);
   const syncedAt = now();
   await db.update(googleConnections)
-    .set({ gmailHistoryId: historyId, lastSyncedAt: syncedAt, lastError: null, updatedAt: syncedAt })
+    .set({
+      gmailHistoryId: historyId,
+      lastSyncedAt: syncedAt,
+      lastError: null,
+      failingSince: null,
+      alertedAt: null,
+      updatedAt: syncedAt,
+    })
     .where(eq(googleConnections.id, inbox.id))
     .run();
   return { reprocessed };
@@ -1651,31 +1751,44 @@ const runEnabledAutomationsWithDependencies = async (env: Bindings, dependencies
   )).orderBy(organizations.updatedAt).limit(20).all();
   const databases = createDatabaseAccess(env);
   for (const organization of activeOrganizations) {
-    const database = await databases.open({
-      kind: 'organization',
-      bindingName: organization.bindingName,
-      databaseId: organization.databaseId,
-    });
-    const orgDb = drizzleOrganizationDatabase(database.raw);
-    await expireProposedActions(database.raw);
-    const inboxes = await orgDb.select().from(googleConnections).where(and(
-      eq(googleConnections.kind, 'automation_inbox'),
-      eq(googleConnections.status, 'active'),
-      eq(googleConnections.enabled, true),
-    )).all();
-    for (const inbox of inboxes) {
-      try {
-        await requireActiveAiConnection(database.raw);
-        const baseline = await ensureBaselineSchemaRule(orgDb, organization.id);
-        await runOrganizationInbox(dependencies, env, organization.id, database.raw, inbox, baseline.repairSkipped);
-        await completeBaselineSkippedRepair(orgDb);
-      } catch (error) {
-        const lastError = error instanceof Error ? error.message : 'Automation Inbox failed.';
-        await orgDb.update(googleConnections).set(error instanceof AutomationConfigurationError
-          ? { lastError, updatedAt: now() }
-          : { status: 'reauthentication_required', lastError, updatedAt: now() })
-          .where(eq(googleConnections.id, inbox.id)).run();
+    // One Organization whose database or schema is unreachable must not end the
+    // scheduled sweep before the Organizations after it have run.
+    try {
+      const database = await databases.open({
+        kind: 'organization',
+        bindingName: organization.bindingName,
+        databaseId: organization.databaseId,
+      });
+      const orgDb = drizzleOrganizationDatabase(database.raw);
+      await expireProposedActions(database.raw);
+      const inboxes = await orgDb.select().from(googleConnections).where(and(
+        eq(googleConnections.kind, 'automation_inbox'),
+        eq(googleConnections.status, 'active'),
+        eq(googleConnections.enabled, true),
+      )).all();
+      for (const inbox of inboxes) {
+        try {
+          await requireActiveAiConnection(database.raw);
+          const baseline = await ensureBaselineSchemaRule(orgDb, organization.id);
+          await runOrganizationInbox(dependencies, env, organization.id, database.raw, inbox, baseline.repairSkipped);
+          await completeBaselineSkippedRepair(orgDb);
+        } catch (error) {
+          await recordAutomationFailure({
+            env,
+            organizationId: organization.id,
+            database: database.raw,
+            inbox,
+            error,
+            dependencies,
+          });
+        }
       }
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: 'automation_organization_skipped',
+        organizationId: organization.id,
+        message: error instanceof Error ? error.message : 'Organization automation could not start.',
+      }));
     }
   }
 };
