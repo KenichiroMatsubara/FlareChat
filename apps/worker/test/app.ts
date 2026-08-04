@@ -15,15 +15,20 @@ export interface TestApp {
     id: string;
     bindingName: string;
     name?: string;
+    migration?: string;
   }) => TestD1Database;
   close: () => void;
 }
 
 export const createTestApp = (
-  options: { includeAutomationInbox?: boolean } = {},
+  options: {
+    includeAutomationInbox?: boolean;
+    controlMigration?: string;
+    organizationMigration?: string;
+  } = {},
 ): TestApp => {
-  const control = createMigratedTestD1('control');
-  const organization = createMigratedTestD1('organization');
+  const control = createMigratedTestD1('control', options.controlMigration);
+  const organization = createMigratedTestD1('organization', options.organizationMigration);
   const additionalDatabases: TestD1Database[] = [];
   seedOrganizationRoute(control, {
     id: 'organization-1',
@@ -40,14 +45,26 @@ export const createTestApp = (
     CREATED_AT,
     CREATED_AT,
   );
-  control.execute(
-    'INSERT INTO admins (organization_id, identity_id, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-    'organization-1',
-    'identity-1',
-    'active',
-    CREATED_AT,
-    CREATED_AT,
-  );
+  if (options.controlMigration && options.controlMigration < '0003_admins.sql') {
+    control.execute(
+      'INSERT INTO members (organization_id, identity_id, role, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+      'organization-1',
+      'identity-1',
+      'owner',
+      'active',
+      CREATED_AT,
+      CREATED_AT,
+    );
+  } else {
+    control.execute(
+      'INSERT INTO admins (organization_id, identity_id, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+      'organization-1',
+      'identity-1',
+      'active',
+      CREATED_AT,
+      CREATED_AT,
+    );
+  }
   control.execute(
     'INSERT INTO sessions (id, identity_id, expires_at, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)',
     'session-1',
@@ -115,7 +132,7 @@ export const createTestApp = (
       body: JSON.stringify(body),
     }),
     addOrganization: (input) => {
-      const database = createMigratedTestD1('organization');
+      const database = createMigratedTestD1('organization', input.migration);
       additionalDatabases.push(database);
       seedOrganizationRoute(control, {
         id: input.id,
@@ -123,14 +140,26 @@ export const createTestApp = (
         databaseId: `database-${input.id}`,
         name: input.name ?? input.id,
       });
-      control.execute(
-        'INSERT INTO admins (organization_id, identity_id, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-        input.id,
-        'identity-1',
-        'active',
-        CREATED_AT,
-        CREATED_AT,
-      );
+      if (options.controlMigration && options.controlMigration < '0003_admins.sql') {
+        control.execute(
+          'INSERT INTO members (organization_id, identity_id, role, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+          input.id,
+          'identity-1',
+          'owner',
+          'active',
+          CREATED_AT,
+          CREATED_AT,
+        );
+      } else {
+        control.execute(
+          'INSERT INTO admins (organization_id, identity_id, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+          input.id,
+          'identity-1',
+          'active',
+          CREATED_AT,
+          CREATED_AT,
+        );
+      }
       (environment as unknown as Record<string, unknown>)[input.bindingName] = database.binding;
       return database;
     },

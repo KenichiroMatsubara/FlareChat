@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { api } from './api';
+import { ApiError, api } from './api';
 import { defaultOrganizationName, setupPhaseLabel, shouldShowOrganizationLoading } from './entry';
 
 describe('Organization setup client', () => {
@@ -30,6 +30,41 @@ describe('Organization setup client', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 502 })));
 
     await expect(api.bootstrap()).rejects.toThrow('サービスに接続できませんでした。時間をおいて画面を再読み込みしてください。');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('preserves schema diagnostics from the Worker for a visible retryable error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: {
+        code: 'schema_not_ready',
+        message: 'organization database schema is not ready.',
+        category: 'database_ahead',
+        databaseKind: 'organization',
+        databaseId: 'database-1',
+        bindingName: 'ORG_ORGANIZATION1',
+        currentMigration: '9999_future.sql',
+        expectedMigration: '0017_member_portal.sql',
+        requestId: 'request-1',
+      },
+    }), { status: 503 })));
+
+    const failure = await api.bootstrap().catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).toMatchObject({
+      code: 'schema_not_ready',
+      status: 503,
+      category: 'database_ahead',
+      databaseKind: 'organization',
+      databaseId: 'database-1',
+      bindingName: 'ORG_ORGANIZATION1',
+      currentMigration: '9999_future.sql',
+      expectedMigration: '0017_member_portal.sql',
+      requestId: 'request-1',
+    });
+    expect((failure as Error).message).toContain('9999_future.sql');
+    expect((failure as Error).message).toContain('0017_member_portal.sql');
 
     vi.unstubAllGlobals();
   });

@@ -2,10 +2,12 @@ import { Hono } from 'hono';
 import { and, eq, isNotNull } from 'drizzle-orm';
 
 import { beginGoogleEntry, completeGoogleEntry, entryConfigurationError } from '../entry';
+import { createDatabaseAccess } from '../database-access';
 import { applicationState, cancelOrganizationOnboarding, confirmOrganization, retryOrganizationProvisioning } from '../onboarding';
 import { json } from '../response';
 import { failure } from '../response';
 import { createRequestContext } from './request-context';
+import { CONTROL_SCHEMA_TARGET } from '../schema-lifecycle';
 import type { Bindings } from '../types';
 import { controlDatabase } from '../storage/database';
 import { admins, organizations, sessions } from '../storage/control-schema';
@@ -31,11 +33,20 @@ const requestCookie = (header: string | undefined, name: string): string | null 
   return null;
 };
 
-entryRoutes.get('/health', (context) => json(context, {
-  status: 'ok',
-  service: 'mail-automation',
-  time: new Date().toISOString(),
-}));
+entryRoutes.get('/health', async (context) => {
+  const control = await createDatabaseAccess(context.env).open({ kind: 'control' });
+  return json(context, {
+    status: 'ok',
+    service: 'mail-automation',
+    time: new Date().toISOString(),
+    database: {
+      control: {
+        currentMigration: control.schema.currentMigration,
+        expectedMigration: CONTROL_SCHEMA_TARGET,
+      },
+    },
+  });
+});
 
 entryRoutes.post('/entry/google', async (context) => {
   const input = await context.req.json<{ intent?: 'login' | 'organization_setup' }>();

@@ -1,4 +1,4 @@
-import { schemaLifecycle, type SchemaReceipt } from './schema-lifecycle';
+import { SchemaReadinessError, schemaLifecycle, type SchemaReceipt } from './schema-lifecycle';
 import type { Bindings } from './types';
 
 export interface ReadyOrganizationDatabase {
@@ -7,11 +7,25 @@ export interface ReadyOrganizationDatabase {
   schema: SchemaReceipt;
 }
 
+export interface ReadyControlDatabase {
+  kind: 'control';
+  raw: D1Database;
+  schema: SchemaReceipt;
+}
+
+export type ReadyDatabase = ReadyControlDatabase | ReadyOrganizationDatabase;
+
+type ControlDatabaseLocator = {
+  kind: 'control';
+};
+
 type OrganizationDatabaseLocator = {
   kind: 'organization';
   bindingName: string;
   databaseId: string | null;
 };
+
+export type DatabaseLocator = ControlDatabaseLocator | OrganizationDatabaseLocator;
 
 export class DatabaseBindingUnavailableError extends Error {
   constructor(bindingName: string) {
@@ -21,16 +35,31 @@ export class DatabaseBindingUnavailableError extends Error {
 }
 
 export const createDatabaseAccess = (env: Bindings) => ({
-  async open(locator: OrganizationDatabaseLocator): Promise<ReadyOrganizationDatabase> {
-    const bound = (env as unknown as Record<string, unknown>)[locator.bindingName];
+  async open(locator: DatabaseLocator): Promise<ReadyDatabase> {
+    const bindingName = locator.kind === 'control' ? 'CONTROL_DB' : locator.bindingName;
+    const bound = (env as unknown as Record<string, unknown>)[bindingName];
     if (!bound || typeof bound !== 'object') {
-      throw new DatabaseBindingUnavailableError(locator.bindingName);
+      throw new DatabaseBindingUnavailableError(bindingName);
     }
     const raw = bound as D1Database;
-    const schema = await schemaLifecycle.ensureCurrent({
-      kind: 'organization',
-      database: raw,
-    });
-    return { kind: 'organization', raw, schema };
+    let schema: SchemaReceipt;
+    try {
+      schema = await schemaLifecycle.ensureCurrent({
+        kind: locator.kind,
+        database: raw,
+      });
+    } catch (error) {
+      if (!(error instanceof SchemaReadinessError)) throw error;
+      throw new SchemaReadinessError({
+        category: error.category,
+        kind: error.kind,
+        currentMigration: error.currentMigration,
+        expectedMigration: error.expectedMigration,
+        databaseId: locator.kind === 'organization' ? locator.databaseId : null,
+        bindingName,
+        cause: error,
+      });
+    }
+    return { kind: locator.kind, raw, schema } as ReadyDatabase;
   },
 });

@@ -4,8 +4,49 @@ interface ApiResult<T> {
   data: T;
 }
 
+interface ApiFailureDetails {
+  message?: string;
+  code?: string;
+  category?: string;
+  databaseKind?: 'control' | 'organization';
+  databaseId?: string | null;
+  bindingName?: string;
+  currentMigration?: string;
+  expectedMigration?: string;
+  requestId?: string;
+}
+
 interface ApiFailure {
-  error?: { message?: string };
+  error?: ApiFailureDetails;
+}
+
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code: string | undefined;
+  readonly category: string | undefined;
+  readonly databaseKind: 'control' | 'organization' | undefined;
+  readonly databaseId: string | null | undefined;
+  readonly bindingName: string | undefined;
+  readonly currentMigration: string | undefined;
+  readonly expectedMigration: string | undefined;
+  readonly requestId: string | undefined;
+
+  constructor(error: ApiFailureDetails, status: number) {
+    const message = error.code === 'schema_not_ready'
+      ? `データベースのマイグレーション状態が不正です（${error.databaseKind ?? 'unknown'}: 現在 ${error.currentMigration ?? '不明'} / 期待 ${error.expectedMigration ?? '不明'}、request ID: ${error.requestId ?? '不明'}）。`
+      : error.message ?? 'サービスに接続できませんでした。時間をおいて画面を再読み込みしてください。';
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = error.code;
+    this.category = error.category;
+    this.databaseKind = error.databaseKind;
+    this.databaseId = error.databaseId;
+    this.bindingName = error.bindingName;
+    this.currentMigration = error.currentMigration;
+    this.expectedMigration = error.expectedMigration;
+    this.requestId = error.requestId;
+  }
 }
 
 export interface AutomationStatus {
@@ -305,7 +346,7 @@ const responseBody = async <T>(response: Response): Promise<(ApiResult<T> & ApiF
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(path, { credentials: 'include', ...init, headers: { 'Content-Type': 'application/json', ...init?.headers } });
   const body = await responseBody<T>(response);
-  if (!response.ok) throw new Error(body?.error?.message ?? 'サービスに接続できませんでした。時間をおいて画面を再読み込みしてください。');
+  if (!response.ok) throw new ApiError(body?.error ?? {}, response.status);
   if (!body) throw new Error('サービスから応答がありませんでした。画面を再読み込みしてください。');
   return body.data;
 };

@@ -13,7 +13,8 @@
     "db:local:organization:1": "wrangler d1 migrations apply LOCAL_ORGANIZATION_DB_1 --env local --local",
     "db:local:organization:2": "wrangler d1 migrations apply LOCAL_ORGANIZATION_DB_2 --env local --local",
     "db:local:organization:3": "wrangler d1 migrations apply LOCAL_ORGANIZATION_DB_3 --env local --local",
-    "deploy": "wrangler deploy --env=\"\""
+    "deploy": "npm run deploy --prefix ../..",
+    "deploy:worker:release": "wrangler deploy --env=\"\""
   },
   "dependencies": {
     "@mail/domain": "*",

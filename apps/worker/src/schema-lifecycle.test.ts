@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import controlInitialMigration from '../migrations/control/0000_initial.sql';
 import organizationInitialMigration from '../migrations/organization/0000_initial.sql';
 import { createTestD1Database, type TestD1Database } from '../test/d1';
 import { schemaLifecycle } from './schema-lifecycle';
@@ -16,6 +17,22 @@ const databaseAtInitialOrganizationSchema = (): TestD1Database => {
   const database = createTestD1Database();
   openDatabases.push(database);
   for (const statement of organizationInitialMigration
+    .split('--> statement-breakpoint')
+    .map((value) => value.trim())
+    .filter(Boolean)) {
+    database.execute(statement);
+  }
+  database.execute(
+    'CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)',
+  );
+  database.execute('INSERT INTO d1_migrations (name) VALUES (?)', '0000_initial.sql');
+  return database;
+};
+
+const databaseAtInitialControlSchema = (): TestD1Database => {
+  const database = createTestD1Database();
+  openDatabases.push(database);
+  for (const statement of controlInitialMigration
     .split('--> statement-breakpoint')
     .map((value) => value.trim())
     .filter(Boolean)) {
@@ -47,6 +64,69 @@ const databaseBeforeOperationalTaskRoles = (): TestD1Database => {
 };
 
 describe('Schema Lifecycle', () => {
+  it('makes a partially migrated Control database ready for current code', async () => {
+    const database = databaseAtInitialControlSchema();
+
+    const receipt = await schemaLifecycle.ensureCurrent({
+      kind: 'control',
+      database: database.binding,
+    });
+
+    expect(receipt).toMatchObject({
+      kind: 'control',
+      currentMigration: '0005_member_logins.sql',
+      appliedMigrations: [
+        '0001_schema_release.sql',
+        '0002_preset_selection.sql',
+        '0003_admins.sql',
+        '0004_single_admin_role.sql',
+        '0005_member_logins.sql',
+      ],
+    });
+    expect(database.rows<{ state: string }>(
+      "SELECT state FROM schema_releases WHERE id = 'organization'",
+    )).toEqual([{ state: 'ready' }]);
+    expect(database.rows('PRAGMA foreign_key_check')).toEqual([]);
+  });
+
+  it('rejects a Control database whose migration history is ahead of current code', async () => {
+    const database = databaseAtInitialControlSchema();
+    database.execute('INSERT INTO d1_migrations (name) VALUES (?)', '9999_future.sql');
+
+    await expect(schemaLifecycle.ensureCurrent({
+      kind: 'control',
+      database: database.binding,
+    })).rejects.toMatchObject({
+      name: 'SchemaReadinessError',
+      category: 'database_ahead',
+      kind: 'control',
+      currentMigration: '9999_future.sql',
+      expectedMigration: '0005_member_logins.sql',
+    });
+  });
+
+  it('rejects an existing Control schema that has no migration history ledger', async () => {
+    const database = createTestD1Database();
+    openDatabases.push(database);
+    for (const statement of controlInitialMigration
+      .split('--> statement-breakpoint')
+      .map((value) => value.trim())
+      .filter(Boolean)) {
+      database.execute(statement);
+    }
+
+    await expect(schemaLifecycle.ensureCurrent({
+      kind: 'control',
+      database: database.binding,
+    })).rejects.toMatchObject({
+      name: 'SchemaReadinessError',
+      category: 'migration_history_missing',
+      kind: 'control',
+      currentMigration: '',
+      expectedMigration: '0005_member_logins.sql',
+    });
+  });
+
   it('makes a partially migrated Organization database ready for current code', async () => {
     const database = databaseAtInitialOrganizationSchema();
 
@@ -103,7 +183,13 @@ describe('Schema Lifecycle', () => {
     await expect(schemaLifecycle.ensureCurrent({
       kind: 'organization',
       database: database.binding,
-    })).rejects.toThrow();
+    })).rejects.toMatchObject({
+      name: 'SchemaReadinessError',
+      category: 'migration_apply_failed',
+      kind: 'organization',
+      currentMigration: '0000_initial.sql',
+      expectedMigration: '0017_member_portal.sql',
+    });
 
     database.execute('DROP INDEX tasks_source_role_deadline_title_idx');
 
@@ -127,7 +213,13 @@ describe('Schema Lifecycle', () => {
     await expect(schemaLifecycle.ensureCurrent({
       kind: 'organization',
       database: database.binding,
-    })).rejects.toThrow(/checksum/u);
+    })).rejects.toMatchObject({
+      name: 'SchemaReadinessError',
+      category: 'checksum_mismatch',
+      kind: 'organization',
+      currentMigration: '0000_initial.sql',
+      expectedMigration: '0017_member_portal.sql',
+    });
   });
 
   it('accepts the recorded checksum from the constrained Task schema and migrates it forward', async () => {
@@ -227,6 +319,22 @@ describe('Schema Lifecycle', () => {
 
     const receipt = await schemaLifecycle.ensureCurrent({
       kind: 'organization',
+      database: database.binding,
+    });
+
+    expect(receipt.appliedMigrations).toEqual(checkedInMigrations);
+  });
+
+  it('includes every checked-in Control migration in the current schema', async () => {
+    const database = createTestD1Database();
+    openDatabases.push(database);
+    const checkedInMigrations = readdirSync(resolve(
+      import.meta.dirname,
+      '../migrations/control',
+    )).filter((name) => name.endsWith('.sql')).sort();
+
+    const receipt = await schemaLifecycle.ensureCurrent({
+      kind: 'control',
       database: database.binding,
     });
 

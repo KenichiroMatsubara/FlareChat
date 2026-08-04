@@ -91,26 +91,33 @@ export const createTestD1Database = (): TestD1Database => {
 const migrationDirectory = (kind: 'control' | 'organization'): string =>
   resolve(import.meta.dirname, `../migrations/${kind}`);
 
-export const applyTestMigrations = (database: TestD1Database, kind: 'control' | 'organization'): void => {
-  const names = readdirSync(migrationDirectory(kind)).filter((file) => file.endsWith('.sql')).sort();
+export const applyTestMigrations = (
+  database: TestD1Database,
+  kind: 'control' | 'organization',
+  through?: string,
+): void => {
+  const names = readdirSync(migrationDirectory(kind))
+    .filter((file) => file.endsWith('.sql') && (through === undefined || file <= through))
+    .sort();
   for (const name of names) {
     const migration = readFileSync(resolve(migrationDirectory(kind), name), 'utf8');
     for (const statement of migration.split('--> statement-breakpoint').map((value) => value.trim()).filter(Boolean)) {
       database.execute(statement);
     }
   }
-  if (kind === 'organization') {
-    database.execute(
-      'CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)',
-    );
-    for (const name of names) {
-      database.execute('INSERT INTO d1_migrations (name) VALUES (?)', name);
-    }
+  database.execute(
+    'CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)',
+  );
+  for (const name of names) {
+    database.execute('INSERT INTO d1_migrations (name) VALUES (?)', name);
   }
 };
 
-export const createMigratedTestD1 = (kind: 'control' | 'organization'): TestD1Database => {
+export const createMigratedTestD1 = (
+  kind: 'control' | 'organization',
+  through?: string,
+): TestD1Database => {
   const database = createTestD1Database();
-  applyTestMigrations(database, kind);
+  applyTestMigrations(database, kind, through);
   return database;
 };

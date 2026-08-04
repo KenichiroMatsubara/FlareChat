@@ -1,6 +1,7 @@
 import { enqueueDueOrganizationAttendanceReminders } from '../attendance-reminders';
 import { enqueueDueOrganizationTaskReminders } from '../task-reminders';
 import { createAutomation } from '../automation';
+import { createDatabaseAccess } from '../database-access';
 import { retryProvisioning } from '../onboarding';
 import { recoverDueOrganizationJobs } from '../jobs';
 import type { Bindings } from '../types';
@@ -11,6 +12,7 @@ import type { Bindings } from '../types';
  * scheduled-use-case seam.
  */
 export const runBackgroundWork = async (env: Bindings): Promise<void> => {
+  await createDatabaseAccess(env).open({ kind: 'control' });
   const dueAt = new Date().toISOString();
   await retryProvisioning(env);
   await enqueueDueOrganizationAttendanceReminders(env, dueAt);

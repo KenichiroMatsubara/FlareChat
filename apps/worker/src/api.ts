@@ -6,6 +6,7 @@ import { canUpdateAttendance, discoveredLineDestinations, displayLineDestination
 
 import { agentWritePortForApproval, createAutomation, LEGACY_AI_BASE_URL } from './automation';
 import { decrypt, encrypt } from './cryptography';
+import { createDatabaseAccess } from './database-access';
 import { randomToken } from './encoding';
 import { readRecoveryReceipt, restoreDeliveryRecordFromReceipt } from './recovery-receipts';
 import { exportMemberCsv, previewMemberCsv } from './roster';
@@ -15,6 +16,7 @@ import { automationRoutes } from './routes/automation';
 import { portalRoutes } from './routes/portal';
 import { createRequestContext } from './routes/request-context';
 import { typedListRoutes } from './routes/typed-lists';
+import { SchemaReadinessError } from './schema-lifecycle';
 import type { Bindings, ConnectionRow, SessionRow } from './types';
 import type { CipherEnvelope } from './cryptography';
 import { openAiChatCompletionsUrl, type EventDetails, type MailExtraction, type TaskDetails } from './event-details';
@@ -95,7 +97,43 @@ interface LineWebhookPayload {
 
 const app = new Hono<{ Bindings: Bindings }>();
 
+app.onError((error, context) => {
+  const requestId = context.req.header('cf-ray') ?? crypto.randomUUID();
+  if (error instanceof SchemaReadinessError) {
+    console.error(JSON.stringify({
+      event: 'schema_not_ready',
+      requestId,
+      category: error.category,
+      databaseKind: error.kind,
+      databaseId: error.databaseId,
+      bindingName: error.bindingName,
+      currentMigration: error.currentMigration,
+      expectedMigration: error.expectedMigration,
+      message: error.message,
+    }));
+    return context.json({
+      error: {
+        code: 'schema_not_ready',
+        message: error.message,
+        category: error.category,
+        databaseKind: error.kind,
+        databaseId: error.databaseId,
+        bindingName: error.bindingName,
+        currentMigration: error.currentMigration,
+        expectedMigration: error.expectedMigration,
+        requestId,
+      },
+    }, 503);
+  }
+  console.error(error);
+  return failure(context, 'サーバーで予期しないエラーが発生しました。', 500);
+});
+
 app.use('/api/*', cors({ origin: (origin) => origin || 'http://localhost:5173', credentials: true }));
+app.use('*', async (context, next) => {
+  await createDatabaseAccess(context.env).open({ kind: 'control' });
+  await next();
+});
 app.route('/api', entryRoutes);
 app.route('/api', automationRoutes);
 app.route('/api', typedListRoutes);
