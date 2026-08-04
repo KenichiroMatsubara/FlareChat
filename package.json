@@ -22,7 +22,7 @@
     "db:migrate:control:remote": "wrangler d1 migrations apply CONTROL_DB --remote --config apps/worker/wrangler.jsonc",
     "db:migrate:organization:remote": "node --import tsx --import ./scripts/register-sql-text-loader.mjs scripts/migrate-organization-fleet.ts prepare",
     "db:migrate:complete:remote": "node --import tsx --import ./scripts/register-sql-text-loader.mjs scripts/migrate-organization-fleet.ts complete",
-    "deploy:cloudflare": "npm run db:migrate:control:remote && npm run db:migrate:organization:remote && npm run deploy -w @mail/worker && npm run db:migrate:complete:remote",
+    "deploy:cloudflare": "npm run db:migrate:control:remote && npm run db:migrate:organization:remote && npm run deploy:worker:release -w @mail/worker && npm run db:migrate:complete:remote",
     "deploy": "npm run build && npm run deploy:cloudflare"
   },
   "devDependencies": {

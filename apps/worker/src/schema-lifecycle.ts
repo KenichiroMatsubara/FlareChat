@@ -1,3 +1,9 @@
+import controlInitialMigration from '../migrations/control/0000_initial.sql';
+import controlSchemaReleaseMigration from '../migrations/control/0001_schema_release.sql';
+import controlPresetSelectionMigration from '../migrations/control/0002_preset_selection.sql';
+import controlAdminsMigration from '../migrations/control/0003_admins.sql';
+import controlSingleAdminRoleMigration from '../migrations/control/0004_single_admin_role.sql';
+import controlMemberLoginsMigration from '../migrations/control/0005_member_logins.sql';
 import organizationInitialMigration from '../migrations/organization/0000_initial.sql';
 import organizationTasksMigration from '../migrations/organization/0001_tasks.sql';
 import organizationLineDestinationRosterMigration from '../migrations/organization/0002_line_destination_roster.sql';
@@ -17,12 +23,60 @@ import organizationAttachmentFoldersMigration from '../migrations/organization/0
 import organizationMemberTaskAssignmentsMigration from '../migrations/organization/0016_member_task_assignments.sql';
 import organizationMemberPortalMigration from '../migrations/organization/0017_member_portal.sql';
 
-type SchemaKind = 'organization';
+type SchemaKind = 'control' | 'organization';
 
 interface SchemaMigration {
   name: string;
   sql: string;
 }
+
+export type SchemaReadinessCategory =
+  | 'database_ahead'
+  | 'migration_history_missing'
+  | 'migration_history_mismatch'
+  | 'checksum_mismatch'
+  | 'migration_apply_failed';
+
+export class SchemaReadinessError extends Error {
+  readonly category: SchemaReadinessCategory;
+  readonly kind: SchemaKind;
+  readonly currentMigration: string;
+  readonly expectedMigration: string;
+  readonly databaseId: string | null | undefined;
+  readonly bindingName: string | undefined;
+
+  constructor(input: {
+    category: SchemaReadinessCategory;
+    kind: SchemaKind;
+    currentMigration: string;
+    expectedMigration: string;
+    databaseId?: string | null;
+    bindingName?: string;
+    cause?: unknown;
+  }) {
+    super(
+      `${input.kind} database schema is not ready: ${input.category} `
+      + `(current ${input.currentMigration || 'none'}, expected ${input.expectedMigration || 'none'}).`,
+      input.cause === undefined ? undefined : { cause: input.cause },
+    );
+    this.name = 'SchemaReadinessError';
+    this.category = input.category;
+    this.kind = input.kind;
+    this.currentMigration = input.currentMigration;
+    this.expectedMigration = input.expectedMigration;
+    this.databaseId = input.databaseId;
+    this.bindingName = input.bindingName;
+  }
+}
+
+const CONTROL_MIGRATIONS: readonly SchemaMigration[] = [
+  { name: '0000_initial.sql', sql: controlInitialMigration },
+  { name: '0001_schema_release.sql', sql: controlSchemaReleaseMigration },
+  { name: '0002_preset_selection.sql', sql: controlPresetSelectionMigration },
+  { name: '0003_admins.sql', sql: controlAdminsMigration },
+  { name: '0004_single_admin_role.sql', sql: controlSingleAdminRoleMigration },
+  { name: '0005_member_logins.sql', sql: controlMemberLoginsMigration },
+];
 
 const ORGANIZATION_MIGRATIONS: readonly SchemaMigration[] = [
   { name: '0000_initial.sql', sql: organizationInitialMigration },
@@ -67,9 +121,12 @@ const LEGACY_MIGRATION_CHECKSUMS = new Map<string, ReadonlySet<string>>([
 ]);
 export const ORGANIZATION_SCHEMA_TARGET =
   ORGANIZATION_MIGRATIONS.at(-1)?.name ?? '';
+export const CONTROL_SCHEMA_TARGET = CONTROL_MIGRATIONS.at(-1)?.name ?? '';
 
 const migrations = (kind: SchemaKind): readonly SchemaMigration[] => {
   switch (kind) {
+    case 'control':
+      return CONTROL_MIGRATIONS;
     case 'organization':
       return ORGANIZATION_MIGRATIONS;
   }
@@ -111,18 +168,47 @@ export const schemaLifecycle = {
     kind: SchemaKind;
     database: D1Database;
   }): Promise<SchemaReceipt> {
+    const manifest = migrations(input.kind);
+    const expectedMigration = manifest.at(-1)?.name ?? '';
+    const ledger = await input.database.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'd1_migrations'",
+    ).first<{ name: string }>();
+    if (!ledger) {
+      const existingSchema = await input.database.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' LIMIT 1",
+      ).first<{ name: string }>();
+      if (existingSchema) {
+        throw new SchemaReadinessError({
+          category: 'migration_history_missing',
+          kind: input.kind,
+          currentMigration: '',
+          expectedMigration,
+        });
+      }
+    }
     await input.database.prepare(
       'CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, checksum TEXT, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)',
     ).run();
     await ensureChecksumColumn(input.database);
-    const manifest = migrations(input.kind);
     const manifestWithChecksums = await Promise.all(manifest.map(async (migration) => ({
       ...migration,
       checksum: await checksum(migration.sql),
     })));
     const applied = await input.database.prepare(
-      'SELECT name, checksum FROM d1_migrations',
+      'SELECT name, checksum FROM d1_migrations ORDER BY id',
     ).all<{ name: string; checksum: string | null }>();
+    const expectedNames = manifestWithChecksums.map(({ name }) => name);
+    const appliedNamesInOrder = applied.results.map(({ name }) => name);
+    const currentMigration = appliedNamesInOrder.at(-1) ?? '';
+    for (const [index, name] of appliedNamesInOrder.entries()) {
+      if (name === expectedNames[index]) continue;
+      throw new SchemaReadinessError({
+        category: expectedNames.includes(name) ? 'migration_history_mismatch' : 'database_ahead',
+        kind: input.kind,
+        currentMigration,
+        expectedMigration,
+      });
+    }
     const expectedChecksums = new Map(
       manifestWithChecksums.map((migration) => [migration.name, migration.checksum]),
     );
@@ -131,7 +217,12 @@ export const schemaLifecycle = {
       if (!expected) continue;
       if (migration.checksum && migration.checksum !== expected
         && !LEGACY_MIGRATION_CHECKSUMS.get(migration.name)?.has(migration.checksum)) {
-        throw new Error(`Migration checksum mismatch for ${migration.name}.`);
+        throw new SchemaReadinessError({
+          category: 'checksum_mismatch',
+          kind: input.kind,
+          currentMigration,
+          expectedMigration,
+        });
       }
       if (!migration.checksum) {
         await input.database.prepare(
@@ -155,9 +246,22 @@ export const schemaLifecycle = {
         const raced = await input.database.prepare(
           'SELECT checksum FROM d1_migrations WHERE name = ?',
         ).bind(migration.name).first<{ checksum: string | null }>();
-        if (!raced) throw error;
+        if (!raced) {
+          throw new SchemaReadinessError({
+            category: 'migration_apply_failed',
+            kind: input.kind,
+            currentMigration,
+            expectedMigration,
+            cause: error,
+          });
+        }
         if (raced.checksum && raced.checksum !== migration.checksum) {
-          throw new Error(`Migration checksum mismatch for ${migration.name}.`);
+          throw new SchemaReadinessError({
+            category: 'checksum_mismatch',
+            kind: input.kind,
+            currentMigration: migration.name,
+            expectedMigration,
+          });
         }
         if (!raced.checksum) {
           await input.database.prepare(

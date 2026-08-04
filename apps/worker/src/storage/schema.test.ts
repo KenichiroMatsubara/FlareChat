@@ -86,7 +86,7 @@ describe('canonical D1 schemas', () => {
 
   it('migrates and verifies the production database fleet before promoting Worker code', () => {
     expect(rootPackage().scripts?.['deploy:cloudflare']).toBe(
-      'npm run db:migrate:control:remote && npm run db:migrate:organization:remote && npm run deploy -w @mail/worker && npm run db:migrate:complete:remote',
+      'npm run db:migrate:control:remote && npm run db:migrate:organization:remote && npm run deploy:worker:release -w @mail/worker && npm run db:migrate:complete:remote',
     );
   });
 
@@ -94,6 +94,7 @@ describe('canonical D1 schemas', () => {
     expect(tableNames('control')).toEqual([
       'admins',
       'automation_inbox_claims',
+      'd1_migrations',
       'identities',
       'member_logins',
       'oauth_flows',
@@ -112,6 +113,7 @@ describe('canonical D1 schemas', () => {
 
   it('models the Automation Inbox only in Organization D1', () => {
     expect(tableNames('organization')).toContain('google_connections');
+    expect(tableNames('organization')).toContain('d1_migrations');
     expect(tableNames('organization')).not.toContain('schema_migrations');
     expect(migrationSql('organization')).not.toMatch(/schema_migrations|kind.+google.+line.+ai/u);
   });

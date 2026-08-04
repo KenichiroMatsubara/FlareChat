@@ -21,6 +21,119 @@ afterEach(() => {
 });
 
 describe('application entry', () => {
+  it('reports the checked Control schema version from health instead of a database-blind ok', async () => {
+    fixture = createTestApp({ controlMigration: '0000_initial.sql' });
+
+    const health = await app.fetch(fixture.request('/api/health'), fixture.environment);
+
+    expect(health.status).toBe(200);
+    await expect(health.json()).resolves.toMatchObject({
+      data: {
+        status: 'ok',
+        database: {
+          control: {
+            currentMigration: '0005_member_logins.sql',
+            expectedMigration: '0005_member_logins.sql',
+          },
+        },
+      },
+    });
+  });
+
+  it('makes each database ready before an existing Admin bootstrap uses its schema', async () => {
+    fixture = createTestApp({
+      controlMigration: '0000_initial.sql',
+      organizationMigration: '0013_agent_rule_writes.sql',
+    });
+    const secondOrganization = fixture.addOrganization({
+      id: 'organization-2',
+      bindingName: 'ORG_ORGANIZATION2',
+      migration: '0000_initial.sql',
+    });
+
+    const bootstrap = await app.fetch(fixture.request('/api/bootstrap'), fixture.environment);
+
+    expect(bootstrap.status).toBe(200);
+    await expect(bootstrap.json()).resolves.toMatchObject({
+      data: {
+        kind: 'ready',
+        organizations: [
+          { organizationId: 'organization-1' },
+          { organizationId: 'organization-2' },
+        ],
+      },
+    });
+    expect(fixture.control.rows<{ name: string }>(
+      'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1',
+    )).toEqual([{ name: '0005_member_logins.sql' }]);
+    expect(fixture.organization.rows<{ name: string }>(
+      'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1',
+    )).toEqual([{ name: '0017_member_portal.sql' }]);
+    expect(secondOrganization.rows<{ name: string }>(
+      'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1',
+    )).toEqual([{ name: '0017_member_portal.sql' }]);
+  });
+
+  it('reports the exact Organization schema mismatch without revoking the session', async () => {
+    fixture = createTestApp();
+    fixture.organization.execute(
+      'INSERT INTO d1_migrations (name) VALUES (?)',
+      '9999_future.sql',
+    );
+
+    const bootstrap = await app.fetch(fixture.request('/api/bootstrap', {
+      headers: { Origin: 'http://localhost:5173' },
+    }), fixture.environment);
+
+    expect(bootstrap.status).toBe(503);
+    expect(bootstrap.headers.get('access-control-allow-origin')).toBe('http://localhost:5173');
+    await expect(bootstrap.json()).resolves.toMatchObject({
+      error: {
+        code: 'schema_not_ready',
+        category: 'database_ahead',
+        databaseKind: 'organization',
+        databaseId: 'database-1',
+        bindingName: 'ORG_ORGANIZATION1',
+        currentMigration: '9999_future.sql',
+        expectedMigration: '0017_member_portal.sql',
+        requestId: expect.any(String),
+      },
+    });
+    expect(fixture.control.rows<{ revoked_at: string | null }>(
+      "SELECT revoked_at FROM sessions WHERE id = 'session-1'",
+    )).toEqual([{ revoked_at: null }]);
+  });
+
+  it('reports a Control schema mismatch before login code can hide it', async () => {
+    fixture = createTestApp();
+    fixture.control.execute(
+      'INSERT INTO d1_migrations (name) VALUES (?)',
+      '9999_future.sql',
+    );
+
+    const bootstrap = await app.fetch(fixture.request('/api/bootstrap', {
+      headers: { Origin: 'http://localhost:5173' },
+    }), fixture.environment);
+
+    expect(bootstrap.status).toBe(503);
+    expect(bootstrap.headers.get('access-control-allow-origin')).toBe('http://localhost:5173');
+    await expect(bootstrap.json()).resolves.toMatchObject({
+      error: {
+        code: 'schema_not_ready',
+        category: 'database_ahead',
+        databaseKind: 'control',
+        databaseId: null,
+        bindingName: 'CONTROL_DB',
+        currentMigration: '9999_future.sql',
+        expectedMigration: '0005_member_logins.sql',
+        requestId: expect.any(String),
+      },
+    });
+    expect(fixture.control.rows<{ revoked_at: string | null }>(
+      "SELECT revoked_at FROM sessions WHERE id = 'session-1'",
+    )).toEqual([{ revoked_at: null }]);
+  });
+
   it('returns an existing Admin to their Organization after identity-only Google login', async () => {
     fixture = createTestApp();
     fixture.environment.CREDENTIAL_MASTER_KEY = randomToken(32);

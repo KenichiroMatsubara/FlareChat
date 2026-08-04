@@ -619,6 +619,7 @@ export const logoutFromRouteError = async (
 export const RouteError = ({ logout = api.logout }: { logout?: Logout }) => {
   const error = useRouteError();
   const navigate = useNavigate();
+  const revalidator = useRevalidator();
   const [busy, setBusy] = useState(false);
   const [logoutError, setLogoutError] = useState('');
   const message = isRouteErrorResponse(error) ? error.status === 404 ? 'Organizationまたはページが見つかりません。' : error.statusText : error instanceof Error ? error.message : '画面を表示できませんでした。';
@@ -637,7 +638,10 @@ export const RouteError = ({ logout = api.logout }: { logout?: Logout }) => {
     <h1>画面を表示できません</h1>
     <p className="setup-error">{message}</p>
     {logoutError && <p className="setup-error">{logoutError}</p>}
-    <button className="primary" type="button" onClick={() => void leave()} disabled={busy}>
+    <button className="primary" type="button" onClick={() => revalidator.revalidate()} disabled={revalidator.state !== 'idle'}>
+      {revalidator.state !== 'idle' ? '再試行中…' : '再試行'}
+    </button>
+    <button className="quiet-button" type="button" onClick={() => void leave()} disabled={busy}>
       {busy ? 'ログアウト中…' : 'ログアウトして入口へ戻る'}
     </button>
   </SetupCard>;

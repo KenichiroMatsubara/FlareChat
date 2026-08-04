@@ -4,6 +4,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 
 import type { AppState } from '@mail/domain';
 
+import { ApiError } from './api';
 import { createAppRoutes, organizationRoutePaths, resolveApplicationRedirect, routePaths } from './router';
 import { logoutFromRouteError } from './routes';
 
@@ -116,6 +117,34 @@ describe('application routes', () => {
 
     expect(markup).toContain('ログアウトして入口へ戻る');
     expect(markup).toContain('<button');
+  });
+
+  it('offers retry first and keeps the session when a schema gate reports its versions', async () => {
+    const router = createMemoryRouter(createAppRoutes({
+      bootstrap: async () => ({ kind: 'signed_out' }),
+      logout: async () => ({ loggedOut: true }),
+    }), {
+      initialEntries: ['/'],
+      hydrationData: {
+        loaderData: {},
+        errors: {
+          root: new ApiError({
+            code: 'schema_not_ready',
+            databaseKind: 'organization',
+            currentMigration: '9999_future.sql',
+            expectedMigration: '0017_member_portal.sql',
+            requestId: 'request-1',
+          }, 503),
+        },
+      },
+    });
+
+    const markup = renderToStaticMarkup(<RouterProvider router={router} />);
+
+    expect(markup).toContain('再試行');
+    expect(markup).toContain('9999_future.sql');
+    expect(markup).toContain('0017_member_portal.sql');
+    expect(markup.indexOf('再試行')).toBeLessThan(markup.indexOf('ログアウト'));
   });
 
   it('revokes the session before replacing the broken route with the entry route', async () => {
