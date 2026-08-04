@@ -86,6 +86,10 @@ _Avoid_: temporary file, blocked file
 A safe attachment stored once in Drive and readable without Google login by anyone who possesses its unindexed link.
 _Avoid_: shared file, public document
 
+**Attachment Folder Path**:
+The Drive location an Organization writes for itself, beneath which Mail Automation creates one folder per Source Message and stores that message's Public Attachments.
+_Avoid_: save location, drive path, output folder
+
 **Attachment Association**:
 A relevance link between one safe source attachment and one Event Candidate; either side may participate in multiple associations.
 _Avoid_: attachment assignment, event file
