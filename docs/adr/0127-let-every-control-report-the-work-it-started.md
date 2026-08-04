@@ -6,6 +6,8 @@ The old shape was one boolean per area — `busy`, `ruleBusy`, `memberBusy`, `ma
 
 A control that has no label to change reports in place. A field saved on blur has no button to relabel and no moment the Admin can point at, so it states 保存中… while the write runs and 保存しました for two seconds after it lands; without that, a blur save is indistinguishable from a lost one. The same rule covers the assignee selector, the Agent Rule state selector, and every Member Portal answer.
 
+A control reporting in place is not enough on its own. On a phone the control that started the work is often scrolled out of view — the button that says 検索中… sits above the fold while the Admin reads the results below it — so the running operations are also named once in the centre of the screen. That card floats without a scrim and without taking pointer events: every control is already disabled individually, so blocking the page would only stop the Admin from reading it while they wait.
+
 Route data loading is progress too. The root layout's navigation bar of ADR 0126's follow-up already reports that a loader is running; the dashboard adds what a bar alone cannot say, dimming the stale page and marking it `aria-busy` so the content on screen is visibly not the content being loaded.
 
 Success is reported where the outcome is otherwise invisible. Saving a connection changes only a small "接続設定済み" line that was already there before the save, so the card now says 保存しました. A reassignment that skips a Task names the Tasks it skipped, instead of leaving an Admin to compare the table against what they accepted.

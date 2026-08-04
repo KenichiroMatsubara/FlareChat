@@ -322,6 +322,11 @@ svg { flex: none; }
 .task-role-list summary { cursor: pointer; }
 .app-content.navigating { opacity: .6; transition: opacity .12s linear; }
 nav a.loading { opacity: .65; }
+.pending-overlay { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px; pointer-events: none; }
+.pending-overlay-card { display: grid; justify-items: center; gap: 9px; width: min(320px, 100%); padding: 24px 22px; color: #26372b; text-align: center; background: rgba(255,255,255,.97); border: 1px solid #dce6db; border-radius: 16px; box-shadow: 0 18px 44px rgba(12,26,17,.24); }
+.pending-overlay-card strong { font-size: 14px; line-height: 1.5; }
+.pending-overlay-card small { color: #718073; font-size: 11px; line-height: 1.6; }
+.pending-overlay-card .spin { color: var(--green); }
 .field-state { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; font-size: 10px; font-weight: 600; }
 .field-state.saving { color: #5f6e63; }
 .field-state.saved { color: #306146; }
