@@ -1,6 +1,6 @@
 import { RefreshCw } from 'lucide-react';
 import { createContext, useContext, useEffect, useState } from 'react';
-import { isRouteErrorResponse, NavLink, Outlet, useLoaderData, useNavigate, useParams, useRevalidator, useRouteError, useSearchParams } from 'react-router-dom';
+import { isRouteErrorResponse, NavLink, Outlet, useLoaderData, useNavigate, useNavigation, useParams, useRevalidator, useRouteError, useSearchParams } from 'react-router-dom';
 
 import type { AppState } from '@mail/domain';
 
@@ -10,6 +10,21 @@ import { defaultOrganizationName, setupPhaseLabel, SignedOutEntry } from './entr
 import { Dashboard } from './dashboard';
 
 export const DEFAULT_MAIL_TEST_SUBJECT = '名古屋名城RAC30周年記念式典のご案内';
+
+/**
+ * A route loader can run several API calls in parallel (e.g. switching
+ * Organization) while the previous page stays on screen, so without this bar
+ * that wait looks indistinguishable from the app being stuck.
+ */
+export const NavigationProgress = () => {
+  const navigation = useNavigation();
+  const active = navigation.state !== 'idle';
+  return <div className={active ? 'nav-progress active' : 'nav-progress'} role="progressbar" aria-hidden={!active}>
+    {active && <span className="sr-only">読み込み中…</span>}
+  </div>;
+};
+
+export const RootLayout = () => <><NavigationProgress /><Outlet /></>;
 
 export const OAuthError = () => {
   const [searchParams, setSearchParams] = useSearchParams();
