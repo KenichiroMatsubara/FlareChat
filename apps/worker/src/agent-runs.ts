@@ -5,7 +5,7 @@ import { decrypt, encrypt } from './cryptography';
 import { openAiChatCompletionsUrl } from './event-details';
 import type { OrganizationDatabase } from './storage/database';
 import { organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
-import { attendance, events, listItems, proposedActions, tasks } from './storage/organization-schema';
+import { attendance, events, members, proposedActions, tasks } from './storage/organization-schema';
 
 export const MAX_AGENT_TOOL_CALLS = 12;
 export const AGENT_TOKEN_CEILING = 16_000;
@@ -143,8 +143,8 @@ const readToolResult = async (database: OrganizationDatabase, source: AgentRunSo
       return database.select({ id: tasks.id, title: tasks.title, deadline: tasks.deadline, completed: tasks.completed, assigneeRoleName: tasks.assigneeRoleName, description: tasks.description })
         .from(tasks).orderBy(asc(tasks.deadline)).limit(100).all();
     case 'query_attendance':
-      return database.select({ eventId: attendance.eventId, recipient: listItems.label, status: attendance.status, comment: attendance.comment })
-        .from(attendance).innerJoin(listItems, eq(listItems.id, attendance.recipientItemId)).limit(500).all();
+      return database.select({ eventId: attendance.eventId, recipient: members.name, status: attendance.status, comment: attendance.comment })
+        .from(attendance).innerJoin(members, eq(members.id, attendance.memberId)).limit(500).all();
   }
   throw new Error(`Agent tool ${call.name} is not a read tool.`);
 };

@@ -27,6 +27,40 @@ export interface AutomationSummary {
   exceptions: number;
 }
 
+export type MemberAttendanceStatus = 'unanswered' | 'attending' | 'not_attending';
+
+export interface MemberPortalEvent {
+  eventId: string;
+  title: string;
+  startsAt: string;
+  endsAt: string;
+  location: string;
+  registrationDeadline: string | null;
+  status: MemberAttendanceStatus;
+  comment: string;
+  open: boolean;
+}
+
+export interface MemberPortalTask {
+  taskId: string;
+  title: string;
+  deadline: string;
+  assigneeRoleName: string;
+  assigneeName: string;
+  sourceMessageSubject: string;
+  description: string;
+  remarks: string;
+  completed: boolean;
+  mine: boolean;
+}
+
+export interface MemberPortal {
+  organization: { organizationId: string; name: string };
+  member: { memberId: string; name: string };
+  events: MemberPortalEvent[];
+  tasks: MemberPortalTask[];
+}
+
 export interface OrganizationMembership {
   organizationId: string;
   name: string;
@@ -289,6 +323,17 @@ export const api = {
   bootstrap: (): Promise<AppState> => request('/api/bootstrap'),
   beginGoogleEntry: (intent: 'login' | 'organization_setup'): Promise<{ authorizationUrl: string }> =>
     request('/api/entry/google', { method: 'POST', body: JSON.stringify({ intent }) }),
+
+  joinMemberPortal: (organizationId: string, token: string): Promise<{ memberId: string; name: string }> =>
+    request(`/api/member-links/${encodeURIComponent(organizationId)}/${encodeURIComponent(token)}`, { method: 'POST', body: '{}' }),
+
+  memberPortal: (): Promise<MemberPortal> => request('/api/portal'),
+
+  registerMemberAttendance: (eventId: string, input: { status: MemberAttendanceStatus; comment: string }): Promise<{ eventId: string }> =>
+    request(`/api/portal/events/${encodeURIComponent(eventId)}/attendance`, { method: 'PUT', body: JSON.stringify(input) }),
+
+  updateMemberTask: (taskId: string, input: { completed?: boolean; remarks?: string }): Promise<{ taskId: string }> =>
+    request(`/api/portal/tasks/${encodeURIComponent(taskId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   reauthorizeAutomationInbox: (organizationId: string): Promise<{ authorizationUrl: string }> =>
     request(`/api/organizations/${encodeURIComponent(organizationId)}/automation/reauthorize`, { method: 'POST' }),
   presets: (): Promise<PresetSummary[]> => request('/api/presets'),

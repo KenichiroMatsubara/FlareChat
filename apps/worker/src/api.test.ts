@@ -636,59 +636,7 @@ describe('Control-plane administration', () => {
   });
 });
 
-describe('Public attendance and operational outcomes', () => {
-  it('returns and changes only a live Event-scoped attendance token', async () => {
-    fixture = createTestApp();
-    seedScheduledEvent(fixture.organization, {
-      id: 'event-1',
-      attendanceDeadline: '2099-01-01T00:00:00.000Z',
-    });
-    seedAttendanceRegistration(fixture.organization, {
-      eventId: 'event-1',
-      recipientId: 'item-1',
-      destination: 'guest@example.com',
-    });
-    const path = '/api/public/organizations/organization-1/attendance/token-event-1-item-1';
-
-    const initial = await app.fetch(new Request(`https://app.example.com${path}`), fixture.environment);
-    const updated = await app.fetch(new Request(`https://app.example.com${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ eventId: 'event-1', status: 'attending', comment: '参加します' }),
-    }), fixture.environment);
-    const current = await app.fetch(new Request(`https://app.example.com${path}`), fixture.environment);
-
-    expect([initial.status, updated.status, current.status]).toEqual([200, 200, 200]);
-    await expect(current.json()).resolves.toMatchObject({
-      data: { eventId: 'event-1', status: 'attending', comment: '参加します' },
-    });
-  });
-
-  it('rejects revoked attendance tokens', async () => {
-    fixture = createTestApp();
-    seedScheduledEvent(fixture.organization, {
-      id: 'event-1',
-      attendanceDeadline: '2099-01-01T00:00:00.000Z',
-    });
-    seedAttendanceRegistration(fixture.organization, {
-      eventId: 'event-1',
-      recipientId: 'item-1',
-      destination: 'guest@example.com',
-      revokedAt: '2026-07-25T00:00:00.000Z',
-    });
-
-    const response = await app.fetch(new Request(
-      'https://app.example.com/api/public/organizations/organization-1/attendance/token-event-1-item-1',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ eventId: 'event-1', status: 'attending' }),
-      },
-    ), fixture.environment);
-
-    expect(response.status).toBe(410);
-  });
-
+describe('Operational outcomes', () => {
   it('exposes Event changes, Delivery Records, and Exception transitions through operations interfaces', async () => {
     fixture = createTestApp();
     seedScheduledEvent(fixture.organization, { id: 'event-1', status: 'draft' });

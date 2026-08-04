@@ -398,7 +398,7 @@ describe('Organization Automation Inbox scheduling', () => {
     );
     seedScheduledEvent(fixture.organization, { id: 'event-existing', title: '既存行事' });
     seedAttendanceRegistration(fixture.organization, {
-      eventId: 'event-existing', recipientId: 'recipient-existing', destination: 'reader@example.com', status: 'attending',
+      eventId: 'event-existing', memberId: 'recipient-existing', destination: 'reader@example.com', status: 'attending',
     });
     fixture.organization.execute(
       "INSERT INTO tasks (id, organization_id, source_message_id, source_message_subject, title, deadline, assignee_role_id, assignee_role_name, description, created_at, updated_at) VALUES ('task-existing', 'organization-1', 'source-existing', '既存行事', '資料確認', '2026-08-10', 'unassigned', '未割り当て', '資料を確認する', '2026-08-01', '2026-08-01')",

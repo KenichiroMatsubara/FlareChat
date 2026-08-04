@@ -56,6 +56,7 @@ describe('canonical D1 schemas', () => {
       '0002_preset_selection.sql',
       '0003_admins.sql',
       '0004_single_admin_role.sql',
+      '0005_member_logins.sql',
     ]);
     expect(migrations('organization')).toEqual([
       '0000_initial.sql',
@@ -75,6 +76,7 @@ describe('canonical D1 schemas', () => {
       '0014_members.sql',
       '0015_attachment_folders.sql',
       '0016_member_task_assignments.sql',
+      '0017_member_portal.sql',
     ]);
   });
 
@@ -93,6 +95,7 @@ describe('canonical D1 schemas', () => {
       'admins',
       'automation_inbox_claims',
       'identities',
+      'member_logins',
       'oauth_flows',
       'organization_keys',
       'organization_provisionings',

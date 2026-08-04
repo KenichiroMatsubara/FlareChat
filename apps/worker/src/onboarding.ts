@@ -17,6 +17,8 @@ import { controlDatabase } from './storage/database';
 import {
   admins,
   automationInboxClaims,
+  identities,
+  memberLogins,
   organizationProvisionings,
   organizations,
   organizationSetups,
@@ -230,6 +232,19 @@ export const applicationState = async (env: Bindings, session: SessionRow): Prom
       kind: 'ready',
       identity,
       organizations: memberships.map(({ organizationId, name, status }) => ({ organizationId, name, status })),
+    };
+  }
+  const memberLogin = await control.select({
+    organizationId: memberLogins.organizationId,
+    name: organizations.name,
+  }).from(memberLogins).innerJoin(organizations, eq(organizations.id, memberLogins.organizationId))
+    .innerJoin(identities, eq(identities.googleSubject, memberLogins.googleSubject))
+    .where(and(eq(identities.id, session.identity_id), eq(organizations.status, 'active'))).get();
+  if (memberLogin) {
+    return {
+      kind: 'member',
+      identity,
+      organization: { organizationId: memberLogin.organizationId, name: memberLogin.name },
     };
   }
   const setup = await control.select().from(organizationSetups)

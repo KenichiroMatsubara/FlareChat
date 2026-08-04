@@ -412,3 +412,24 @@ svg { flex: none; }
 @media (prefers-reduced-motion: reduce) {
   .topbar-panel, .switch span, .switch span::before { transition: none; }
 }
+
+/* Member Portal: the one signed-in page a Member has. */
+.portal-shell { max-width: 720px; margin: 0 auto; padding: clamp(16px, 5vw, 32px); display: grid; gap: 22px; }
+.portal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.portal-header h1 { margin: 4px 0 0; color: var(--ink); font-size: clamp(20px, 5.5vw, 26px); letter-spacing: -.5px; }
+.portal-section { display: grid; gap: 12px; }
+.portal-section h2 { margin: 0; color: var(--ink); font-size: 17px; }
+.portal-empty { margin: 0; color: var(--muted); font-size: 14px; }
+.portal-event,
+.portal-task { display: grid; gap: 10px; padding: 16px; background: white; border: 1px solid var(--line); border-radius: 14px; }
+.portal-task.mine { border-color: var(--accent, #4b7d52); }
+.portal-event h3,
+.portal-task h3 { margin: 0 0 4px; color: var(--ink); font-size: 16px; }
+.portal-event p,
+.portal-task p { margin: 0; color: var(--muted); font-size: 13px; }
+.portal-task-source { font-style: italic; }
+.portal-answer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.portal-answer label { display: flex; align-items: center; gap: 6px; flex: 1 1 220px; color: var(--muted); font-size: 13px; }
+.portal-answer label input[type="text"],
+.portal-answer label input:not([type]) { flex: 1; }
+.portal-locked { color: var(--muted); font-size: 13px; }

@@ -159,7 +159,8 @@ export type AppState =
     error: string | null;
     retryUntil: string;
   }
-  | { kind: 'ready'; identity: AppIdentity; organizations: AppMembership[] };
+  | { kind: 'ready'; identity: AppIdentity; organizations: AppMembership[] }
+  | { kind: 'member'; identity: AppIdentity; organization: { organizationId: string; name: string } };
 
 export interface PasskeyCreationOptions {
   challenge: string;
@@ -196,7 +197,7 @@ export { CAPACITY_CRITICAL_THRESHOLD, CAPACITY_WARNING_THRESHOLD, capacityWarnin
 export type { CapacityWarning } from './capacity';
 export { canConsumeMemberLink } from './member-links';
 export type { MemberLinkCheck } from './member-links';
-export { ATTENDANCE_REMINDER_DAYS, shouldSendAttendanceReminder } from './reminders';
+export { ATTENDANCE_REMINDER_DAYS, TASK_REMINDER_DAYS, shouldSendAttendanceReminder, shouldSendTaskReminder } from './reminders';
 export { classifyEventChange } from './event-changes';
 export type { EventChangeKind } from './event-changes';
 export { shouldWriteRecoveryReceipt } from './recovery';

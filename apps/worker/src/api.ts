@@ -12,6 +12,7 @@ import { exportMemberCsv, previewMemberCsv } from './roster';
 import { failure, json } from './response';
 import { entryRoutes, oauthRoutes } from './routes/entry';
 import { automationRoutes } from './routes/automation';
+import { portalRoutes } from './routes/portal';
 import { createRequestContext } from './routes/request-context';
 import { typedListRoutes } from './routes/typed-lists';
 import type { Bindings, ConnectionRow, SessionRow } from './types';
@@ -45,6 +46,7 @@ import {
   memberLineDestinations,
   memberLinkTokens,
   members,
+  portalInvitations,
   ruleRevisions,
   rulePermittedLineLists,
   rulePermittedRecipientLists,
@@ -97,6 +99,7 @@ app.use('/api/*', cors({ origin: (origin) => origin || 'http://localhost:5173', 
 app.route('/api', entryRoutes);
 app.route('/api', automationRoutes);
 app.route('/api', typedListRoutes);
+app.route('/api', portalRoutes);
 app.route('/', oauthRoutes);
 
 const now = (): string => new Date().toISOString();
@@ -1420,6 +1423,37 @@ app.post('/api/organizations/:organizationId/members/:memberId/line-links', asyn
   }
 });
 
+app.post('/api/organizations/:organizationId/members/:memberId/portal-invitations', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const memberId = context.req.param('memberId');
+    const database = drizzleOrganizationDatabase(access.database);
+    // ADR 0119: the invitation is delivered to the Member's LINE Destination,
+    // and no alternative delivery is provided.
+    const reachable = await database.select({ memberId: memberLineDestinations.memberId })
+      .from(memberLineDestinations).where(eq(memberLineDestinations.memberId, memberId)).get();
+    if (!reachable) return failure(context, 'LINE連携のないメンバーはMember Portalを利用できません。', 409);
+    const token = randomToken(24);
+    const timestamp = now();
+    const expiresAt = expiresIn(RECIPIENT_LINK_WINDOW_MS);
+    await database.batch([
+      database.update(portalInvitations).set({ usedAt: timestamp }).where(and(
+        eq(portalInvitations.memberId, memberId),
+        isNull(portalInvitations.usedAt),
+      )),
+      database.insert(portalInvitations).values({ token, memberId, expiresAt, usedAt: null, createdAt: timestamp }),
+    ]);
+    return json(context, {
+      memberId,
+      expiresAt,
+      portalUrl: `${context.env.APP_URL.replace(/\/$/u, '')}/portal/join/${encodeURIComponent(access.organization.id)}/${encodeURIComponent(token)}`,
+    }, 201);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Portal invitation could not be issued.', 409);
+  }
+});
+
 app.put('/api/organizations/:organizationId/members/:memberId/line-destination', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
@@ -1749,55 +1783,6 @@ app.post('/api/organizations/:organizationId/recovery-requests', async (context)
   }
 });
 
-app.post('/api/public/organizations/:organizationId/attendance/:token', async (context) => {
-  try {
-    const organizationId = context.req.param('organizationId');
-    const database = await activeOrganizationDatabase(context.env, organizationId);
-    if (!database) return failure(context, 'Attendance link was not found.', 404);
-    const input = await context.req.json<{ eventId?: string; status?: string; comment?: string }>();
-    if (!input.eventId || !['unanswered', 'attending', 'not_attending'].includes(input.status ?? '')) return failure(context, 'A response status is required.');
-    const comment = input.comment?.trim() ?? '';
-    if (comment.length > 1_000) return failure(context, 'Attendance comment is too long.');
-    const organizationDb = drizzleOrganizationDatabase(database);
-    const link = await organizationDb.select({
-      linkEventId: attendance.eventId,
-      revokedAt: attendance.revokedAt,
-      attendanceDeadline: organizationEvents.attendanceDeadline,
-    }).from(attendance).innerJoin(organizationEvents, eq(organizationEvents.id, attendance.eventId))
-      .where(eq(attendance.token, context.req.param('token'))).get();
-    if (!link || !link.attendanceDeadline || !canUpdateAttendance({
-      eventId: input.eventId,
-      linkEventId: link.linkEventId,
-      revokedAt: link.revokedAt,
-      deadline: link.attendanceDeadline,
-      now: now(),
-    })) return failure(context, 'Attendance link is no longer available.', 410);
-    await organizationDb.update(attendance).set({
-      status: input.status as 'unanswered' | 'attending' | 'not_attending',
-      comment,
-      updatedAt: now(),
-    }).where(and(eq(attendance.token, context.req.param('token')), eq(attendance.eventId, input.eventId))).run();
-    return json(context, { eventId: input.eventId, status: input.status });
-  } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Attendance response could not be saved.', 409);
-  }
-});
-
-app.get('/api/public/organizations/:organizationId/attendance/:token', async (context) => {
-  const database = await activeOrganizationDatabase(context.env, context.req.param('organizationId'));
-  if (!database) return failure(context, 'Attendance link was not found.', 404);
-  const row = await drizzleOrganizationDatabase(database).select({
-    eventId: attendance.eventId,
-    status: attendance.status,
-    comment: attendance.comment,
-  }).from(attendance).where(and(
-    eq(attendance.token, context.req.param('token')),
-    isNull(attendance.revokedAt),
-  )).get();
-  if (!row) return failure(context, 'Attendance link was not found.', 404);
-  return json(context, row);
-});
-
 app.patch('/api/organizations/:organizationId/events/:eventId', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
@@ -1841,38 +1826,6 @@ app.patch('/api/organizations/:organizationId/events/:eventId', async (context) 
   }
 });
 
-app.post('/api/organizations/:organizationId/events/:eventId/attendance-links', async (context) => {
-  try {
-    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
-    if (!access.database) throw new Error('Organization database is not available.');
-    const input = await context.req.json<{ recipientItemId?: string }>();
-    if (!input.recipientItemId?.trim()) return failure(context, 'A Recipient is required.');
-    const eventId = context.req.param('eventId');
-    const token = randomToken(32);
-    const timestamp = now();
-    await drizzleOrganizationDatabase(access.database).insert(attendance).values({
-      eventId,
-      recipientItemId: input.recipientItemId.trim(),
-      status: 'unanswered',
-      comment: '',
-      token,
-      revokedAt: null,
-      updatedAt: timestamp,
-    }).onConflictDoUpdate({
-      target: [attendance.eventId, attendance.recipientItemId],
-      set: { token, status: 'unanswered', comment: '', revokedAt: null, updatedAt: timestamp },
-    }).run();
-    return json(context, {
-      eventId,
-      recipientItemId: input.recipientItemId.trim(),
-      token,
-      attendanceUrl: `${context.env.APP_URL.replace(/\/$/u, '')}/api/public/organizations/${encodeURIComponent(access.organization.id)}/attendance/${encodeURIComponent(token)}`,
-    }, 201);
-  } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Attendance link could not be issued.', 409);
-  }
-});
-
 app.post('/api/organizations/:organizationId/events/:eventId/recipient-snapshots', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
@@ -1891,6 +1844,13 @@ app.post('/api/organizations/:organizationId/events/:eventId/recipient-snapshots
     )).all();
     if (recipients.length !== memberIds.length) return failure(context, 'One or more active Members were not found.', 404);
     const timestamp = now();
+    await Promise.all(recipients.map((recipient) => database.insert(attendance).values({
+      eventId: context.req.param('eventId'),
+      memberId: recipient.id,
+      status: 'unanswered',
+      comment: '',
+      updatedAt: now(),
+    }).onConflictDoNothing().run()));
     await Promise.all(recipients.map((recipient) => database.insert(eventRecipients).values({
       eventId: context.req.param('eventId'),
       memberId: recipient.id,

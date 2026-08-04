@@ -35,6 +35,15 @@ export const admins = sqliteTable('admins', {
   index('admins_identity_idx').on(table.identityId, table.state),
 ]);
 
+/** Routes a Member's Google account to the Organization whose roster holds them. */
+export const memberLogins = sqliteTable('member_logins', {
+  googleSubject: text('google_subject').primaryKey(),
+  organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+  createdAt: text('created_at').notNull(),
+}, (table) => [
+  index('member_logins_organization_idx').on(table.organizationId),
+]);
+
 export const sessions = sqliteTable('sessions', {
   id: text('id').primaryKey(),
   identityId: text('identity_id').notNull().references(() => identities.id, { onDelete: 'cascade' }),

@@ -135,6 +135,7 @@ describe('Organization database resolver', () => {
       { name: '0014_members.sql' },
       { name: '0015_attachment_folders.sql' },
       { name: '0016_member_task_assignments.sql' },
+      { name: '0017_member_portal.sql' },
     ]);
   });
 

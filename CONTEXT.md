@@ -22,7 +22,9 @@ The Automation Inbox remains an Organization-owned Google Connection rather than
 
 An Organization has one authorization role. An Admin signs into the management GUI and may perform every administrative operation; a Member holds no administrative authorization at all. Because the initial Admin is the Organization's own shared account rather than a person, no second Admin is provided; if one is ever wanted it is promoted from a Member, whose Google account is already bound.
 
-A Member signs into a single Member Portal to register attendance, write comments, and complete the Tasks assigned to them. A Member may read every Task in the Organization but may complete only their own. A Member reaches the Portal for the first time through a single-use link delivered to their linked LINE Destination; a Member with no linked LINE Destination has no Portal access and is administered entirely by an Admin.
+A Member signs into a single Member Portal to register attendance, write comments, and complete the Tasks assigned to them. A Member may read every Task in the Organization but may complete only their own. A Member reaches the Portal for the first time through a Portal Invitation delivered to their linked LINE Destination; a Member with no linked LINE Destination has no Portal access and is administered entirely by an Admin.
+
+An Attendance Registration belongs to a Member rather than to an unguessable URL, so a leaked link grants nothing. An unfinished Task notifies its assignee alone at the same seven, three, and one day milestones the attendance reminders use.
 
 An Organization setup session expires fifteen minutes after the Automation Inbox grant while the installer confirms the editable Organization name. If confirmation is not completed in time, Mail Automation revokes and deletes the Google credential and creates no Organization D1 database.
 
@@ -117,6 +119,10 @@ _Avoid_: recipient link, invite, account link
 **Member Portal**:
 The signed-in page where a Member registers attendance, writes comments, and completes their own Tasks. First entry binds that Member to a Google account by its stable `sub`; afterwards that account alone identifies them.
 _Avoid_: registration link, login link, public form
+
+**Portal Invitation**:
+The short-lived, single-use link that first brings one Member into the Member Portal, delivered to their linked LINE Destination. It is distinct from a Member Link, which proves a LINE Destination belongs to a Member rather than binding a Google account.
+_Avoid_: registration link, invite link, signup link
 
 **LINE Connection**:
 An authorized LINE Messaging API channel owned by one Organization and used as the sender for notifications.

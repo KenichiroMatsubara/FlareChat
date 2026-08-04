@@ -57,7 +57,7 @@ describe('Schema Lifecycle', () => {
 
     expect(receipt).toMatchObject({
       kind: 'organization',
-      currentMigration: '0016_member_task_assignments.sql',
+      currentMigration: '0017_member_portal.sql',
       appliedMigrations: [
         '0001_tasks.sql',
         '0002_line_destination_roster.sql',
@@ -75,6 +75,7 @@ describe('Schema Lifecycle', () => {
         '0014_members.sql',
         '0015_attachment_folders.sql',
         '0016_member_task_assignments.sql',
+        '0017_member_portal.sql',
       ],
     });
     expect(database.rows<{ display_name: string }>(
@@ -110,7 +111,7 @@ describe('Schema Lifecycle', () => {
       kind: 'organization',
       database: database.binding,
     })).resolves.toMatchObject({
-      currentMigration: '0016_member_task_assignments.sql',
+      currentMigration: '0017_member_portal.sql',
     });
   });
 
@@ -141,7 +142,7 @@ describe('Schema Lifecycle', () => {
     await expect(schemaLifecycle.ensureCurrent({
       kind: 'organization',
       database: database.binding,
-    })).resolves.toMatchObject({ currentMigration: '0016_member_task_assignments.sql' });
+    })).resolves.toMatchObject({ currentMigration: '0017_member_portal.sql' });
   });
 
   it('migrates existing Tasks into Organization-owned role records and unassigns the Control identities they named', async () => {
@@ -241,8 +242,8 @@ describe('Schema Lifecycle', () => {
     ]);
 
     expect(receipts).toEqual([
-      expect.objectContaining({ currentMigration: '0016_member_task_assignments.sql' }),
-      expect.objectContaining({ currentMigration: '0016_member_task_assignments.sql' }),
+      expect.objectContaining({ currentMigration: '0017_member_portal.sql' }),
+      expect.objectContaining({ currentMigration: '0017_member_portal.sql' }),
     ]);
   });
 });

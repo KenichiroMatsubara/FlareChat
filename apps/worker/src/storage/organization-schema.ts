@@ -229,14 +229,12 @@ export const eventOverrides = sqliteTable('event_overrides', {
 
 export const attendance = sqliteTable('attendance', {
   eventId: text('event_id').notNull().references(() => events.id, { onDelete: 'cascade' }),
-  recipientItemId: text('recipient_item_id').notNull().references(() => listItems.id),
+  memberId: text('member_id').notNull().references(() => members.id, { onDelete: 'cascade' }),
   status: text('status', { enum: ['unanswered', 'attending', 'not_attending'] }).notNull().default('unanswered'),
   comment: text('comment').notNull().default(''),
-  token: text('token').notNull().unique(),
-  revokedAt: text('revoked_at'),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
-  primaryKey({ columns: [table.eventId, table.recipientItemId] }),
+  primaryKey({ columns: [table.eventId, table.memberId] }),
   check('attendance_status_check', sql`${table.status} in ('unanswered', 'attending', 'not_attending')`),
 ]);
 
@@ -382,11 +380,13 @@ export const members = sqliteTable('members', {
   email: text('email').notNull(),
   state: text('state', { enum: ['active', 'inactive'] }).notNull().default('active'),
   tags: text('tags').notNull().default('[]'),
+  googleSubject: text('google_subject'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
   check('members_state_check', sql`${table.state} in ('active', 'inactive')`),
   uniqueIndex('members_email_unique').on(table.email).where(sql`${table.email} <> ''`),
+  uniqueIndex('members_google_subject_unique').on(table.googleSubject).where(sql`${table.googleSubject} is not null`),
 ]);
 
 export const eventRecipients = sqliteTable('event_recipients', {
@@ -422,6 +422,17 @@ export const memberLinkTokens = sqliteTable('member_link_tokens', {
   usedAt: text('used_at'),
   createdAt: text('created_at').notNull(),
 });
+
+/** The single-use link that first brings a Member into the Member Portal. */
+export const portalInvitations = sqliteTable('portal_invitations', {
+  token: text('token').primaryKey(),
+  memberId: text('member_id').notNull().references(() => members.id, { onDelete: 'cascade' }),
+  expiresAt: text('expires_at').notNull(),
+  usedAt: text('used_at'),
+  createdAt: text('created_at').notNull(),
+}, (table) => [
+  index('portal_invitations_member_idx').on(table.memberId, table.usedAt),
+]);
 
 export const memberLineDestinations = sqliteTable('member_line_destinations', {
   memberId: text('member_id').notNull().references(() => members.id, { onDelete: 'cascade' }),
