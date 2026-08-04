@@ -1,8 +1,8 @@
 import type { AppState } from '@mail/domain';
-import { createBrowserRouter, Outlet, redirect, type LoaderFunctionArgs } from 'react-router-dom';
+import { createBrowserRouter, redirect, type LoaderFunctionArgs } from 'react-router-dom';
 
 import { api } from './api';
-import { loadOrganization, LoadingRoute, MemberPortalJoinRoute, MemberPortalRoute, NotFoundRoute, OAuthError, OrganizationLayout, OrganizationPage, RouteError, SetupConfirmRoute, SetupProgressRoute, SetupRoute } from './routes';
+import { loadOrganization, LoadingRoute, MemberPortalJoinRoute, MemberPortalRoute, NotFoundRoute, OAuthError, OrganizationLayout, OrganizationPage, RootLayout, RouteError, SetupConfirmRoute, SetupProgressRoute, SetupRoute } from './routes';
 
 export const routePaths = {
   signedOut: '/',
@@ -77,7 +77,7 @@ const rootRoute = (client: RouterClient) => ({
   id: 'root',
   path: '/',
   loader: stateLoader(client),
-  element: <Outlet />,
+  element: <RootLayout />,
   errorElement: <RouteError logout={client.logout} />,
   children: [
     { index: true, element: <OAuthError /> },
