@@ -136,9 +136,11 @@ describe('OpenAI-compatible Event Details validation', () => {
       events: [],
       tasks: [],
     }))).toEqual({
+      kind: 'invitation',
       summary: '次年度の活動方針を共有するお知らせです。',
       events: [],
       tasks: [],
+      guests: [],
       warnings: [],
     });
   });
@@ -166,7 +168,7 @@ describe('OpenAI-compatible Event Details validation', () => {
     };
     expect(body.model).toBe('test-model');
     expect(body.messages[1]?.content).toContain(source);
-    expect(body.response_format.json_schema.schema.required).toEqual(['summary', 'events', 'tasks']);
+    expect(body.response_format.json_schema.schema.required).toEqual(['kind', 'summary', 'guests', 'events', 'tasks']);
     expect(body.response_format.json_schema.schema.additionalProperties).toBe(false);
     expect(body.response_format.json_schema.schema.properties.summary).toMatchObject({ type: 'string' });
     expect(body.response_format.json_schema.schema.properties.events).toMatchObject({ type: 'array' });

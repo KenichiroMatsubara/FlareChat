@@ -208,6 +208,15 @@ export const events = sqliteTable('events', {
   description: text('description').notNull().default(''),
   status: text('status', { enum: ['draft', 'scheduled', 'cancelled', 'exception'] }).notNull(),
   attendanceDeadline: text('attendance_deadline'),
+  /** The Calendar Revision last observed for this event, held as an optimistic lock on the next merge. */
+  calendarEtag: text('calendar_etag'),
+  /**
+   * The rendered description Mail Automation last wrote to Google Calendar. It
+   * differs from `description`, which holds the extracted Event Summary; the
+   * difference between this and the live Calendar value is what identifies a
+   * Manual Override.
+   */
+  calendarDescription: text('calendar_description').notNull().default(''),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
@@ -225,6 +234,24 @@ export const eventOverrides = sqliteTable('event_overrides', {
   createdAt: text('created_at').notNull(),
 }, (table) => [
   index('event_overrides_event_idx').on(table.eventId, table.createdAt),
+]);
+
+/**
+ * One declared attendance by somebody who is not a Member. Keyed by the Event
+ * Response that declared it so reprocessing and correction replace a party's
+ * rows rather than accumulate beside them.
+ */
+export const guestRegistrations = sqliteTable('guest_registrations', {
+  id: text('id').primaryKey(),
+  eventId: text('event_id').notNull().references(() => events.id, { onDelete: 'cascade' }),
+  sourceMessageId: text('source_message_id').notNull().references(() => sourceMessages.id),
+  name: text('name').notNull(),
+  affiliation: text('affiliation').notNull().default(''),
+  attending: integer('attending', { mode: 'boolean' }).notNull().default(true),
+  createdAt: text('created_at').notNull(),
+}, (table) => [
+  index('guest_registrations_event_idx').on(table.eventId),
+  index('guest_registrations_source_idx').on(table.eventId, table.sourceMessageId),
 ]);
 
 export const attendance = sqliteTable('attendance', {

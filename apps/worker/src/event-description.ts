@@ -7,6 +7,13 @@ export interface AttachmentLink {
 export interface CalendarDescriptionInput {
   /** The Event Summary for this single Scheduled Event; omitted from the description when blank. */
   summary: string;
+  /**
+   * The Guest Registration counts by Affiliation, omitted when nobody from
+   * outside has registered. It carries counts and never names, and it is passed
+   * as plain text so the Affiliations another organization wrote are escaped
+   * here rather than by the caller that assembled them.
+   */
+  guestCounts?: string;
   attachments: AttachmentLink[];
   /** The trusted provenance sentence appended last. */
   attribution: string;
@@ -44,6 +51,7 @@ export const attachmentLink = (attachment: AttachmentLink): string => {
 export const calendarEventDescription = (input: CalendarDescriptionInput): string => {
   const blocks: string[] = [];
   if (input.summary.trim()) blocks.push(paragraph(input.summary));
+  if (input.guestCounts?.trim()) blocks.push(paragraph(input.guestCounts));
   if (input.attachments.length) {
     blocks.push(['添付ファイル:', ...input.attachments.map(attachmentLink)].join('<br>'));
   }

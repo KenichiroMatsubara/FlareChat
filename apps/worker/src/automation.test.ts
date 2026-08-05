@@ -493,7 +493,7 @@ describe('Organization Automation Inbox scheduling', () => {
       } },
       agent: { complete },
       ai: {
-        extract: async () => ({ summary: '例会のお知らせです。', events: [], tasks: [], warnings: [] }),
+        extract: async () => ({ kind: 'invitation' as const, summary: '例会のお知らせです。', events: [], tasks: [], guests: [], warnings: [] }),
         correspond: async () => [],
       },
     });
@@ -832,12 +832,14 @@ describe('Organization Automation Inbox scheduling', () => {
       ai: {
         correspond: async () => [],
         extract: async () => ({
+          kind: 'invitation' as const,
           summary: '例会のお知らせです。',
           events: [{
             title: '例会', startsAt: '2026-08-03T19:00:00+09:00', endsAt: '2026-08-03T21:30:00+09:00',
             timeZone: 'Asia/Tokyo', location: '', description: '例会です。', summary: '毎月の例会です。',
           }],
           tasks: [],
+          guests: [],
           warnings: [],
         }),
       },
@@ -955,6 +957,8 @@ describe('Organization Automation Inbox scheduling', () => {
         }],
         tasks: [],
       }) } }] });
+      // The correlation search that precedes every insertion; no event exists yet.
+      if (url.includes('timeMin=')) return new Response(JSON.stringify({ items: [] }), { status: 200 });
       calendarUrl = url;
       calendarRequest = JSON.parse(init?.body as string) as typeof calendarRequest;
       return new Response(JSON.stringify({ id: 'calendar-event-1' }), { status: 200 });
@@ -1477,6 +1481,8 @@ describe('Organization Automation Inbox scheduling', () => {
         calendarRequest = JSON.parse(init.body as string) as typeof calendarRequest;
         return new Response(JSON.stringify({ id: 'calendar-event-draft' }), { status: 200 });
       }
+      // The correlation search that precedes every insertion; no event exists yet.
+      if (url.includes('timeMin=')) return new Response(JSON.stringify({ items: [] }), { status: 200 });
       return new Response(JSON.stringify({ error: { message: `unexpected request: ${url}` } }), { status: 500 });
     }));
 
