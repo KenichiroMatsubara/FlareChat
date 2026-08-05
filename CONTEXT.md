@@ -191,19 +191,31 @@ An immutable version of an Automation Rule's selection, extraction, routing, sch
 _Avoid_: rule history, configuration version
 
 **Rule State**:
-The Draft, Active, Suspended, or Archived lifecycle status that determines whether an Automation Rule may preview, execute, resume, or remain historical. An Agent Rule has no Draft state, because its Execution Mode already governs whether a run may act.
+The Draft, Active, Suspended, or Archived lifecycle status that determines whether an Automation Rule may preview, execute, resume, or remain historical. Every rule type uses all four states independently of the Execution Mode that governs Rule Effects.
 _Avoid_: enabled flag, rule status
 
 **Execution Mode**:
-Whether an Agent Rule may only read, may write once an Admin approves each proposal, or may write unattended.
+Whether an Automation Rule processes matched Source Messages read-only through planning without applying Rule Effects, records them for Admin approval, or applies them unattended. Every rule type supports all three; unattended execution is a first-class operating mode rather than an exception built on human confirmation.
 _Avoid_: permission level, safety setting
 
+**Rule Run**:
+The record of one Automation Rule Revision processing one Source Message in one Execution Mode, whose complete set of Rule Effects becomes immutable when planning succeeds. Read-only retains the plan without applying it, approval holds it for one batch decision, and unattended applies it immediately; planning retries may precede the freeze, but afterward applying modes only resume incomplete effects under stable idempotency keys and changed external preconditions require a new run.
+_Avoid_: job, attempt, Agent Run
+
+**Rule Effect**:
+One planned business-state mutation produced by a Rule Run, whether inside Mail Automation or in an external provider. Source Message intake and Rule Run audit records are not Rule Effects.
+_Avoid_: external effect, side effect
+
 **Proposed Action**:
-One external effect an Agent Rule's run recorded instead of performing, held with its exact arguments until an Admin approves it, rejects it, or it expires.
+One frozen Rule Effect held without applying it until the Rule Run is approved, rejected, or expires. Every Proposed Action from the same run is approved or rejected as one batch; an Admin cannot reshape the run by selecting individual effects.
 _Avoid_: pending delivery, draft action
 
+**Mailbox Test**:
+An Admin-started Draft Rule Run of one specific Rule Revision against a selected Source Message, reviewed from Rule Runs. It follows the same Selection Policy as live execution—an unmatched source stops before extraction—and never applies Rule Effects.
+_Avoid_: manual Calendar creation, standalone extraction test
+
 **Run Transcript**:
-The complete encrypted record of one Agent Rule run—its Prompt revision, model, every tool call with arguments and results, and final output—retained to explain a run that will never be retried.
+The complete encrypted Agent Rule reasoning record attached to a Rule Run—its Prompt revision, model, every tool call with arguments and results, and final output—retained to explain a run that will never be retried.
 _Avoid_: log, agent history
 
 **Verified Delivery Facts**:
@@ -267,7 +279,7 @@ The sentence in a Scheduled Event's Calendar description naming the Source Messa
 _Avoid_: footer, provenance note
 
 **Event Refresh**:
-An Admin-approved rewrite of an existing Scheduled Event's Calendar fields from a fresh extraction of its Source Message, together with an additive invitation of the active Member roster: a Member the Calendar already lists keeps whatever they answered, and only a Member missing from that list is added.
+An Admin-initiated repair that rewrites an existing Scheduled Event's Calendar fields from a fresh extraction of its Source Message, together with an additive invitation of the active Member roster: a Member the Calendar already lists keeps whatever they answered, and only a Member missing from that list is added. It is separate from Mailbox Test and approval-mode execution because it deliberately overwrites Manual Overrides.
 _Avoid_: resync, regenerate, backfill
 
 **Significant Change**:

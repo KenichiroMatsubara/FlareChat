@@ -53,15 +53,15 @@ const sourceMessageResponse = (input: {
 describe('Source Message processing primitives', () => {
   it('selects the highest-priority matching active Automation Rule', () => {
     expect(selectActiveRule([
-      { id: 'rule-low', priority: 1, selectionPolicy: { domain: 'example.com' } },
-      { id: 'rule-high', priority: 10, selectionPolicy: { sender: 'announcer@example.com', keyword: '例会' } },
+      { id: 'rule-low', revision: 1, priority: 1, executionMode: 'unattended', selectionPolicy: { domain: 'example.com' } },
+      { id: 'rule-high', revision: 1, priority: 10, executionMode: 'unattended', selectionPolicy: { sender: 'announcer@example.com', keyword: '例会' } },
     ], {
       sender: 'announcer@example.com',
       subject: '例会のお知らせ',
       body: '2026年8月3日 19:00〜21:00',
     })).toMatchObject({ id: 'rule-high' });
     expect(selectActiveRule([
-      { id: 'rule-1', priority: 1, selectionPolicy: { domain: 'example.com' } },
+      { id: 'rule-1', revision: 1, priority: 1, executionMode: 'unattended', selectionPolicy: { domain: 'example.com' } },
     ], {
       sender: 'other@invalid.test',
       subject: '例会',
@@ -336,7 +336,7 @@ describe('Organization Automation Inbox scheduling', () => {
     const prompt = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/prompts', { name: 'Writer', instructions: 'Notify.' }), fixture.environment);
     const promptId = (await prompt.json() as { data: { id: string } }).data.id;
     await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/agent-rules', {
-      name: 'Writer', promptId, executionMode: 'unattended', selectionPolicy: {}, permittedLineListIds: [lineListId],
+      name: 'Writer', promptId, state: 'active', executionMode: 'unattended', selectionPolicy: {}, permittedLineListIds: [lineListId],
     }), fixture.environment);
     let turn = 0;
     const complete = vi.fn(async () => turn++ === 0
@@ -362,13 +362,13 @@ describe('Organization Automation Inbox scheduling', () => {
     const transcript = await app.fetch(fixture.request(`/api/organizations/organization-1/agent-runs/${run.id}/transcript`), fixture.environment);
     const transcriptText = await transcript.text();
     expect(transcriptText).toContain('line-user-1');
-    expect(transcriptText).toContain('failed');
+    expect(transcriptText).toContain('planned');
     await expect(automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding }))
       .resolves.toEqual({ scanned: 0, created: 0, skipped: 0, exceptions: 0 });
     expect(linePush).toHaveBeenCalledTimes(1);
   });
 
-  it('completes an approval-mode run before executing the exact Proposed Action through the member interface', async () => {
+  it('approves one frozen Rule Run batch without invoking the Agent again', async () => {
     fixture = await createAutomationTestApp({ ai: true, lineSecret: 'line-secret' });
     fixture.organization.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");
     const lineList = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', { kind: 'line', name: 'Writers' }), fixture.environment);
@@ -377,7 +377,7 @@ describe('Organization Automation Inbox scheduling', () => {
     const prompt = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/prompts', { name: 'Approver', instructions: 'Propose.' }), fixture.environment);
     const promptId = (await prompt.json() as { data: { id: string } }).data.id;
     await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/agent-rules', {
-      name: 'Approver', promptId, selectionPolicy: {}, permittedLineListIds: [lineListId],
+      name: 'Approver', promptId, state: 'active', executionMode: 'approval', selectionPolicy: {}, permittedLineListIds: [lineListId],
     }), fixture.environment);
     let turn = 0;
     const complete = vi.fn(async () => turn++ === 0
@@ -395,12 +395,16 @@ describe('Organization Automation Inbox scheduling', () => {
 
     await automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding });
     expect(linePush).not.toHaveBeenCalled();
-    const run = fixture.organization.row<{ id: string }>('SELECT id FROM agent_runs')!;
-    const proposalsResponse = await app.fetch(fixture.request(`/api/organizations/organization-1/agent-runs/${run.id}/proposed-actions`), fixture.environment);
-    const proposals = await proposalsResponse.json() as { data: Array<{ id: string; arguments: { destination: string; message: string }; status: string }> };
-    expect(proposals.data).toMatchObject([{ arguments: { destination: 'line-user-1', message: 'Exact approved text' }, status: 'pending' }]);
+    const run = fixture.organization.row<{ id: string }>('SELECT id FROM rule_runs')!;
+    expect(fixture.organization.row<{ id: string }>('SELECT id FROM agent_runs')).toEqual(run);
+    const runResponse = await app.fetch(fixture.request(`/api/organizations/organization-1/rule-runs/${run.id}`), fixture.environment);
+    const pending = await runResponse.json() as { data: { status: string; effects: Array<{ arguments: { destination: string; message: string }; status: string }> } };
+    expect(pending.data).toMatchObject({
+      status: 'pending_approval',
+      effects: [{ arguments: { destination: 'line-user-1', message: 'Exact approved text' }, status: 'pending' }],
+    });
 
-    const approved = await app.fetch(fixture.jsonRequest(`/api/organizations/organization-1/proposed-actions/${proposals.data[0]!.id}/approve`, {}), fixture.environment);
+    const approved = await app.fetch(fixture.jsonRequest(`/api/organizations/organization-1/rule-runs/${run.id}/decision`, { decision: 'approve' }), fixture.environment);
 
     expect(approved.status).toBe(200);
     expect(linePush).toHaveBeenCalledTimes(1);
@@ -417,7 +421,7 @@ describe('Organization Automation Inbox scheduling', () => {
     const prompt = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/prompts', { name: 'Scheduler', instructions: 'Schedule.' }), fixture.environment);
     const promptId = (await prompt.json() as { data: { id: string } }).data.id;
     const agentRule = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/agent-rules', {
-      name: 'Scheduler', promptId, executionMode: 'unattended', selectionPolicy: {}, permittedRecipientListIds: [recipientListId],
+      name: 'Scheduler', promptId, state: 'active', executionMode: 'unattended', selectionPolicy: {}, permittedRecipientListIds: [recipientListId],
     }), fixture.environment);
     const agentRuleId = (await agentRule.json() as { data: { id: string } }).data.id;
     let turn = 0;
@@ -460,7 +464,7 @@ describe('Organization Automation Inbox scheduling', () => {
     }), fixture.environment);
     const promptId = (await prompt.json() as { data: { id: string } }).data.id;
     const agentRule = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/agent-rules', {
-      name: 'Example.com analyst', promptId, state: 'active', selectionPolicy: { domain: 'example.com' },
+      name: 'Example.com analyst', promptId, state: 'active', executionMode: 'read_only', selectionPolicy: { domain: 'example.com' },
     }), fixture.environment);
     expect(agentRule.status).toBe(201);
 
@@ -854,6 +858,61 @@ describe('Organization Automation Inbox scheduling', () => {
       fixture.environment,
     );
     await expect(dashboard.json()).resolves.toMatchObject({ data: { upcomingEvents: 1 } });
+    expect(fixture.organization.rows<{ status: string; execution_mode: string }>(
+      'SELECT status, execution_mode FROM rule_runs',
+    )).toEqual([{ status: 'completed', execution_mode: 'unattended' }]);
+  });
+
+  it.each([
+    ['read_only', 'read_only', 'planned'],
+    ['approval', 'pending_approval', 'pending'],
+  ] as const)('plans a Schema Rule in %s mode without business mutations', async (executionMode, runStatus, effectStatus) => {
+    fixture = await createAutomationTestApp({ ai: true });
+    fixture.organization.execute('UPDATE rules SET execution_mode = ? WHERE id = ?', executionMode, 'rule-1');
+    const calendarWrite = vi.fn();
+    const automation = createAutomation(fixture.environment, {
+      google: {
+        request: async <T>(_accessToken: string, url: string): Promise<T> => {
+          if (url.includes('/history')) return {
+            historyId: `history-${executionMode}`,
+            history: [{ messagesAdded: [{ message: { id: `gmail-${executionMode}` } }] }],
+          } as T;
+          if (url.includes(`/messages/gmail-${executionMode}`)) return {
+            id: `gmail-${executionMode}`,
+            payload: {
+              headers: [{ name: 'Subject', value: '例会' }, { name: 'From', value: 'member@example.com' }],
+              body: { data: gmailBody('日時: 2026年8月3日 19:00〜21:00') },
+            },
+          } as T;
+          if (url.includes('/calendar/v3/calendars/primary/events')) return { items: [] } as T;
+          calendarWrite(url);
+          return { id: 'must-not-be-created' } as T;
+        },
+      },
+      ai: {
+        correspond: async () => [],
+        extract: async () => ({
+          kind: 'invitation' as const,
+          summary: '例会です。',
+          events: [{
+            title: '例会', startsAt: '2026-08-03T19:00:00+09:00', endsAt: '2026-08-03T21:00:00+09:00',
+            timeZone: 'Asia/Tokyo', location: '', description: '例会', summary: '例会',
+          }],
+          tasks: [{ title: '準備', deadline: '2026-08-02', assigneeRoleId: 'unassigned', description: '準備する' }],
+          guests: [], warnings: [],
+        }),
+      },
+    });
+
+    await expect(automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding }))
+      .resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 0 });
+
+    expect(calendarWrite).not.toHaveBeenCalled();
+    expect(fixture.organization.rows('SELECT * FROM events')).toHaveLength(0);
+    expect(fixture.organization.rows('SELECT * FROM tasks')).toHaveLength(0);
+    expect(fixture.organization.rows<{ status: string }>('SELECT status FROM rule_runs')).toEqual([{ status: runStatus }]);
+    expect(fixture.organization.rows<{ status: string }>('SELECT status FROM rule_effects')).toHaveLength(3);
+    expect(fixture.organization.rows<{ status: string }>('SELECT status FROM rule_effects').every(({ status }) => status === effectStatus)).toBe(true);
   });
 
   const upsertFixture = (active: AutomationTestApp, extractions: Array<() => MailExtraction>) => {
@@ -1772,6 +1831,10 @@ describe('Manual mailbox test', () => {
     }), fixture.environment);
     const registrationRoleId = (await registrationRoleResponse.json() as { data: { id: string } }).data.id;
     const paymentRoleId = (await paymentRoleResponse.json() as { data: { id: string } }).data.id;
+    fixture.organization.execute(
+      "UPDATE rules SET task_role_ids = ?, status = 'draft' WHERE id = 'rule-1'",
+      JSON.stringify([registrationRoleId, paymentRoleId]),
+    );
     const markdown = { toMarkdown: vi.fn().mockResolvedValue({
       format: 'markdown',
       name: '式典案内.xlsx',
@@ -1818,6 +1881,9 @@ describe('Manual mailbox test', () => {
             }],
           },
         }), { status: 200 });
+      }
+      if (url.includes('/calendar/v3/calendars/primary/events') && !init?.method) {
+        return new Response(JSON.stringify({ items: [] }), { status: 200 });
       }
       if (url.includes('ai.example.com')) {
         aiRequest = JSON.parse(init?.body as string) as typeof aiRequest;
@@ -1882,16 +1948,25 @@ describe('Manual mailbox test', () => {
     expect(aiRequestPreview.data.request.messages?.[1]?.content).not.toContain('| ----------- |');
     expect(aiRequest.messages).toBeUndefined();
 
-    const previewResponse = await app.fetch(fixture.request(
+    fixture.organization.execute("UPDATE rules SET selection_policy = ? WHERE id = 'rule-1'", JSON.stringify({ sender: 'other@example.com' }));
+    const rejectedBySelection = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/mail-tests/gmail-message-attachment/preview',
-      { method: 'POST' },
+      { ruleId: 'rule-1' },
+    ), fixture.environment);
+    expect(rejectedBySelection.status).toBe(409);
+    expect(aiRequest.messages).toBeUndefined();
+    fixture.organization.execute("UPDATE rules SET selection_policy = '{}' WHERE id = 'rule-1'");
+
+    const previewResponse = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/mail-tests/gmail-message-attachment/preview',
+      { ruleId: 'rule-1' },
     ), fixture.environment);
     const preview = await previewResponse.json() as {
       data: { summary: string; events: EventDetails[]; tasks: Array<{ assigneeRoleId: string }>; confirmationToken: string };
     };
-    const calendarResponse = await app.fetch(fixture.jsonRequest(
-      '/api/organizations/organization-1/mail-tests/calendar',
-      { confirmationToken: preview.data.confirmationToken },
+    const runResponse = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/mail-tests/rule-run',
+      { confirmationToken: preview.data.confirmationToken, ruleId: 'rule-1' },
     ), fixture.environment);
 
     expect(previewResponse.status).toBe(200);
@@ -1908,21 +1983,22 @@ describe('Manual mailbox test', () => {
       name: '式典案内.xlsx',
       blob: expect.any(Blob),
     }), { conversionOptions: { pdf: { metadata: false } } });
-    expect(calendarResponse.status).toBe(201);
-    expect(calendarUrl).toContain('supportsAttachments=true');
-    expect(calendarRequests).toHaveLength(2);
-    expect(calendarRequests.map((request) => request.summary)).toEqual(['AI ファイル解析テスト会議', 'テスト懇親会']);
-    expect(calendarRequests[0]?.attachments).toEqual([{
-      fileUrl: 'https://drive.example/xlsx',
-      title: '式典案内.xlsx',
-      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    }]);
-    expect(driveFolderQueries).toEqual([expect.stringContaining("name = 'Mail Automation'")]);
-    expect(driveFolders).toEqual([
-      expect.objectContaining({ name: 'Mail Automation', parents: ['root'] }),
-      expect.objectContaining({ name: expect.stringContaining('名古屋名城RAC30周年記念式典のご案内'), parents: ['drive-folder-1'] }),
-    ]);
-    expect(uploadMetadata.parents).toEqual(['drive-folder-2']);
+    expect(runResponse.status).toBe(201);
+    const runBody = await runResponse.json() as { data: { effects: Array<{ arguments: unknown }> } };
+    expect(runBody).toMatchObject({ data: {
+      rule: { type: 'schema', id: 'rule-1', revision: 1 },
+      intent: 'draft_preview',
+      executionMode: 'read_only',
+      status: 'read_only',
+      effects: expect.arrayContaining([
+        expect.objectContaining({ kind: 'schema.apply_events', status: 'planned', arguments: expect.objectContaining({ extraction: expect.objectContaining({ events: [expect.objectContaining({ title: 'AI ファイル解析テスト会議' }), expect.objectContaining({ title: 'テスト懇親会' })] }) }) }),
+      ]),
+    } });
+    expect(JSON.stringify(runBody.data.effects)).not.toContain(gmailXlsx);
+    expect(calendarRequests).toHaveLength(0);
+    expect(driveFolderQueries).toHaveLength(0);
+    expect(driveFolders).toHaveLength(0);
+    expect(uploadMetadata.parents).toBeUndefined();
   });
 });
 

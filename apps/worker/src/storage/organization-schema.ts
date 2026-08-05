@@ -36,6 +36,7 @@ export const rules = sqliteTable('rules', {
   organizationId: text('organization_id').notNull(),
   name: text('name').notNull(),
   status: text('status', { enum: ['draft', 'active', 'suspended', 'archived'] }).notNull(),
+  executionMode: text('execution_mode', { enum: ['read_only', 'approval', 'unattended'] }).notNull().default('unattended'),
   sourceListId: text('source_list_id').references(() => lists.id),
   selectionPolicy: text('selection_policy').notNull().default('{}'),
   routingPolicy: text('routing_policy').notNull().default('{}'),
@@ -44,10 +45,12 @@ export const rules = sqliteTable('rules', {
   scheduleMinutes: integer('schedule_minutes').notNull().default(5),
   requireAttendance: integer('require_attendance', { mode: 'boolean' }).notNull().default(false),
   deadlineDaysBefore: integer('deadline_days_before'),
+  currentRevision: integer('current_revision').notNull().default(1),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
   check('rules_status_check', sql`${table.status} in ('draft', 'active', 'suspended', 'archived')`),
+  check('rules_execution_mode_check', sql`${table.executionMode} in ('read_only', 'approval', 'unattended')`),
   check('rules_require_attendance_check', sql`${table.requireAttendance} in (0, 1)`),
   index('rules_status_idx').on(table.status),
 ]);
@@ -91,8 +94,8 @@ export const agentRules = sqliteTable('agent_rules', {
   id: text('id').primaryKey(),
   organizationId: text('organization_id').notNull(),
   name: text('name').notNull(),
-  status: text('status', { enum: ['active', 'suspended', 'archived'] }).notNull(),
-  executionMode: text('execution_mode', { enum: ['read_only', 'approval', 'unattended'] }).notNull().default('approval'),
+  status: text('status', { enum: ['draft', 'active', 'suspended', 'archived'] }).notNull(),
+  executionMode: text('execution_mode', { enum: ['read_only', 'approval', 'unattended'] }).notNull().default('unattended'),
   promptId: text('prompt_id').notNull().references(() => prompts.id, { onDelete: 'restrict' }),
   selectionPolicy: text('selection_policy').notNull().default('{}'),
   priority: integer('priority').notNull().default(0),
@@ -100,7 +103,7 @@ export const agentRules = sqliteTable('agent_rules', {
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
-  check('agent_rules_status_check', sql`${table.status} in ('active', 'suspended', 'archived')`),
+  check('agent_rules_status_check', sql`${table.status} in ('draft', 'active', 'suspended', 'archived')`),
   check('agent_rules_execution_mode_check', sql`${table.executionMode} in ('read_only', 'approval', 'unattended')`),
   index('agent_rules_status_idx').on(table.status),
 ]);
@@ -111,7 +114,7 @@ export const agentRuleRevisions = sqliteTable('agent_rule_revisions', {
   revision: integer('revision').notNull(),
   promptId: text('prompt_id').notNull().references(() => prompts.id, { onDelete: 'restrict' }),
   selectionPolicy: text('selection_policy').notNull(),
-  executionMode: text('execution_mode', { enum: ['read_only', 'approval', 'unattended'] }).notNull().default('read_only'),
+  executionMode: text('execution_mode', { enum: ['read_only', 'approval', 'unattended'] }).notNull().default('unattended'),
   permittedRecipientListIds: text('permitted_recipient_list_ids').notNull().default('[]'),
   permittedLineListIds: text('permitted_line_list_ids').notNull().default('[]'),
   createdAt: text('created_at').notNull(),
@@ -134,12 +137,59 @@ export const ruleRevisions = sqliteTable('rule_revisions', {
   id: text('id').primaryKey(),
   ruleId: text('rule_id').notNull().references(() => rules.id, { onDelete: 'cascade' }),
   revision: integer('revision').notNull(),
+  executionMode: text('execution_mode', { enum: ['read_only', 'approval', 'unattended'] }).notNull().default('unattended'),
   selectionPolicy: text('selection_policy').notNull(),
   routingPolicy: text('routing_policy').notNull(),
   taskRoleIds: text('task_role_ids').notNull().default('[]'),
   createdAt: text('created_at').notNull(),
 }, (table) => [
   uniqueIndex('rule_revisions_rule_revision_idx').on(table.ruleId, table.revision),
+]);
+
+export const ruleRuns = sqliteTable('rule_runs', {
+  id: text('id').primaryKey(),
+  ruleId: text('rule_id').references(() => rules.id, { onDelete: 'restrict' }),
+  agentRuleId: text('agent_rule_id').references(() => agentRules.id, { onDelete: 'restrict' }),
+  ruleRevision: integer('rule_revision').notNull(),
+  sourceMessageId: text('source_message_id').notNull().references(() => sourceMessages.id, { onDelete: 'cascade' }),
+  executionMode: text('execution_mode', { enum: ['read_only', 'approval', 'unattended'] }).notNull(),
+  intent: text('intent', { enum: ['live', 'draft_preview'] }).notNull(),
+  status: text('status', { enum: ['planning', 'read_only', 'pending_approval', 'applying', 'completed', 'rejected', 'expired', 'failed'] }).notNull(),
+  plannedAt: text('planned_at'),
+  expiresAt: text('expires_at'),
+  decidedAt: text('decided_at'),
+  decidedBy: text('decided_by'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  check('rule_runs_owner_check', sql`(${table.ruleId} is null) != (${table.agentRuleId} is null)`),
+  check('rule_runs_mode_check', sql`${table.executionMode} in ('read_only', 'approval', 'unattended')`),
+  check('rule_runs_intent_check', sql`${table.intent} in ('live', 'draft_preview')`),
+  check('rule_runs_status_check', sql`${table.status} in ('planning', 'read_only', 'pending_approval', 'applying', 'completed', 'rejected', 'expired', 'failed')`),
+  index('rule_runs_status_idx').on(table.status, table.updatedAt),
+]);
+
+export const ruleEffects = sqliteTable('rule_effects', {
+  id: text('id').primaryKey(),
+  ruleRunId: text('rule_run_id').notNull().references(() => ruleRuns.id, { onDelete: 'cascade' }),
+  effectKey: text('effect_key').notNull(),
+  kind: text('kind').notNull(),
+  arguments: text('arguments').notNull(),
+  dependsOn: text('depends_on').notNull().default('[]'),
+  idempotencyKey: text('idempotency_key').notNull().unique(),
+  status: text('status', { enum: ['planned', 'pending', 'applying', 'succeeded', 'transient_failed', 'permanent_failed', 'blocked', 'rejected', 'expired'] }).notNull(),
+  attempts: integer('attempts').notNull().default(0),
+  result: text('result'),
+  error: text('error'),
+  nextAttemptAt: text('next_attempt_at'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  uniqueIndex('rule_effects_run_key_idx').on(table.ruleRunId, table.effectKey),
+  check('rule_effects_status_check', sql`${table.status} in ('planned', 'pending', 'applying', 'succeeded', 'transient_failed', 'permanent_failed', 'blocked', 'rejected', 'expired')`),
+  check('rule_effects_attempts_check', sql`${table.attempts} >= 0`),
+  index('rule_effects_run_idx').on(table.ruleRunId, table.createdAt),
+  index('rule_effects_retry_idx').on(table.status, table.nextAttemptAt),
 ]);
 
 export const sourceMessages = sqliteTable('source_messages', {

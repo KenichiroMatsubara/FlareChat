@@ -237,7 +237,7 @@ describe('Organization management', () => {
     expect(response.status).toBe(400);
   });
 
-  it('creates a Rule and exposes its lifecycle changes through the same interface', async () => {
+  it('creates a Draft unattended Schema Rule and revisions its Execution Mode independently of activation', async () => {
     fixture = createTestApp();
     const created = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/rules',
@@ -248,6 +248,11 @@ describe('Organization management', () => {
       },
     ), fixture.environment);
     const body = await created.json() as { data: { id: string } };
+    const modeUpdated = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/rules/${body.data.id}`,
+      { executionMode: 'read_only' },
+      'PATCH',
+    ), fixture.environment);
     const updated = await app.fetch(fixture.jsonRequest(
       `/api/organizations/organization-1/rules/${body.data.id}`,
       { state: 'active' },
@@ -258,12 +263,14 @@ describe('Organization management', () => {
       fixture.environment,
     );
 
-    expect([created.status, updated.status]).toEqual([201, 200]);
+    expect([created.status, modeUpdated.status, updated.status]).toEqual([201, 200, 200]);
     await expect(listed.json()).resolves.toMatchObject({
       data: [{
         id: body.data.id,
         name: 'Announcements',
         state: 'active',
+        executionMode: 'read_only',
+        revision: 2,
         selectionPolicy: { source: 'trusted' },
       }],
     });
@@ -455,31 +462,27 @@ describe('Organization management', () => {
     await expect(afterRemoval.json()).resolves.toEqual({ data: [] });
   });
 
-  it('creates an approval-mode Agent Rule by default and exposes its configurable Execution Mode', async () => {
+  it('creates a Draft unattended Agent Rule by default and exposes its configurable Execution Mode', async () => {
     fixture = createTestApp();
     const prompt = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/prompts',
       { name: 'Event analyst', instructions: 'Read the Source Message.' },
     ), fixture.environment);
     const promptId = (await prompt.json() as { data: { id: string } }).data.id;
-    const rejectedDraft = await app.fetch(fixture.jsonRequest(
-      '/api/organizations/organization-1/agent-rules',
-      { name: 'Draft analyst', promptId, state: 'draft', selectionPolicy: {} },
-    ), fixture.environment);
     const created = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/agent-rules',
-      { name: 'Trusted analyst', promptId, state: 'active', selectionPolicy: { domain: 'example.com' } },
+      { name: 'Trusted analyst', promptId, selectionPolicy: { domain: 'example.com' } },
     ), fixture.environment);
     const createdBody = await created.json() as { data: { id: string; executionMode: string } };
     const agentRuleId = createdBody.data.id;
     const unattended = await app.fetch(fixture.jsonRequest(
       `/api/organizations/organization-1/agent-rules/${agentRuleId}`,
-      { executionMode: 'unattended' },
+      { executionMode: 'read_only' },
       'PATCH',
     ), fixture.environment);
     const suspended = await app.fetch(fixture.jsonRequest(
       `/api/organizations/organization-1/agent-rules/${agentRuleId}`,
-      { state: 'suspended' },
+      { state: 'active' },
       'PATCH',
     ), fixture.environment);
     const listed = await app.fetch(
@@ -487,16 +490,15 @@ describe('Organization management', () => {
       fixture.environment,
     );
 
-    expect(rejectedDraft.status).toBe(400);
     expect([created.status, unattended.status, suspended.status]).toEqual([201, 200, 200]);
-    expect(createdBody.data.executionMode).toBe('approval');
+    expect(createdBody.data.executionMode).toBe('unattended');
     await expect(listed.json()).resolves.toMatchObject({ data: [{
       id: agentRuleId,
       name: 'Trusted analyst',
       promptId,
-      state: 'suspended',
+      state: 'active',
       selectionPolicy: { domain: 'example.com' },
-      executionMode: 'unattended',
+      executionMode: 'read_only',
       revision: 2,
     }] });
   });
@@ -517,7 +519,7 @@ describe('Organization management', () => {
 
     expect(created.status).toBe(201);
     await expect(listed.json()).resolves.toMatchObject({ data: [{
-      name: 'Writer', executionMode: 'approval', permittedRecipientListIds: [recipientListId], permittedLineListIds: [lineListId],
+      name: 'Writer', executionMode: 'unattended', permittedRecipientListIds: [recipientListId], permittedLineListIds: [lineListId],
     }] });
   });
 

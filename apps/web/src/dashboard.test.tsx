@@ -27,14 +27,14 @@ const dashboardProps = (): DashboardProps => ({
   onLineChannelAccessTokenChange: vi.fn(), onLineChannelSecretChange: vi.fn(), onAiApiKeyChange: vi.fn(), onAiModelChange: vi.fn(), onAiBaseUrlChange: vi.fn(),
   onSaveLineConnection: vi.fn(), onSaveAiConnection: vi.fn(), aiTestPrompt: '', aiTestResult: '',
   onAiTestPromptChange: vi.fn(), onTestAi: vi.fn(), mailTestSubject: '', mailTestMatches: [], mailTestAiRequest: null,
-  mailTestPreview: null, mailTestCreatedEventIds: [],
+  mailTestPreview: null, mailTestRuleRunIds: [],
   mailTestRefreshRequest: null, mailTestRefreshPlan: null, mailTestRefreshOutcome: null,
   onPrepareRefresh: vi.fn(), onPlanRefresh: vi.fn(), onApplyRefresh: vi.fn(), onMailTestSubjectChange: vi.fn(), onSearchMailbox: vi.fn(),
-  onPrepareMailbox: vi.fn(), onPreviewMailbox: vi.fn(), onCreateCalendarEvent: vi.fn(), organizationRules: [],
+  onPrepareMailbox: vi.fn(), onPreviewMailbox: vi.fn(), onStartDraftRuleRun: vi.fn(), organizationRules: [],
   organizationLists: [], onCreateRule: vi.fn(), onUpdateRule: vi.fn(), organizationTasks: [], onUpdateTask: vi.fn(), taskRoles: [], taskRoleAssignments: [], taskMembers: [], onCreateTaskRole: vi.fn(), onUpdateTaskRole: vi.fn(), onDeleteTaskRole: vi.fn(), onAssignTaskRole: vi.fn(),
   taskReassignment: { rolesChangedAt: null, reviewedAt: null, pending: false, openTasks: 0 }, taskReassignmentProposals: [], taskReassignmentSkipped: [],
   onSuggestTaskReassignments: vi.fn(), onApplyTaskReassignments: vi.fn(), onDiscardTaskReassignments: vi.fn(),
-  prompts: [], agentRules: [], agentRuns: [], agentTranscript: null, proposedActions: [], onCreatePrompt: vi.fn(), onUpdatePrompt: vi.fn(), onDeletePrompt: vi.fn(), onCreateAgentRule: vi.fn(), onUpdateAgentRule: vi.fn(), onLoadAgentTranscript: vi.fn(), onDecideProposedAction: vi.fn(), onDecideProposedActionBatch: vi.fn(),
+  prompts: [], agentRules: [], agentRuns: [], agentTranscript: null, ruleRuns: [], onDecideRuleRun: vi.fn(), onCreatePrompt: vi.fn(), onUpdatePrompt: vi.fn(), onDeletePrompt: vi.fn(), onCreateAgentRule: vi.fn(), onUpdateAgentRule: vi.fn(), onLoadAgentTranscript: vi.fn(),
   organizationMembers: [], lineDestinations: [], onCreateMember: vi.fn(), onUpdateMember: vi.fn(),
   onSetLineDestination: vi.fn(), onUnlinkLineDestination: vi.fn(), onRegisterLineDestination: vi.fn(), onRemoveLineDestination: vi.fn(), onRefreshMembers: vi.fn(),
   guestRegistrations: [],
@@ -61,7 +61,7 @@ describe('responsive dashboard shell', () => {
   it('keeps every navigation target inside the collapsible panel', () => {
     const panel = /<div id="app-navigation" class="topbar-panel">(.*?)<\/header>/su.exec(markup())?.[1] ?? '';
     expect(panel).toContain('class="organization-picker"');
-    for (const label of ['自動化', '接続設定', 'ルール', 'メンバー', 'タスク', 'メールテスト', 'ログアウト']) expect(panel).toContain(label);
+    for (const label of ['自動化', '接続設定', 'ルール', 'メンバー', 'タスク', 'Rule Runs', '予定の再同期', 'ログアウト']) expect(panel).toContain(label);
   });
 
   it('stacks the AI request heading and its copy action on narrow screens', async () => {
@@ -152,7 +152,7 @@ describe('Operational Task Roles', () => {
             { id: 'role-payment', displayName: '支払担当', description: '支払期限を扱う' },
           ]}
           organizationRules={[{
-            id: 'rule-1', organizationId: 'org-1', name: '登録案内', state: 'active',
+            id: 'rule-1', organizationId: 'org-1', name: '登録案内', state: 'active', executionMode: 'unattended', revision: 1,
             selectionPolicy: {}, routingPolicy: {}, taskRoleIds: ['role-registration'], priority: 0,
             permittedRecipientListIds: [], permittedLineListIds: [],
             createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z',
@@ -179,7 +179,7 @@ describe('Operational Task Roles', () => {
             { id: 'line-members', organizationId: 'org-1', kind: 'line', name: 'Member LINE', description: '' },
           ]}
           organizationRules={[{
-            id: 'rule-1', organizationId: 'org-1', name: 'Announcements', state: 'active',
+            id: 'rule-1', organizationId: 'org-1', name: 'Announcements', state: 'active', executionMode: 'unattended', revision: 1,
             selectionPolicy: {}, routingPolicy: {}, taskRoleIds: [],
             permittedRecipientListIds: ['recipients-members'],
             permittedLineListIds: ['line-members'],
@@ -260,7 +260,6 @@ describe('read-only Agent Rules', () => {
           agentRules={[{ id: 'agent-rule-1', organizationId: 'org-1', name: 'Read-only analyst', promptId: 'prompt-1', state: 'active', executionMode: 'read_only', selectionPolicy: { domain: 'example.com' }, permittedRecipientListIds: [], permittedLineListIds: [], priority: 0, revision: 1, createdAt: '2026-08-01', updatedAt: '2026-08-01' }]}
           agentRuns={[{ id: 'run-1', agentRuleId: 'agent-rule-1', agentRuleRevision: 1, promptId: 'prompt-1', promptRevision: 2, sourceMessageId: 'source-1', model: 'test-model', startedAt: '2026-08-02', completedAt: '2026-08-02', outcome: 'succeeded', toolCallCount: 1, tokens: 42, expiresAt: '2026-10-31' }]}
           agentTranscript={{ runId: 'run-1', source: { subject: 'Confidential notice', body: 'Source transcript body', attachments: [] }, finalOutput: 'No action required.', messages: [], error: null }}
-          proposedActions={[{ id: 'action-1', runId: 'run-1', tool: 'send_line_message', arguments: { destination: 'line-user-1', message: 'Notify.' }, status: 'pending', expiresAt: '2026-08-09' }]}
         />
       </MemoryRouter>,
     );
@@ -274,9 +273,6 @@ describe('read-only Agent Rules', () => {
     expect(html).toContain('Run Transcript');
     expect(html).toContain('Source transcript body');
     expect(html).toContain('No action required.');
-    expect(html).toContain('Proposed Actions');
-    expect(html).toContain('承認');
-    expect(html).toContain('却下');
   });
 });
 
@@ -439,10 +435,10 @@ describe('member roster', () => {
 describe('mailbox test prerequisites', () => {
   it('allows Gmail search before an AI connection is configured', () => {
     const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/organizations/org-1/mailbox-test']}>
+      <MemoryRouter initialEntries={['/organizations/org-1/rule-runs']}>
         <Dashboard
           {...dashboardProps()}
-          page="mail-test"
+          page="rule-runs"
           automation={{
             email: 'owner@example.com',
             displayName: 'Owner',
@@ -464,10 +460,10 @@ describe('mailbox test prerequisites', () => {
 
   it('describes the prepared payload as usable with any OpenAI-compatible API', () => {
     const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/organizations/org-1/mailbox-test']}>
+      <MemoryRouter initialEntries={['/organizations/org-1/rule-runs']}>
         <Dashboard
           {...dashboardProps()}
-          page="mail-test"
+          page="rule-runs"
           automation={{
             email: 'owner@example.com',
             displayName: 'Owner',
@@ -498,10 +494,10 @@ describe('mailbox test prerequisites', () => {
 
   it('uses provider-neutral wording when an AI API is configured', () => {
     const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/organizations/org-1/mailbox-test']}>
+      <MemoryRouter initialEntries={['/organizations/org-1/rule-runs']}>
         <Dashboard
           {...dashboardProps()}
-          page="mail-test"
+          page="rule-runs"
           automation={{
             email: 'owner@example.com',
             displayName: 'Owner',
@@ -540,10 +536,10 @@ describe('mailbox test prerequisites', () => {
 
   it('shows the email summary returned with the AI extraction', () => {
     const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/organizations/org-1/mailbox-test']}>
+      <MemoryRouter initialEntries={['/organizations/org-1/rule-runs']}>
         <Dashboard
           {...dashboardProps()}
-          page="mail-test"
+          page="rule-runs"
           automation={{
             email: 'owner@example.com', displayName: 'Owner', enabled: true, status: 'active',
             lastSyncedAt: null, lastError: null, failingSince: null, created: 0, skipped: 0, exceptions: 0,
@@ -744,19 +740,19 @@ describe('operation progress', () => {
     expect(html).toContain('Promptを削除');
   });
 
-  it('reports a Proposed Action decision on the action being decided', () => {
+  it('reports a common Rule Run decision on the run being decided', () => {
     const html = dashboard({
-      agentTranscript: { runId: 'run-1', source: { subject: '案内', body: '', attachments: [] }, messages: [], finalOutput: '', error: null },
-      proposedActions: [
-        { id: 'action-1', runId: 'run-1', tool: 'send_line_message', arguments: {}, status: 'pending', expiresAt: '2026-08-05' },
-        { id: 'action-2', runId: 'run-1', tool: 'send_line_message', arguments: {}, status: 'pending', expiresAt: '2026-08-05' },
-      ],
-      isPending: pendingOnly(pendingKey.actionDecision('action-1', 'approve')),
-    }, 'rules', 'rules');
+      ruleRuns: [{
+        id: 'run-1', rule: { type: 'agent', id: 'agent-rule-1', revision: 1 }, sourceMessageId: 'source-1',
+        executionMode: 'approval', intent: 'live', status: 'pending_approval', expiresAt: '2026-08-05',
+        effects: [{ id: 'effect-1', key: 'line:0', kind: 'agent.send_line_message', arguments: {}, dependsOn: [], status: 'pending', attempts: 0, result: null, error: null }],
+      }],
+      isPending: pendingOnly(pendingKey.ruleRunDecision('run-1', 'approve')),
+    }, 'rule-runs', 'rule-runs');
 
-    expect(html.match(/承認中…/gu)?.length).toBe(1);
-    expect(html).not.toContain('却下中…');
-    expect(html).toContain('すべて承認');
+    expect(html).toContain('aria-busy="true"');
+    expect(html).toContain('一括承認');
+    expect(html).toContain('一括却下');
   });
 
   it('reports the one mail whose request is being prepared', () => {
@@ -770,7 +766,7 @@ describe('operation progress', () => {
         { id: 'message-2', subject: '請求案内', sender: 'sender@example.com' },
       ],
       isPending: pendingOnly(pendingKey.mailPrepare('message-1')),
-    }, 'mail-test', 'mailbox-test');
+    }, 'rule-runs', 'rule-runs');
 
     expect(html.match(/本文と添付を読み込み中…/gu)?.length).toBe(1);
     expect(html).toContain('Gmailを検索');
@@ -826,12 +822,12 @@ describe('operation progress', () => {
   });
 
   it('names the running operation in the middle of the page, whatever is scrolled into view', () => {
-    const html = dashboard({ runningOperations: [pendingKey.mailSearch] }, 'mail-test', 'mailbox-test');
+    const html = dashboard({ runningOperations: [pendingKey.mailSearch] }, 'rule-runs', 'rule-runs');
 
     expect(html).toContain('class="pending-overlay"');
     expect(html).toContain('Gmail を検索しています');
     expect(html).toContain('完了するまでこのページを開いたままにしてください。');
-    expect(dashboard({}, 'mail-test', 'mailbox-test')).not.toContain('pending-overlay');
+    expect(dashboard({}, 'rule-runs', 'rule-runs')).not.toContain('pending-overlay');
   });
 
   it('counts the other operations running behind the one it names', () => {

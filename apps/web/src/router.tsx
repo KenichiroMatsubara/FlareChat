@@ -20,7 +20,8 @@ export const organizationRoutePaths = {
   connections: 'connections',
   rules: 'rules',
   members: 'members',
-  mailboxTest: 'mailbox-test',
+  ruleRuns: 'rule-runs',
+  eventRefresh: 'event-refresh',
   tasks: 'tasks',
 } as const;
 
@@ -99,7 +100,9 @@ const rootRoute = (client: RouterClient) => ({
         { path: 'connections', element: <OrganizationPage page="connections" /> },
         { path: 'rules', element: <OrganizationPage page="rules" /> },
         { path: 'members', element: <OrganizationPage page="members" /> },
-        { path: 'mailbox-test', element: <OrganizationPage page="mail-test" /> },
+        { path: 'mailbox-test', element: <OrganizationPage page="rule-runs" /> },
+        { path: 'rule-runs', element: <OrganizationPage page="rule-runs" /> },
+        { path: 'event-refresh', element: <OrganizationPage page="event-refresh" /> },
         { path: 'tasks', element: <OrganizationPage page="tasks" /> },
       ],
     },

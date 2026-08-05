@@ -1,8 +1,9 @@
 export type OrganizationStatus = 'provisioning' | 'active' | 'suspended' | 'failed';
 export type ListKind = 'source' | 'recipient' | 'line';
 export type RuleStatus = 'draft' | 'active' | 'suspended' | 'archived';
-export type AgentRuleStatus = 'active' | 'suspended' | 'archived';
-export type AgentExecutionMode = 'read_only' | 'approval' | 'unattended';
+export type AgentRuleStatus = RuleStatus;
+export type ExecutionMode = 'read_only' | 'approval' | 'unattended';
+export type AgentExecutionMode = ExecutionMode;
 export type EventStatus = 'draft' | 'scheduled' | 'cancelled' | 'exception';
 export type AttendanceStatus = 'unanswered' | 'attending' | 'not_attending';
 
@@ -38,6 +39,7 @@ export interface AutomationRule {
   organizationId: string;
   name: string;
   status: RuleStatus;
+  executionMode: ExecutionMode;
   sourceListId: string | null;
   permittedRecipientListIds: string[];
   permittedLineListIds: string[];

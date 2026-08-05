@@ -2,12 +2,12 @@ import { CheckSquare, CircleAlert, LogOut, Mail, Menu, Play, RefreshCw, Settings
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
-import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, OperationalTaskRole, OrganizationAgentRule, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationMember, OrganizationMemberInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, ProposedAction, MemberLineDestinationInput, TaskAssignmentProposal, TaskReassignmentReview, TaskRoleAssignment } from './api';
-import { AutomationPage, ConnectionsPage, MailboxTestPage, MembersPage, RulesPage, TasksPage } from './dashboard-pages';
+import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, OperationalTaskRole, OrganizationAgentRule, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationMember, OrganizationMemberInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, MemberLineDestinationInput, RuleRun, TaskAssignmentProposal, TaskReassignmentReview, TaskRoleAssignment } from './api';
+import { AutomationPage, ConnectionsPage, EventRefreshPage, MailboxTestPage, MembersPage, RulesPage, TasksPage } from './dashboard-pages';
 import { pendingKey, ROUTE_NAVIGATION_KEY } from './pending';
 import { PendingOverlay } from './progress';
 
-export type Page = 'automation' | 'connections' | 'rules' | 'members' | 'mail-test' | 'tasks';
+export type Page = 'automation' | 'connections' | 'rules' | 'members' | 'rule-runs' | 'event-refresh' | 'tasks';
 
 export const needsGoogleReauthentication = (error: string): boolean =>
   /token has been expired or revoked/iu.test(error);
@@ -35,7 +35,8 @@ const navigationItems: readonly NavigationItem[] = [
   { to: '../rules', label: 'ルール', icon: <SlidersHorizontal size={16} /> },
   { to: '../members', label: 'メンバー', icon: <UsersRound size={16} /> },
   { to: '../tasks', label: 'タスク', icon: <CheckSquare size={16} /> },
-  { to: '../mailbox-test', label: 'メールテスト', icon: <SlidersHorizontal size={16} /> },
+  { to: '../rule-runs', label: 'Rule Runs', icon: <SlidersHorizontal size={16} /> },
+  { to: '../event-refresh', label: '予定の再同期', icon: <RefreshCw size={16} /> },
 ];
 
 export interface DashboardProps {
@@ -88,35 +89,34 @@ export interface DashboardProps {
   mailTestMatches: MailboxTestMatch[];
   mailTestAiRequest: MailboxTestAiRequest | null;
   mailTestPreview: MailboxTestPreview | null;
-  mailTestCreatedEventIds: string[];
+  mailTestRuleRunIds: string[];
   mailTestRefreshRequest: MailboxTestRefreshRequest | null;
   mailTestRefreshPlan: MailboxTestRefreshPlan | null;
   mailTestRefreshOutcome: MailboxTestRefreshOutcome | null;
   onMailTestSubjectChange: (value: string) => void;
   onSearchMailbox: () => void;
   onPrepareMailbox: (messageId: string) => void;
-  onPreviewMailbox: (messageId: string) => void;
-  onCreateCalendarEvent: () => void;
+  onPreviewMailbox: (messageId: string, ruleId: string) => void;
+  onStartDraftRuleRun: (ruleId: string) => void;
   onPrepareRefresh: () => void;
   onPlanRefresh: () => void;
   onApplyRefresh: (candidateIndexes: number[]) => void;
   organizationRules: OrganizationRule[];
   organizationLists: OrganizationTypedList[];
   onCreateRule: (input: OrganizationRuleInput) => Promise<void>;
-  onUpdateRule: (ruleId: string, input: Pick<OrganizationRuleInput, 'permittedRecipientListIds' | 'permittedLineListIds'>) => Promise<void>;
+  onUpdateRule: (ruleId: string, input: Partial<Pick<OrganizationRule, 'state' | 'executionMode' | 'permittedRecipientListIds' | 'permittedLineListIds'>>) => Promise<void>;
   prompts: OrganizationPrompt[];
   agentRules: OrganizationAgentRule[];
   agentRuns: AgentRunIndex[];
   agentTranscript: AgentRunTranscript | null;
-  proposedActions: ProposedAction[];
+  ruleRuns: RuleRun[];
+  onDecideRuleRun: (runId: string, decision: 'approve' | 'reject') => void;
   onCreatePrompt: (input: { name: string; instructions: string }) => Promise<void>;
   onUpdatePrompt: (promptId: string, input: { name?: string; instructions?: string }) => Promise<void>;
   onDeletePrompt: (promptId: string) => Promise<void>;
-  onCreateAgentRule: (input: { name: string; promptId: string; state: 'active' | 'suspended'; executionMode?: 'read_only' | 'approval' | 'unattended'; selectionPolicy: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[]; priority?: number }) => Promise<void>;
-  onUpdateAgentRule: (agentRuleId: string, input: { state?: 'active' | 'suspended' | 'archived'; executionMode?: 'read_only' | 'approval' | 'unattended'; permittedRecipientListIds?: string[]; permittedLineListIds?: string[] }) => Promise<void>;
+  onCreateAgentRule: (input: { name: string; promptId: string; state: 'draft' | 'active'; executionMode?: 'read_only' | 'approval' | 'unattended'; selectionPolicy: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[]; priority?: number }) => Promise<void>;
+  onUpdateAgentRule: (agentRuleId: string, input: { state?: 'draft' | 'active' | 'suspended' | 'archived'; executionMode?: 'read_only' | 'approval' | 'unattended'; permittedRecipientListIds?: string[]; permittedLineListIds?: string[] }) => Promise<void>;
   onLoadAgentTranscript: (runId: string) => void;
-  onDecideProposedAction: (actionId: string, decision: 'approve' | 'reject') => void;
-  onDecideProposedActionBatch: (runId: string, decision: 'approve' | 'reject') => void;
   organizationTasks: OrganizationTask[];
   onUpdateTask: (taskId: string, input: { completed?: boolean; remarks?: string }) => void;
   taskRoles: OperationalTaskRole[];
@@ -160,7 +160,9 @@ export const Dashboard = (props: DashboardProps) => {
         ? <RulesPage {...props} />
         : page === 'members'
           ? <MembersPage {...props} />
-          : page === 'tasks' ? <TasksPage {...props} /> : <MailboxTestPage {...props} />;
+          : page === 'tasks'
+            ? <TasksPage {...props} />
+            : page === 'event-refresh' ? <EventRefreshPage {...props} /> : <MailboxTestPage {...props} />;
   const requiresGoogleReauthentication = needsGoogleReauthentication(props.error)
     || props.automation?.status === 'reauthentication_required';
   const recoveryMessage = props.error || 'Automation Inbox の認証が失効しています。Google に再接続してください。';

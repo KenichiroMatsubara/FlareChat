@@ -154,6 +154,8 @@ export interface OrganizationRule {
   organizationId: string;
   name: string;
   state: 'draft' | 'active' | 'suspended' | 'archived';
+  executionMode: 'read_only' | 'approval' | 'unattended';
+  revision: number;
   selectionPolicy: Record<string, unknown>;
   routingPolicy: Record<string, unknown>;
   taskRoleIds: string[];
@@ -167,6 +169,7 @@ export interface OrganizationRule {
 export interface OrganizationRuleInput {
   name: string;
   state: 'draft' | 'active';
+  executionMode?: 'read_only' | 'approval' | 'unattended';
   selectionPolicy?: Record<string, unknown>;
   routingPolicy?: Record<string, unknown>;
   taskRoleIds?: string[];
@@ -189,7 +192,7 @@ export interface OrganizationAgentRule {
   id: string;
   organizationId: string;
   name: string;
-  state: 'active' | 'suspended' | 'archived';
+  state: 'draft' | 'active' | 'suspended' | 'archived';
   executionMode: 'read_only' | 'approval' | 'unattended';
   promptId: string;
   selectionPolicy: Record<string, unknown>;
@@ -225,13 +228,27 @@ export interface AgentRunTranscript {
   error: string | null;
 }
 
-export interface ProposedAction {
+export interface RuleEffect {
   id: string;
-  runId: string;
-  tool: 'send_line_message' | 'create_scheduled_event';
+  key: string;
+  kind: string;
   arguments: Record<string, unknown>;
-  status: 'pending' | 'approved' | 'rejected' | 'expired' | 'failed';
-  expiresAt: string;
+  dependsOn: string[];
+  status: 'planned' | 'pending' | 'applying' | 'succeeded' | 'transient_failed' | 'permanent_failed' | 'blocked' | 'rejected' | 'expired';
+  attempts: number;
+  result: unknown | null;
+  error: string | null;
+}
+
+export interface RuleRun {
+  id: string;
+  rule: { type: 'schema' | 'agent'; id: string; revision: number };
+  sourceMessageId: string;
+  executionMode: 'read_only' | 'approval' | 'unattended';
+  intent: 'live' | 'draft_preview';
+  status: 'planning' | 'read_only' | 'pending_approval' | 'applying' | 'completed' | 'rejected' | 'expired' | 'failed';
+  expiresAt: string | null;
+  effects: RuleEffect[];
 }
 
 export interface OrganizationTypedList {
@@ -567,18 +584,17 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(input),
   }),
-  updateOrganizationRule: (organizationId: string, ruleId: string, input: Pick<OrganizationRuleInput, 'permittedRecipientListIds' | 'permittedLineListIds'>): Promise<Partial<OrganizationRule> & { id: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules/${encodeURIComponent(ruleId)}`, {
+  updateOrganizationRule: (organizationId: string, ruleId: string, input: Partial<Pick<OrganizationRule, 'state' | 'executionMode' | 'permittedRecipientListIds' | 'permittedLineListIds'>>): Promise<Partial<OrganizationRule> & { id: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules/${encodeURIComponent(ruleId)}`, {
     method: 'PATCH',
     body: JSON.stringify(input),
   }),
   createOrganizationPrompt: (organizationId: string, input: { name: string; instructions: string }): Promise<OrganizationPrompt> => request(`/api/organizations/${encodeURIComponent(organizationId)}/prompts`, { method: 'POST', body: JSON.stringify(input) }),
   updateOrganizationPrompt: (organizationId: string, promptId: string, input: { name?: string; instructions?: string }): Promise<Partial<OrganizationPrompt> & { id: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/prompts/${encodeURIComponent(promptId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   removeOrganizationPrompt: (organizationId: string, promptId: string): Promise<{ id: string; removed: boolean }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/prompts/${encodeURIComponent(promptId)}`, { method: 'DELETE' }),
-  createOrganizationAgentRule: (organizationId: string, input: { name: string; promptId: string; state: 'active' | 'suspended'; executionMode?: 'read_only' | 'approval' | 'unattended'; selectionPolicy: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[]; priority?: number }): Promise<OrganizationAgentRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-rules`, { method: 'POST', body: JSON.stringify(input) }),
-  updateOrganizationAgentRule: (organizationId: string, agentRuleId: string, input: { state?: 'active' | 'suspended' | 'archived'; executionMode?: 'read_only' | 'approval' | 'unattended'; promptId?: string; selectionPolicy?: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[] }): Promise<OrganizationAgentRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-rules/${encodeURIComponent(agentRuleId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
-  agentProposedActions: (organizationId: string, runId: string): Promise<ProposedAction[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-runs/${encodeURIComponent(runId)}/proposed-actions`),
-  decideProposedAction: (organizationId: string, actionId: string, decision: 'approve' | 'reject'): Promise<ProposedAction> => request(`/api/organizations/${encodeURIComponent(organizationId)}/proposed-actions/${encodeURIComponent(actionId)}/${decision}`, { method: 'POST', body: '{}' }),
-  decideProposedActionBatch: (organizationId: string, runId: string, decision: 'approve' | 'reject'): Promise<ProposedAction[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-runs/${encodeURIComponent(runId)}/proposed-actions/${decision}`, { method: 'POST', body: '{}' }),
+  createOrganizationAgentRule: (organizationId: string, input: { name: string; promptId: string; state: 'draft' | 'active'; executionMode?: 'read_only' | 'approval' | 'unattended'; selectionPolicy: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[]; priority?: number }): Promise<OrganizationAgentRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-rules`, { method: 'POST', body: JSON.stringify(input) }),
+  updateOrganizationAgentRule: (organizationId: string, agentRuleId: string, input: { state?: 'draft' | 'active' | 'suspended' | 'archived'; executionMode?: 'read_only' | 'approval' | 'unattended'; promptId?: string; selectionPolicy?: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[] }): Promise<OrganizationAgentRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-rules/${encodeURIComponent(agentRuleId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  organizationRuleRuns: (organizationId: string): Promise<RuleRun[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rule-runs`),
+  decideRuleRun: (organizationId: string, runId: string, decision: 'approve' | 'reject'): Promise<RuleRun> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rule-runs/${encodeURIComponent(runId)}/decision`, { method: 'POST', body: JSON.stringify({ decision }) }),
   organizationConnections: (organizationId: string): Promise<OrganizationConnections> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections`),
   saveOrganizationLineConnection: (organizationId: string, input: {
     channelAccessToken?: string | undefined;
@@ -606,12 +622,13 @@ export const api = {
   prepareMailboxTestAiRequest: (organizationId: string, messageId: string): Promise<MailboxTestAiRequest> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/${encodeURIComponent(messageId)}/ai-request`, {
     method: 'POST',
   }),
-  previewMailboxTestEvent: (organizationId: string, messageId: string): Promise<MailboxTestPreview> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/${encodeURIComponent(messageId)}/preview`, {
+  previewMailboxTestEvent: (organizationId: string, messageId: string, ruleId: string): Promise<MailboxTestPreview> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/${encodeURIComponent(messageId)}/preview`, {
     method: 'POST',
+    body: JSON.stringify({ ruleId }),
   }),
-  createMailboxTestCalendarEvent: (organizationId: string, confirmationToken: string): Promise<{ eventIds: string[] }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/calendar`, {
+  startMailboxTestRuleRun: (organizationId: string, confirmationToken: string, ruleId: string): Promise<RuleRun> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/rule-run`, {
     method: 'POST',
-    body: JSON.stringify({ confirmationToken }),
+    body: JSON.stringify({ confirmationToken, ruleId }),
   }),
   prepareMailboxTestRefreshRequest: (organizationId: string, messageId: string, confirmationToken: string): Promise<MailboxTestRefreshRequest> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/${encodeURIComponent(messageId)}/refresh-request`, {
     method: 'POST',

@@ -1,10 +1,10 @@
-import { Hono, type Context } from 'hono';
+import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { and, asc, count, desc, eq, gt, gte, inArray, isNull, max, ne } from 'drizzle-orm';
 
 import { canUpdateAttendance, discoveredLineDestinations, displayLineDestinationId, verifyLineWebhookSignature } from '@mail/domain';
 
-import { agentWritePortForApproval, createAutomation, LEGACY_AI_BASE_URL } from './automation';
+import { agentWritePortForApproval, createAutomation, LEGACY_AI_BASE_URL, previewSchemaDraftRule, schemaRuleEffectPortForApproval, startSchemaDraftRuleRun } from './automation';
 import { decrypt, encrypt } from './cryptography';
 import { createDatabaseAccess } from './database-access';
 import { randomToken } from './encoding';
@@ -21,8 +21,9 @@ import { SchemaReadinessError } from './schema-lifecycle';
 import type { Bindings, ConnectionRow, SessionRow } from './types';
 import type { CipherEnvelope } from './cryptography';
 import { openAiChatCompletionsUrl, type EventDetails, type MailExtraction, type TaskDetails } from './event-details';
-import { approveProposedAction, expireProposedActions, proposedActionsForRun, readAgentRunTranscript, rejectProposedAction } from './agent-runs';
+import { readAgentRunTranscript } from './agent-runs';
 import { createTaskWorkflow } from './tasks';
+import { createRuleExecution } from './execution';
 import { proposeTaskReassignments, TASK_REASSIGNMENT_LIMIT } from './task-reassignment';
 import { applyPreset, availablePresets, PresetConfigurationConflictError } from './presets';
 import { controlDatabase as drizzleControlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
@@ -59,7 +60,6 @@ import {
   operationalTaskRoles,
   promptRevisions,
   prompts,
-  proposedActions,
   taskRoleAssignments,
 } from './storage/organization-schema';
 
@@ -187,6 +187,7 @@ app.post('/api/organizations/:organizationId/presets/:presetId/apply', async (co
 
 interface MailTestConfirmation {
   messageId: string;
+  ruleId: string;
   extraction: MailExtraction;
   expiresAt: string;
 }
@@ -525,43 +526,41 @@ app.post('/api/organizations/:organizationId/mail-tests/:messageId/preview', asy
     if (!access.database) return failure(context, '組織DBに接続できません。接続設定は保存されていません。', 503);
     const messageId = context.req.param('messageId');
     if (!/^[A-Za-z0-9_-]{1,200}$/u.test(messageId)) return failure(context, 'Gmail メッセージ ID が不正です。');
-    const source = await createAutomation(context.env).mailboxTest.readSource({ organizationId, database: access.database, messageId });
-    const extraction = await createAutomation(context.env).mailboxTest.extractPackage({
-      organizationId,
-      database: access.database,
-      source: source.source,
-      attachments: source.attachments,
-      ...(source.receivedAt === undefined ? {} : { receivedAt: source.receivedAt }),
-    });
-    if (!extraction) return failure(context, 'メールから安全な予定を抽出できませんでした。日付・開始時刻・終了時刻を確認してください。');
-    const confirmation: MailTestConfirmation = { messageId, extraction, expiresAt: expiresIn(MAIL_TEST_WINDOW_MS) };
+    const input = await context.req.json<{ ruleId?: string }>().catch((): { ruleId?: string } => ({}));
+    if (!input.ruleId) return failure(context, 'Draft Schema Rule を選択してください。');
+    const { source, extraction } = await previewSchemaDraftRule({ env: context.env, organizationId, database: access.database, messageId, ruleId: input.ruleId });
+    const confirmation: MailTestConfirmation = { messageId, ruleId: input.ruleId, extraction, expiresAt: expiresIn(MAIL_TEST_WINDOW_MS) };
     const token = JSON.stringify(await encrypt(JSON.stringify(confirmation), await organizationKeyForRequest(context.env, organizationId), mailTestContext(organizationId)));
     return json(context, { id: source.id, subject: source.subject, sender: source.sender, ...extraction, confirmationToken: token, expiresAt: confirmation.expiresAt });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'AI による予定の抽出に失敗しました。';
-    return failure(context, message, message === 'Authentication is required.' ? 401 : 500);
+    return failure(context, message, message === 'Authentication is required.' ? 401 : message.includes('Selection Policy') ? 409 : 500);
   }
 });
 
-app.post('/api/organizations/:organizationId/mail-tests/calendar', async (context) => {
+app.post('/api/organizations/:organizationId/mail-tests/rule-run', async (context) => {
   try {
     const organizationId = context.req.param('organizationId');
     const access = await organizationForRequest(context.req.raw, context.env, organizationId);
     if (!access.database) return failure(context, '組織DBに接続できません。', 503);
-    const input = await context.req.json<{ confirmationToken?: string }>();
+    const input = await context.req.json<{ confirmationToken?: string; ruleId?: string }>();
     if (!input.confirmationToken || input.confirmationToken.length > 10_000) return failure(context, '確認用トークンがありません。先に AI 抽出を実行してください。');
+    if (!input.ruleId) return failure(context, 'Draft Schema Rule を選択してください。');
     const confirmation = JSON.parse(await decrypt(JSON.parse(input.confirmationToken) as CipherEnvelope, await organizationKeyForRequest(context.env, organizationId), mailTestContext(organizationId))) as Partial<MailTestConfirmation>;
     if (typeof confirmation.messageId !== 'string' || !isMailExtraction(confirmation.extraction) || typeof confirmation.expiresAt !== 'string' || Date.parse(confirmation.expiresAt) <= Date.now()) {
       return failure(context, 'プレビューの有効期限が切れました。もう一度 AI 抽出を実行してください。', 409);
     }
-    return json(context, await createAutomation(context.env).mailboxTest.createCalendarEvents({
+    if (confirmation.ruleId !== input.ruleId) return failure(context, '確認した Rule Revision と異なります。', 409);
+    return json(context, await startSchemaDraftRuleRun({
+      env: context.env,
       organizationId,
       database: access.database,
+      ruleId: input.ruleId,
       messageId: confirmation.messageId,
-      events: confirmation.extraction.events,
+      extraction: confirmation.extraction,
     }), 201);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Google Calendar へのテスト予定作成に失敗しました。';
+    const message = error instanceof Error ? error.message : 'Draft Rule Run を開始できませんでした。';
     return failure(context, message, message === 'Authentication is required.' ? 401 : 500);
   }
 });
@@ -927,11 +926,11 @@ app.post('/api/organizations/:organizationId/agent-rules', async (context) => {
     const input = await context.req.json<{ name?: string; promptId?: string; state?: string; executionMode?: string; selectionPolicy?: Record<string, unknown>; permittedRecipientListIds?: unknown; permittedLineListIds?: unknown; priority?: number }>();
     const name = input.name?.trim() ?? '';
     const promptId = input.promptId?.trim() ?? '';
-    const state = input.state ?? 'active';
+    const state = input.state ?? 'draft';
     if (!name || name.length > 100) return failure(context, 'An Agent Rule name of at most 100 characters is required.');
     if (!promptId) return failure(context, 'An Agent Rule Prompt is required.');
-    if (!['active', 'suspended', 'archived'].includes(state)) return failure(context, 'Unsupported Agent Rule State.');
-    const executionMode = input.executionMode ?? 'approval';
+    if (!['draft', 'active', 'suspended', 'archived'].includes(state)) return failure(context, 'Unsupported Agent Rule State.');
+    const executionMode = input.executionMode ?? 'unattended';
     if (!['read_only', 'approval', 'unattended'].includes(executionMode)) return failure(context, 'Unsupported Agent Rule Execution Mode.');
     if (input.permittedRecipientListIds !== undefined && (!Array.isArray(input.permittedRecipientListIds) || input.permittedRecipientListIds.some((id) => typeof id !== 'string' || !id.trim()))) return failure(context, 'Permitted Calendar Recipient List IDs must be an array of stable identifiers.');
     if (input.permittedLineListIds !== undefined && (!Array.isArray(input.permittedLineListIds) || input.permittedLineListIds.some((id) => typeof id !== 'string' || !id.trim()))) return failure(context, 'Permitted LINE Destination List IDs must be an array of stable identifiers.');
@@ -955,12 +954,12 @@ app.post('/api/organizations/:organizationId/agent-rules', async (context) => {
       if (permittedLineListIds.some((listId) => listKinds.get(listId) !== 'line')) return failure(context, 'Every permitted LINE Destination List must belong to the Organization and have line kind.', 409);
     }
     await database.batch([
-      database.insert(agentRules).values({ id, organizationId: access.organization.id, name, status: state as 'active' | 'suspended' | 'archived', executionMode: executionMode as 'read_only' | 'approval' | 'unattended', promptId, selectionPolicy, priority, currentRevision: 1, createdAt: timestamp, updatedAt: timestamp }),
+      database.insert(agentRules).values({ id, organizationId: access.organization.id, name, status: state as 'draft' | 'active' | 'suspended' | 'archived', executionMode: executionMode as 'read_only' | 'approval' | 'unattended', promptId, selectionPolicy, priority, currentRevision: 1, createdAt: timestamp, updatedAt: timestamp }),
       database.insert(agentRuleRevisions).values({ id: crypto.randomUUID(), agentRuleId: id, revision: 1, promptId, selectionPolicy, executionMode: executionMode as 'read_only' | 'approval' | 'unattended', permittedRecipientListIds: JSON.stringify(permittedRecipientListIds), permittedLineListIds: JSON.stringify(permittedLineListIds), createdAt: timestamp }),
       ...permittedRecipientListIds.map((listId) => database.insert(agentRulePermittedRecipientLists).values({ agentRuleId: id, listId })),
       ...permittedLineListIds.map((listId) => database.insert(agentRulePermittedLineLists).values({ agentRuleId: id, listId })),
     ]);
-    return json(context, agentRuleView({ id, organizationId: access.organization.id, name, status: state as 'active' | 'suspended' | 'archived', executionMode: executionMode as 'read_only' | 'approval' | 'unattended', promptId, selectionPolicy, priority, currentRevision: 1, createdAt: timestamp, updatedAt: timestamp }, permittedRecipientListIds, permittedLineListIds), 201);
+    return json(context, agentRuleView({ id, organizationId: access.organization.id, name, status: state as 'draft' | 'active' | 'suspended' | 'archived', executionMode: executionMode as 'read_only' | 'approval' | 'unattended', promptId, selectionPolicy, priority, currentRevision: 1, createdAt: timestamp, updatedAt: timestamp }, permittedRecipientListIds, permittedLineListIds), 201);
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Agent Rule could not be created.', 409);
   }
@@ -971,7 +970,7 @@ app.patch('/api/organizations/:organizationId/agent-rules/:agentRuleId', async (
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
     if (!access.database) throw new Error('Organization database is not available.');
     const input = await context.req.json<{ name?: string; promptId?: string; state?: string; executionMode?: string; selectionPolicy?: Record<string, unknown>; permittedRecipientListIds?: unknown; permittedLineListIds?: unknown; priority?: number }>();
-    if (input.state !== undefined && !['active', 'suspended', 'archived'].includes(input.state)) return failure(context, 'Unsupported Agent Rule State.');
+    if (input.state !== undefined && !['draft', 'active', 'suspended', 'archived'].includes(input.state)) return failure(context, 'Unsupported Agent Rule State.');
     if (input.executionMode !== undefined && !['read_only', 'approval', 'unattended'].includes(input.executionMode)) return failure(context, 'Unsupported Agent Rule Execution Mode.');
     if (input.permittedRecipientListIds !== undefined && (!Array.isArray(input.permittedRecipientListIds) || input.permittedRecipientListIds.some((listId) => typeof listId !== 'string' || !listId.trim()))) return failure(context, 'Permitted Calendar Recipient List IDs must be an array of stable identifiers.');
     if (input.permittedLineListIds !== undefined && (!Array.isArray(input.permittedLineListIds) || input.permittedLineListIds.some((listId) => typeof listId !== 'string' || !listId.trim()))) return failure(context, 'Permitted LINE Destination List IDs must be an array of stable identifiers.');
@@ -1086,61 +1085,93 @@ app.get('/api/organizations/:organizationId/agent-runs/:runId/transcript', async
   }
 });
 
-app.get('/api/organizations/:organizationId/agent-runs/:runId/proposed-actions', async (context) => {
+const ruleExecutionForRequest = (input: {
+  env: Bindings;
+  database: D1Database;
+  organizationId: string;
+}) => createRuleExecution({
+  database: input.database,
+  planner: { plan: async () => [] },
+  effects: {
+    apply: async ({ run, effect }) => {
+      if (run.rule.type === 'schema') {
+        return (await schemaRuleEffectPortForApproval({
+          env: input.env,
+          database: input.database,
+          organizationId: input.organizationId,
+        })).apply({ run, effect });
+      }
+      const writes = await agentWritePortForApproval({
+        env: input.env,
+        database: input.database,
+        organizationId: input.organizationId,
+        sourceMessageId: run.sourceMessageId,
+        agentRuleId: run.rule.id,
+      });
+      if (effect.kind === 'agent.send_line_message') {
+        return writes.sendLine(effect.arguments as { destination: string; message: string });
+      }
+      if (effect.kind === 'agent.create_scheduled_event') {
+        return writes.createScheduledEvent(effect.arguments as {
+          destination: string;
+          title: string;
+          startsAt: string;
+          endsAt: string;
+          location?: string;
+          description?: string;
+        });
+      }
+      throw new Error(`Unsupported Rule Effect: ${effect.kind}`);
+    },
+  },
+});
+
+app.get('/api/organizations/:organizationId/rule-runs', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
     if (!access.database) throw new Error('Organization database is not available.');
-    const runId = context.req.param('runId');
-    const run = await drizzleOrganizationDatabase(access.database).select({ id: agentRuns.id }).from(agentRuns).where(eq(agentRuns.id, runId)).get();
-    if (!run) return failure(context, 'Agent Rule run was not found.', 404);
-    await expireProposedActions(access.database);
-    return json(context, await proposedActionsForRun(access.database, runId));
+    return json(context, await ruleExecutionForRequest({
+      env: context.env,
+      database: access.database,
+      organizationId: access.organization.id,
+    }).list());
   } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Proposed Actions could not be loaded.', 403);
+    return failure(context, error instanceof Error ? error.message : 'Rule Runs could not be loaded.', 403);
   }
 });
 
-const proposedActionDecision = async (context: Context<{ Bindings: Bindings }>, decision: 'approve' | 'reject') => {
+app.get('/api/organizations/:organizationId/rule-runs/:runId', async (context) => {
   try {
-    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId') ?? '');
-    if (!access.database) throw new Error('Organization database is not available.');
-    const actionId = context.req.param('actionId') ?? '';
-    const action = await drizzleOrganizationDatabase(access.database).select().from(proposedActions).where(eq(proposedActions.id, actionId)).get();
-    if (!action) return failure(context, 'Proposed Action was not found.', 404);
-    if (decision === 'reject') return json(context, await rejectProposedAction(access.database, actionId, access.session.identity_id));
-    const run = await drizzleOrganizationDatabase(access.database).select({ sourceMessageId: agentRuns.sourceMessageId }).from(agentRuns).where(eq(agentRuns.id, action.agentRunId)).get();
-    if (!run) return failure(context, 'Agent Rule run was not found.', 404);
-    const writes = await agentWritePortForApproval({ env: context.env, database: access.database, organizationId: access.organization.id, sourceMessageId: run.sourceMessageId, agentRuleId: action.agentRuleId });
-    return json(context, await approveProposedAction({ database: access.database, actionId, actorIdentityId: access.session.identity_id, writes }));
-  } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Proposed Action could not be decided.', 409);
-  }
-};
-
-app.post('/api/organizations/:organizationId/proposed-actions/:actionId/approve', (context) => proposedActionDecision(context, 'approve'));
-app.post('/api/organizations/:organizationId/proposed-actions/:actionId/reject', (context) => proposedActionDecision(context, 'reject'));
-
-app.post('/api/organizations/:organizationId/agent-runs/:runId/proposed-actions/:decision', async (context) => {
-  try {
-    const decision = context.req.param('decision');
-    if (decision !== 'approve' && decision !== 'reject') return failure(context, 'Unsupported Proposed Action decision.');
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
     if (!access.database) throw new Error('Organization database is not available.');
-    const runId = context.req.param('runId');
-    const run = await drizzleOrganizationDatabase(access.database).select({ sourceMessageId: agentRuns.sourceMessageId, agentRuleId: agentRuns.agentRuleId }).from(agentRuns).where(eq(agentRuns.id, runId)).get();
-    if (!run) return failure(context, 'Agent Rule run was not found.', 404);
-    await expireProposedActions(access.database);
-    const pending = (await proposedActionsForRun(access.database, runId)).filter((action) => action.status === 'pending');
-    const writes = decision === 'approve' ? await agentWritePortForApproval({ env: context.env, database: access.database, organizationId: access.organization.id, sourceMessageId: run.sourceMessageId, agentRuleId: run.agentRuleId }) : null;
-    const decided = [];
-    for (const action of pending) {
-      decided.push(decision === 'approve'
-        ? await approveProposedAction({ database: access.database, actionId: action.id, actorIdentityId: access.session.identity_id, writes: writes! })
-        : await rejectProposedAction(access.database, action.id, access.session.identity_id));
-    }
-    return json(context, decided);
+    return json(context, await ruleExecutionForRequest({
+      env: context.env,
+      database: access.database,
+      organizationId: access.organization.id,
+    }).read(context.req.param('runId')));
   } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Proposed Action batch could not be decided.', 409);
+    const message = error instanceof Error ? error.message : 'Rule Run could not be loaded.';
+    return failure(context, message, message === 'Rule Run was not found.' ? 404 : 403);
+  }
+});
+
+app.post('/api/organizations/:organizationId/rule-runs/:runId/decision', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const body = await context.req.json<{ decision?: string }>();
+    if (body.decision !== 'approve' && body.decision !== 'reject') return failure(context, 'Decision must be approve or reject.');
+    return json(context, await ruleExecutionForRequest({
+      env: context.env,
+      database: access.database,
+      organizationId: access.organization.id,
+    }).decide({
+      ruleRunId: context.req.param('runId'),
+      decision: body.decision,
+      actorIdentityId: access.session.identity_id,
+    }));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Rule Run could not be decided.', 409);
   }
 });
 
@@ -1163,6 +1194,8 @@ app.get('/api/organizations/:organizationId/rules', async (context) => {
       organizationId: access.organization.id,
       name: row.name,
       state: row.status,
+      executionMode: row.executionMode,
+      revision: row.currentRevision,
       selectionPolicy: JSON.parse(row.selectionPolicy) as Record<string, unknown>,
       routingPolicy: JSON.parse(row.routingPolicy) as Record<string, unknown>,
       taskRoleIds: JSON.parse(row.taskRoleIds) as string[],
@@ -1181,11 +1214,13 @@ app.post('/api/organizations/:organizationId/rules', async (context) => {
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
     if (!access.database) throw new Error('Organization database is not available.');
-    const input = await context.req.json<{ name?: string; state?: string; selectionPolicy?: Record<string, unknown>; routingPolicy?: Record<string, unknown>; taskRoleIds?: unknown; permittedRecipientListIds?: unknown; permittedLineListIds?: unknown; priority?: number }>();
+    const input = await context.req.json<{ name?: string; state?: string; executionMode?: string; selectionPolicy?: Record<string, unknown>; routingPolicy?: Record<string, unknown>; taskRoleIds?: unknown; permittedRecipientListIds?: unknown; permittedLineListIds?: unknown; priority?: number }>();
     const name = input.name?.trim();
     const state = (input.state ?? 'draft') as 'draft' | 'active' | 'suspended' | 'archived';
     if (!name) return failure(context, 'Rule name is required.');
     if (!['draft', 'active', 'suspended', 'archived'].includes(state)) return failure(context, 'Unsupported Rule State.');
+    const executionMode = input.executionMode ?? 'unattended';
+    if (!['read_only', 'approval', 'unattended'].includes(executionMode)) return failure(context, 'Unsupported Rule Execution Mode.');
     if (input.taskRoleIds !== undefined && (!Array.isArray(input.taskRoleIds) || input.taskRoleIds.some((id) => typeof id !== 'string' || !id.trim()))) return failure(context, 'Task role IDs must be an array of stable identifiers.');
     if (input.permittedRecipientListIds !== undefined && (!Array.isArray(input.permittedRecipientListIds) || input.permittedRecipientListIds.some((id) => typeof id !== 'string' || !id.trim()))) return failure(context, 'Permitted Calendar Recipient List IDs must be an array of stable identifiers.');
     if (input.permittedLineListIds !== undefined && (!Array.isArray(input.permittedLineListIds) || input.permittedLineListIds.some((id) => typeof id !== 'string' || !id.trim()))) return failure(context, 'Permitted LINE Destination List IDs must be an array of stable identifiers.');
@@ -1217,10 +1252,12 @@ app.post('/api/organizations/:organizationId/rules', async (context) => {
         organizationId: access.organization.id,
         name,
         status: state,
+        executionMode: executionMode as 'read_only' | 'approval' | 'unattended',
         selectionPolicy,
         routingPolicy,
         taskRoleIds: JSON.stringify(taskRoleIds),
         priority,
+        currentRevision: 1,
         createdAt: timestamp,
         updatedAt: timestamp,
       }),
@@ -1228,6 +1265,7 @@ app.post('/api/organizations/:organizationId/rules', async (context) => {
         id: crypto.randomUUID(),
         ruleId: id,
         revision: 1,
+        executionMode: executionMode as 'read_only' | 'approval' | 'unattended',
         selectionPolicy,
         routingPolicy,
         taskRoleIds: JSON.stringify(taskRoleIds),
@@ -1236,7 +1274,7 @@ app.post('/api/organizations/:organizationId/rules', async (context) => {
       ...permittedRecipientListIds.map((listId) => database.insert(rulePermittedRecipientLists).values({ ruleId: id, listId })),
       ...permittedLineListIds.map((listId) => database.insert(rulePermittedLineLists).values({ ruleId: id, listId })),
     ]);
-    return json(context, { id, organizationId: access.organization.id, name, state, selectionPolicy: input.selectionPolicy ?? {}, routingPolicy: input.routingPolicy ?? {}, taskRoleIds, permittedRecipientListIds, permittedLineListIds, priority, createdAt: timestamp, updatedAt: timestamp }, 201);
+    return json(context, { id, organizationId: access.organization.id, name, state, executionMode, revision: 1, selectionPolicy: input.selectionPolicy ?? {}, routingPolicy: input.routingPolicy ?? {}, taskRoleIds, permittedRecipientListIds, permittedLineListIds, priority, createdAt: timestamp, updatedAt: timestamp }, 201);
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Rule could not be created.', 409);
   }
@@ -1246,14 +1284,15 @@ app.patch('/api/organizations/:organizationId/rules/:ruleId', async (context) =>
   try {
     const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
     if (!access.database) throw new Error('Organization database is not available.');
-    const input = await context.req.json<{ state?: string; permittedRecipientListIds?: unknown; permittedLineListIds?: unknown }>();
+    const input = await context.req.json<{ state?: string; executionMode?: string; permittedRecipientListIds?: unknown; permittedLineListIds?: unknown }>();
     if (input.state !== undefined && !['draft', 'active', 'suspended', 'archived'].includes(input.state)) return failure(context, 'Unsupported Rule State.');
+    if (input.executionMode !== undefined && !['read_only', 'approval', 'unattended'].includes(input.executionMode)) return failure(context, 'Unsupported Rule Execution Mode.');
     if (input.permittedRecipientListIds !== undefined && (!Array.isArray(input.permittedRecipientListIds) || input.permittedRecipientListIds.some((id) => typeof id !== 'string' || !id.trim()))) return failure(context, 'Permitted Calendar Recipient List IDs must be an array of stable identifiers.');
     if (input.permittedLineListIds !== undefined && (!Array.isArray(input.permittedLineListIds) || input.permittedLineListIds.some((id) => typeof id !== 'string' || !id.trim()))) return failure(context, 'Permitted LINE Destination List IDs must be an array of stable identifiers.');
-    if (input.state === undefined && input.permittedRecipientListIds === undefined && input.permittedLineListIds === undefined) return failure(context, 'No supported Rule changes were provided.');
+    if (input.state === undefined && input.executionMode === undefined && input.permittedRecipientListIds === undefined && input.permittedLineListIds === undefined) return failure(context, 'No supported Rule changes were provided.');
     const database = drizzleOrganizationDatabase(access.database);
     const ruleId = context.req.param('ruleId');
-    const existing = await database.select({ id: organizationRules.id }).from(organizationRules)
+    const existing = await database.select().from(organizationRules)
       .where(eq(organizationRules.id, ruleId)).get();
     if (!existing) return failure(context, 'Rule was not found.', 404);
     const permittedRecipientListIds = input.permittedRecipientListIds === undefined
@@ -1270,10 +1309,28 @@ app.patch('/api/organizations/:organizationId/rules/:ruleId', async (context) =>
       if (permittedRecipientListIds?.some((listId) => listKinds.get(listId) !== 'recipient')) return failure(context, 'Every permitted Calendar Recipient List must belong to the Organization and have recipient kind.', 409);
       if (permittedLineListIds?.some((listId) => listKinds.get(listId) !== 'line')) return failure(context, 'Every permitted LINE Destination List must belong to the Organization and have line kind.', 409);
     }
-    if (input.state !== undefined) {
-      await database.update(organizationRules)
-        .set({ status: input.state as 'draft' | 'active' | 'suspended' | 'archived', updatedAt: now() })
-        .where(eq(organizationRules.id, ruleId)).run();
+    const revision = input.executionMode === undefined ? existing.currentRevision : existing.currentRevision + 1;
+    if (input.state !== undefined || input.executionMode !== undefined) {
+      const timestamp = now();
+      await database.batch([
+        database.update(organizationRules)
+          .set({
+            ...(input.state === undefined ? {} : { status: input.state as 'draft' | 'active' | 'suspended' | 'archived' }),
+            ...(input.executionMode === undefined ? {} : { executionMode: input.executionMode as 'read_only' | 'approval' | 'unattended', currentRevision: revision }),
+            updatedAt: timestamp,
+          })
+          .where(eq(organizationRules.id, ruleId)),
+        ...(input.executionMode === undefined ? [] : [database.insert(ruleRevisions).values({
+          id: crypto.randomUUID(),
+          ruleId,
+          revision,
+          executionMode: input.executionMode as 'read_only' | 'approval' | 'unattended',
+          selectionPolicy: existing.selectionPolicy,
+          routingPolicy: existing.routingPolicy,
+          taskRoleIds: existing.taskRoleIds,
+          createdAt: timestamp,
+        })]),
+      ]);
     }
     if (permittedRecipientListIds !== undefined) {
       await database.batch([
@@ -1290,6 +1347,7 @@ app.patch('/api/organizations/:organizationId/rules/:ruleId', async (context) =>
     return json(context, {
       id: ruleId,
       ...(input.state === undefined ? {} : { state: input.state }),
+      ...(input.executionMode === undefined ? {} : { executionMode: input.executionMode, revision }),
       ...(permittedRecipientListIds === undefined ? {} : { permittedRecipientListIds }),
       ...(permittedLineListIds === undefined ? {} : { permittedLineListIds }),
     });

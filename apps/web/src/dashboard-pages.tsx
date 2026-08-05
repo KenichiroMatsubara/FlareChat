@@ -579,13 +579,15 @@ export const MailboxTestPage = (props: DashboardProps) => {
   const settingsReady = Boolean(props.organization);
   const searching = props.isPending(pendingKey.mailSearch);
   const extracting = props.isPending(pendingKey.mailPreview);
-  const creatingEvents = props.isPending(pendingKey.mailCreateEvents);
+  const startingRuleRun = props.isPending(pendingKey.mailStartRuleRun);
+  const draftRules = props.organizationRules.filter((rule) => rule.state === 'draft');
+  const [selectedRuleId, setSelectedRuleId] = useState(draftRules[0]?.id ?? '');
   const hasConfiguredAiApi = Boolean(props.connections?.ai.apiKeyConfigured);
   const [aiRequestCopied, setAiRequestCopied] = useState(false);
   const [copyFeedbackId, setCopyFeedbackId] = useState(0);
   const copyFeedbackTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const sendPreparedAiRequest = (): void => {
-    if (props.mailTestAiRequest) props.onPreviewMailbox(props.mailTestAiRequest.id);
+    if (props.mailTestAiRequest && selectedRuleId) props.onPreviewMailbox(props.mailTestAiRequest.id, selectedRuleId);
   };
   const copyPreparedAiRequest = (): void => {
     if (!props.mailTestAiRequest) return;
@@ -597,16 +599,36 @@ export const MailboxTestPage = (props: DashboardProps) => {
     });
   };
   return <section className="page-layout mail-test-page">
-    <div className="page-title"><p>SAFE MANUAL TEST</p><h1>メールテスト</h1><span>{props.automation ? `${props.automation.email} の Gmail と Calendar だけを使用します。` : 'Googleでログインしてください。'}</span></div>
+    <div className="page-title"><p>RULE EXECUTION</p><h1>Rule Runs</h1><span>全モードの計画・適用結果を同じ記録で確認します。Mailbox Test は Draft Rule Run を開始します。</span></div>
+    <section className="rules-list">
+      <div className="rules-list-title"><h2>実行履歴</h2><span>{props.ruleRuns.length}件</span></div>
+      {props.ruleRuns.map((run) => {
+        const ruleName = run.rule.type === 'schema'
+          ? props.organizationRules.find((rule) => rule.id === run.rule.id)?.name
+          : props.agentRules.find((rule) => rule.id === run.rule.id)?.name;
+        const deciding = props.isPending(pendingKey.ruleRunDecision(run.id, 'approve')) || props.isPending(pendingKey.ruleRunDecision(run.id, 'reject'));
+        return <article className="rule-row" key={run.id} aria-busy={deciding}>
+          <div><strong>{ruleName ?? run.rule.id}</strong><small>{run.rule.type} r{run.rule.revision} ・ {run.intent} ・ {run.executionMode} ・ {run.status}</small><p>{run.effects.map((effect) => `${effect.kind}: ${effect.status}`).join(' / ') || '副作用なし'}</p></div>
+          {run.status === 'pending_approval' && <div><button className="primary" disabled={deciding} onClick={() => props.onDecideRuleRun(run.id, 'approve')}>一括承認</button><button className="secondary" disabled={deciding} onClick={() => props.onDecideRuleRun(run.id, 'reject')}>一括却下</button></div>}
+        </article>;
+      })}
+    </section>
     {!settingsReady || !props.automation ? <section className="empty-page"><SlidersHorizontal size={30} /><h2>メールテストを開始できません</h2><p>Automation Inbox の Google 接続を完了してください。</p></section> : <>
+      <section className="test-card"><div><p>DRAFT RULE REVISION</p><h2>テストする Schema Rule を選択</h2><span>Selection Policy は AI 抽出より前に評価されます。</span></div><label>Draft Schema Rule<select value={selectedRuleId} disabled={Boolean(props.mailTestPreview)} onChange={(event) => setSelectedRuleId(event.target.value)}><option value="">選択してください</option>{draftRules.map((rule) => <option key={rule.id} value={rule.id}>{rule.name} (r{rule.revision})</option>)}</select></label></section>
       <section className="test-card"><div><p>1. FIND MAIL</p><h2>件名からメールを探す</h2><span>件名を入力してください。前後の空白や全角・半角の違いは無視されます。AI の API キーは不要です。</span></div><label>メール件名<input value={props.mailTestSubject} onChange={(event) => props.onMailTestSubjectChange(event.target.value)} maxLength={300} /></label><button className="primary" onClick={props.onSearchMailbox} disabled={searching}>{searching ? <><RefreshCw className="spin" size={14} />検索中…</> : 'Gmailを検索'}</button></section>
       {props.mailTestMatches.length > 0 && <section className="test-card"><div><p>2. PREPARE AI REQUEST</p><h2>AI への送信内容を確認</h2><span>対象メールを選ぶと、OpenAI 互換形式のリクエスト本文を生成します。この時点では AI に送信しません。</span></div><div className="mail-matches">{props.mailTestMatches.map((message) => <button key={message.id} className="mail-match" onClick={() => props.onPrepareMailbox(message.id)} disabled={props.isPending(pendingKey.mailPrepare(message.id))}><strong>{message.subject}</strong><small>{message.sender || '差出人なし'}</small>{props.isPending(pendingKey.mailPrepare(message.id)) && <small className="field-state saving"><RefreshCw className="spin" size={12} />本文と添付を読み込み中…</small>}</button>)}</div></section>}
-      {props.mailTestAiRequest && <section className="test-card event-preview"><div className="ai-request-heading"><div><p>3. REVIEW OPENAI-COMPATIBLE REQUEST</p><h2>OpenAI 互換リクエスト本文</h2><span>API キーは含まれません。送信先の model を指定すれば、任意の OpenAI 互換 API で利用できます。</span></div><button className={`secondary copy-request-button${aiRequestCopied ? ' copied' : ''}`} onClick={copyPreparedAiRequest} aria-live="polite">{aiRequestCopied ? <CheckCircle2 size={16} /> : <Copy size={16} />}{aiRequestCopied ? <span key={copyFeedbackId} className="copy-feedback">コピーしました</span> : 'リクエスト全文をコピー'}</button></div><pre className="ai-request">{JSON.stringify(props.mailTestAiRequest.request, null, 2)}</pre><div className="mail-test-actions">{hasConfiguredAiApi ? <button className="primary" onClick={sendPreparedAiRequest} disabled={extracting}>{extracting ? <><RefreshCw className="spin" size={14} />API に送信中…</> : '設定済みの API で予定を抽出'}</button> : <p className="dashboard-warning api-configuration-prompt"><span>OpenAI 互換 API が設定されていません</span><Link to={props.organizationId ? `/organizations/${encodeURIComponent(props.organizationId)}/connections` : '../connections'}>APIを設定する</Link></p>}</div></section>}
-      {props.mailTestPreview && <section className="test-card event-preview"><div><p>4. REVIEW AND CREATE</p><h2>要約・予定・タスク候補を確認</h2><span>予定は確認後にだけ Google Calendar へ作成します。要約とタスク候補はメール全体に対して一度だけ抽出されます。</span></div><h3>メールの要約</h3><p className="mail-summary">{props.mailTestPreview.summary}</p><h3>予定（{props.mailTestPreview.events.length}件）</h3>{props.mailTestPreview.events.map((event, index) => <dl key={`${event.title}-${event.startsAt}`}><dt>予定 {index + 1}</dt><dd>{event.title}</dd><dt>日時</dt><dd>{formatted(event.startsAt)} 〜 {formatted(event.endsAt)}</dd><dt>場所</dt><dd>{event.location || '指定なし'}</dd><dt>説明</dt><dd>{event.description || '指定なし'}</dd><dt>要約</dt><dd>{event.summary || '指定なし'}</dd></dl>)}<h3>期限タスク候補（{props.mailTestPreview.tasks.length}件）</h3>{props.mailTestPreview.tasks.length ? props.mailTestPreview.tasks.map((task) => <dl key={`${task.assigneeRoleId}-${task.deadline}-${task.title}`}><dt>{props.taskRoles.find((role) => role.id === task.assigneeRoleId)?.displayName ?? '未割り当て'}</dt><dd>{task.title}</dd><dt>期限</dt><dd>{task.deadline}</dd><dt>内容</dt><dd>{task.description}</dd></dl>) : <p>明示された登録・振込期限はありません。</p>}<button className="primary" onClick={props.onCreateCalendarEvent} disabled={creatingEvents || Boolean(props.mailTestCreatedEventIds.length)}>{creatingEvents ? <RefreshCw className="spin" size={14} /> : null}{props.mailTestCreatedEventIds.length ? 'Calendarに作成済み' : creatingEvents ? 'Calendar に作成中…' : `${props.mailTestPreview.events.length}件を Calendar に追加`}</button>{props.mailTestCreatedEventIds.length > 0 && <p className="dashboard-success"><CheckCircle2 size={17} />テスト予定 {props.mailTestCreatedEventIds.length}件を作成しました。</p>}</section>}
-      {props.mailTestPreview && <MailboxRefreshSections {...props} />}
+      {props.mailTestAiRequest && <section className="test-card event-preview"><div className="ai-request-heading"><div><p>3. REVIEW OPENAI-COMPATIBLE REQUEST</p><h2>OpenAI 互換リクエスト本文</h2><span>API キーは含まれません。送信先の model を指定すれば、任意の OpenAI 互換 API で利用できます。</span></div><button className={`secondary copy-request-button${aiRequestCopied ? ' copied' : ''}`} onClick={copyPreparedAiRequest} aria-live="polite">{aiRequestCopied ? <CheckCircle2 size={16} /> : <Copy size={16} />}{aiRequestCopied ? <span key={copyFeedbackId} className="copy-feedback">コピーしました</span> : 'リクエスト全文をコピー'}</button></div><pre className="ai-request">{JSON.stringify(props.mailTestAiRequest.request, null, 2)}</pre><div className="mail-test-actions">{hasConfiguredAiApi ? <button className="primary" onClick={sendPreparedAiRequest} disabled={extracting || !selectedRuleId}>{extracting ? <><RefreshCw className="spin" size={14} />API に送信中…</> : '設定済みの API で予定を抽出'}</button> : <p className="dashboard-warning api-configuration-prompt"><span>OpenAI 互換 API が設定されていません</span><Link to={props.organizationId ? `/organizations/${encodeURIComponent(props.organizationId)}/connections` : '../connections'}>APIを設定する</Link></p>}</div></section>}
+      {props.mailTestPreview && <section className="test-card event-preview"><div><p>4. START DRAFT RULE RUN</p><h2>要約・予定・タスク候補を確認</h2><span>Draft Rule の Selection Policy を検証し、副作用なしの read-only Rule Run として保存します。</span></div><h3>メールの要約</h3><p className="mail-summary">{props.mailTestPreview.summary}</p><h3>予定（{props.mailTestPreview.events.length}件）</h3>{props.mailTestPreview.events.map((event, index) => <dl key={`${event.title}-${event.startsAt}`}><dt>予定 {index + 1}</dt><dd>{event.title}</dd><dt>日時</dt><dd>{formatted(event.startsAt)} 〜 {formatted(event.endsAt)}</dd><dt>場所</dt><dd>{event.location || '指定なし'}</dd><dt>説明</dt><dd>{event.description || '指定なし'}</dd><dt>要約</dt><dd>{event.summary || '指定なし'}</dd></dl>)}<h3>期限タスク候補（{props.mailTestPreview.tasks.length}件）</h3>{props.mailTestPreview.tasks.length ? props.mailTestPreview.tasks.map((task) => <dl key={`${task.assigneeRoleId}-${task.deadline}-${task.title}`}><dt>{props.taskRoles.find((role) => role.id === task.assigneeRoleId)?.displayName ?? '未割り当て'}</dt><dd>{task.title}</dd><dt>期限</dt><dd>{task.deadline}</dd><dt>内容</dt><dd>{task.description}</dd></dl>) : <p>明示された登録・振込期限はありません。</p>}<button className="primary" onClick={() => props.onStartDraftRuleRun(selectedRuleId)} disabled={startingRuleRun || !selectedRuleId || Boolean(props.mailTestRuleRunIds.length)}>{startingRuleRun ? <RefreshCw className="spin" size={14} /> : null}{props.mailTestRuleRunIds.length ? 'Draft Rule Run 作成済み' : startingRuleRun ? 'Rule Run を作成中…' : 'Draft Rule Run を開始'}</button>{props.mailTestRuleRunIds.length > 0 && <p className="dashboard-success"><CheckCircle2 size={17} />副作用なしの Rule Run を保存しました。</p>}</section>}
     </>}
   </section>;
 };
+
+export const EventRefreshPage = (props: DashboardProps) => <section className="page-layout mail-test-page">
+  <div className="page-title"><p>MANUAL OVERRIDE</p><h1>予定の再同期</h1><span>Calendar の手動変更を上書きし得るため、通常の Rule Run と分離した管理操作です。</span></div>
+  {props.mailTestPreview
+    ? <MailboxRefreshSections {...props} />
+    : <section className="empty-page"><SlidersHorizontal size={30} /><h2>抽出結果がありません</h2><p>Rule Runs で Mailbox Test の抽出を行ってから、この画面で既存予定との差分を確認してください。</p><Link className="secondary" to="../rule-runs">Rule Runsへ</Link></section>}
+</section>;
 
 const toggledIds = (current: string[], id: string, checked: boolean): string[] =>
   checked ? [...new Set([...current, id])] : current.filter((value) => value !== id);
@@ -643,7 +665,9 @@ const RuleDestinationEditor = ({ rule, props }: {
     <small>選択中: {recipientNames.join('、') || 'Calendar Recipient Listなし'}</small>
     <small>選択中: {lineNames.join('、') || 'LINE Destination Listなし'}</small>
     <details className="rule-destination-editor">
-      <summary>許可リストを編集</summary>
+      <summary>Execution Mode・許可リストを編集</summary>
+      <label>Rule State<select value={rule.state} disabled={saving} onChange={(event) => void props.onUpdateRule(rule.id, { state: event.target.value as 'draft' | 'active' | 'suspended' | 'archived' })}><option value="draft">Draft</option><option value="active">Active</option><option value="suspended">Suspended</option><option value="archived">Archived</option></select></label>
+      <label>Execution Mode<select value={rule.executionMode} disabled={saving} onChange={(event) => void props.onUpdateRule(rule.id, { executionMode: event.target.value as 'read_only' | 'approval' | 'unattended' })}><option value="read_only">Read only</option><option value="approval">Approval</option><option value="unattended">Unattended</option></select></label>
       <DestinationListChoices legend="許可されたCalendar Recipient Lists" lists={recipientLists} selectedIds={permittedRecipientListIds} onChange={setPermittedRecipientListIds} />
       <DestinationListChoices legend="許可されたLINE Destination Lists" lists={lineLists} selectedIds={permittedLineListIds} onChange={setPermittedLineListIds} />
       <button type="button" className="secondary" disabled={saving} onClick={() => void props.onUpdateRule(rule.id, { permittedRecipientListIds, permittedLineListIds })}>{saving ? <><RefreshCw className="spin" size={13} />保存中…</> : '許可リストを保存'}</button>
@@ -688,42 +712,19 @@ const AgentRuleEditor = ({ rule, props }: { rule: DashboardProps['agentRules'][n
   </details>;
 };
 
-const AgentRunHistory = (props: DashboardProps) => {
-  const runId = props.agentTranscript?.runId;
-  const pending = props.proposedActions.filter((action) => action.status === 'pending');
-  const deciding = (actionId: string, decision: 'approve' | 'reject'): boolean => props.isPending(pendingKey.actionDecision(actionId, decision));
-  const decidingAction = (actionId: string): boolean => deciding(actionId, 'approve') || deciding(actionId, 'reject');
-  const decidingBatch = (decision: 'approve' | 'reject'): boolean => Boolean(runId) && props.isPending(pendingKey.actionBatch(runId ?? '', decision));
-  const decidingEitherBatch = decidingBatch('approve') || decidingBatch('reject');
-  return <section className="rules-list">
-    <div className="rules-list-title"><h2>Run Transcripts</h2><span>{props.agentRuns.length}件</span></div>
-    {props.agentRuns.map((run) => <article className="rule-row" key={run.id}>
-      <div><strong>{props.agentRules.find((rule) => rule.id === run.agentRuleId)?.name ?? run.agentRuleId}</strong><small>{run.outcome} ・ {run.model} ・ tools {run.toolCallCount} ・ tokens {run.tokens}</small></div>
-      <button type="button" className="secondary" disabled={props.isPending(pendingKey.agentRunTranscript(run.id))} onClick={() => props.onLoadAgentTranscript(run.id)}>{props.isPending(pendingKey.agentRunTranscript(run.id)) ? <><RefreshCw className="spin" size={13} />読込中…</> : 'Run Transcriptを読む'}</button>
-    </article>)}
-    {props.agentTranscript && <article className="test-card">
-      <div><p>RUN TRANSCRIPT</p><h2>{props.agentTranscript.source.subject}</h2></div>
-      <pre>{props.agentTranscript.source.body}</pre>
-      {props.agentTranscript.source.attachments.map((attachment) => <pre key={attachment.filename}>{attachment.filename}{'\n'}{attachment.text}</pre>)}
-      <pre>{props.agentTranscript.finalOutput || props.agentTranscript.error}</pre>
-      {props.proposedActions.length > 0 && <section aria-busy={decidingEitherBatch}>
-        <h3>Proposed Actions</h3>
-        {pending.length > 1 && runId && <div>
-          <button type="button" className="primary" disabled={decidingEitherBatch} onClick={() => props.onDecideProposedActionBatch(runId, 'approve')}>{decidingBatch('approve') ? <><RefreshCw className="spin" size={14} />すべて承認中…</> : 'すべて承認'}</button>
-          <button type="button" className="secondary" disabled={decidingEitherBatch} onClick={() => props.onDecideProposedActionBatch(runId, 'reject')}>{decidingBatch('reject') ? <><RefreshCw className="spin" size={14} />すべて却下中…</> : 'すべて却下'}</button>
-        </div>}
-        {props.proposedActions.map((action) => <article key={action.id} aria-busy={decidingAction(action.id)}>
-          <strong>{action.tool}</strong><small>{action.status} ・ expires {action.expiresAt}</small>
-          <pre>{JSON.stringify(action.arguments, null, 2)}</pre>
-          {action.status === 'pending' && <div>
-            <button type="button" className="primary" disabled={decidingAction(action.id) || decidingEitherBatch} onClick={() => props.onDecideProposedAction(action.id, 'approve')}>{deciding(action.id, 'approve') ? <><RefreshCw className="spin" size={14} />承認中…</> : '承認'}</button>
-            <button type="button" className="secondary" disabled={decidingAction(action.id) || decidingEitherBatch} onClick={() => props.onDecideProposedAction(action.id, 'reject')}>{deciding(action.id, 'reject') ? <><RefreshCw className="spin" size={14} />却下中…</> : '却下'}</button>
-          </div>}
-        </article>)}
-      </section>}
-    </article>}
-  </section>;
-};
+const AgentRunHistory = (props: DashboardProps) => <section className="rules-list">
+  <div className="rules-list-title"><h2>Run Transcripts</h2><span>{props.agentRuns.length}件</span></div>
+  {props.agentRuns.map((run) => <article className="rule-row" key={run.id}>
+    <div><strong>{props.agentRules.find((rule) => rule.id === run.agentRuleId)?.name ?? run.agentRuleId}</strong><small>{run.outcome} ・ {run.model} ・ tools {run.toolCallCount} ・ tokens {run.tokens}</small></div>
+    <button type="button" className="secondary" disabled={props.isPending(pendingKey.agentRunTranscript(run.id))} onClick={() => props.onLoadAgentTranscript(run.id)}>{props.isPending(pendingKey.agentRunTranscript(run.id)) ? <><RefreshCw className="spin" size={13} />読込中…</> : 'Run Transcriptを読む'}</button>
+  </article>)}
+  {props.agentTranscript && <article className="test-card">
+    <div><p>RUN TRANSCRIPT</p><h2>{props.agentTranscript.source.subject}</h2></div>
+    <pre>{props.agentTranscript.source.body}</pre>
+    {props.agentTranscript.source.attachments.map((attachment) => <pre key={attachment.filename}>{attachment.filename}{'\\n'}{attachment.text}</pre>)}
+    <pre>{props.agentTranscript.finalOutput || props.agentTranscript.error}</pre>
+  </article>}
+</section>;
 
 export const RulesPage = (props: DashboardProps) => {
   const settingsReady = Boolean(props.organization);
@@ -737,6 +738,7 @@ export const RulesPage = (props: DashboardProps) => {
   const [ruleLabel, setRuleLabel] = useState('');
   const [rulePriority, setRulePriority] = useState('0');
   const [ruleState, setRuleState] = useState<'draft' | 'active'>('draft');
+  const [ruleExecutionMode, setRuleExecutionMode] = useState<'read_only' | 'approval' | 'unattended'>('unattended');
   const [taskRoleIds, setTaskRoleIds] = useState<string[]>(props.taskRoles.map((role) => role.id));
   const [permittedRecipientListIds, setPermittedRecipientListIds] = useState<string[]>([]);
   const [permittedLineListIds, setPermittedLineListIds] = useState<string[]>([]);
@@ -745,8 +747,8 @@ export const RulesPage = (props: DashboardProps) => {
   const [agentName, setAgentName] = useState('');
   const [agentPromptId, setAgentPromptId] = useState(props.prompts[0]?.id ?? '');
   const [agentDomain, setAgentDomain] = useState('');
-  const [agentState, setAgentState] = useState<'active' | 'suspended'>('active');
-  const [agentExecutionMode, setAgentExecutionMode] = useState<'read_only' | 'approval' | 'unattended'>('approval');
+  const [agentState, setAgentState] = useState<'draft' | 'active'>('draft');
+  const [agentExecutionMode, setAgentExecutionMode] = useState<'read_only' | 'approval' | 'unattended'>('unattended');
   const [agentRecipientListIds, setAgentRecipientListIds] = useState<string[]>([]);
   const [agentLineListIds, setAgentLineListIds] = useState<string[]>([]);
   const recipientLists = props.organizationLists.filter((list) => list.kind === 'recipient');
@@ -754,7 +756,7 @@ export const RulesPage = (props: DashboardProps) => {
   const createRule = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault();
     const selectionPolicy = Object.fromEntries(Object.entries({ sender: ruleSender.trim(), domain: ruleDomain.trim(), keyword: ruleKeyword.trim(), label: ruleLabel.trim() }).filter(([, value]) => value));
-    await props.onCreateRule({ name: ruleName, state: ruleState, selectionPolicy, routingPolicy: {}, taskRoleIds, permittedRecipientListIds, permittedLineListIds, priority: Number.parseInt(rulePriority, 10) || 0 });
+    await props.onCreateRule({ name: ruleName, state: ruleState, executionMode: ruleExecutionMode, selectionPolicy, routingPolicy: {}, taskRoleIds, permittedRecipientListIds, permittedLineListIds, priority: Number.parseInt(rulePriority, 10) || 0 });
     setRuleName(''); setRuleSender(''); setRuleDomain(''); setRuleKeyword(''); setRuleLabel(''); setRulePriority('0'); setRuleState('draft'); setPermittedRecipientListIds([]); setPermittedLineListIds([]);
   };
   const createPrompt = async (event: React.FormEvent): Promise<void> => {
@@ -770,12 +772,12 @@ export const RulesPage = (props: DashboardProps) => {
   return <section className="page-layout rules-page">
     <div className="page-title"><p>AUTOMATION RULES</p><h1>ルールセット</h1><span>どのメールを予定化するかを、送信者・ドメイン・キーワード・Gmailラベルで指定します。</span></div>
     {!settingsReady ? <section className="empty-page"><SlidersHorizontal size={30} /><h2>ルールを読み込めません</h2><p>Googleでログインし直した後、このページを再読み込みしてください。</p></section> : <>
-      <form className="rule-builder" onSubmit={(event) => void createRule(event)}><div><p>NEW RULE</p><h2>ルールを作成</h2><span>下書きで作成してから有効化できます。</span></div><label>ルール名<input value={ruleName} onChange={(event) => setRuleName(event.target.value)} placeholder="例: ローターアクト行事" required /></label><div className="rule-grid"><label>送信者（完全一致）<input value={ruleSender} onChange={(event) => setRuleSender(event.target.value)} placeholder="sender@example.com" /></label><label>送信元ドメイン<input value={ruleDomain} onChange={(event) => setRuleDomain(event.target.value)} placeholder="example.com" /></label><label>本文・件名のキーワード<input value={ruleKeyword} onChange={(event) => setRuleKeyword(event.target.value)} placeholder="例: 招待行事" /></label><label>Gmailラベル<input value={ruleLabel} onChange={(event) => setRuleLabel(event.target.value)} placeholder="例: Announcements" /></label><label>優先度<input type="number" value={rulePriority} onChange={(event) => setRulePriority(event.target.value)} /></label><label>作成時の状態<select value={ruleState} onChange={(event) => setRuleState(event.target.value as 'draft' | 'active')}><option value="draft">下書き</option><option value="active">有効</option></select></label></div><DestinationListChoices legend="許可されたCalendar Recipient Lists" lists={recipientLists} selectedIds={permittedRecipientListIds} onChange={setPermittedRecipientListIds} /><DestinationListChoices legend="許可されたLINE Destination Lists" lists={lineLists} selectedIds={permittedLineListIds} onChange={setPermittedLineListIds} /><fieldset><legend>割り当て可能なOperational Task Roles</legend>{props.taskRoles.map((role) => <label key={role.id}><input type="checkbox" checked={taskRoleIds.includes(role.id)} onChange={(change) => setTaskRoleIds((current) => toggledIds(current, role.id, change.target.checked))} />{role.displayName}<small>{role.description}</small></label>)}</fieldset><button className="primary" disabled={creatingRule}>{creatingRule ? <><RefreshCw className="spin" size={14} />作成中…</> : 'ルールを作成'}</button></form>
+      <form className="rule-builder" onSubmit={(event) => void createRule(event)}><div><p>NEW RULE</p><h2>ルールを作成</h2><span>Draft + Unattended で作成し、本番と同じ完全自動経路を効果なしでテストできます。</span></div><label>ルール名<input value={ruleName} onChange={(event) => setRuleName(event.target.value)} placeholder="例: ローターアクト行事" required /></label><div className="rule-grid"><label>送信者（完全一致）<input value={ruleSender} onChange={(event) => setRuleSender(event.target.value)} placeholder="sender@example.com" /></label><label>送信元ドメイン<input value={ruleDomain} onChange={(event) => setRuleDomain(event.target.value)} placeholder="example.com" /></label><label>本文・件名のキーワード<input value={ruleKeyword} onChange={(event) => setRuleKeyword(event.target.value)} placeholder="例: 招待行事" /></label><label>Gmailラベル<input value={ruleLabel} onChange={(event) => setRuleLabel(event.target.value)} placeholder="例: Announcements" /></label><label>優先度<input type="number" value={rulePriority} onChange={(event) => setRulePriority(event.target.value)} /></label><label>Execution Mode<select value={ruleExecutionMode} onChange={(event) => setRuleExecutionMode(event.target.value as 'read_only' | 'approval' | 'unattended')}><option value="read_only">Read only</option><option value="approval">Approval</option><option value="unattended">Unattended</option></select></label><label>作成時の状態<select value={ruleState} onChange={(event) => setRuleState(event.target.value as 'draft' | 'active')}><option value="draft">下書き</option><option value="active">有効</option></select></label></div><DestinationListChoices legend="許可されたCalendar Recipient Lists" lists={recipientLists} selectedIds={permittedRecipientListIds} onChange={setPermittedRecipientListIds} /><DestinationListChoices legend="許可されたLINE Destination Lists" lists={lineLists} selectedIds={permittedLineListIds} onChange={setPermittedLineListIds} /><fieldset><legend>割り当て可能なOperational Task Roles</legend>{props.taskRoles.map((role) => <label key={role.id}><input type="checkbox" checked={taskRoleIds.includes(role.id)} onChange={(change) => setTaskRoleIds((current) => toggledIds(current, role.id, change.target.checked))} />{role.displayName}<small>{role.description}</small></label>)}</fieldset><button className="primary" disabled={creatingRule}>{creatingRule ? <><RefreshCw className="spin" size={14} />作成中…</> : 'ルールを作成'}</button></form>
       <section className="rules-list"><div className="rules-list-title"><h2>登録済みルール</h2><span>{props.organizationRules.length}件</span></div>{props.organizationRules.length ? props.organizationRules.map((rule) => <article key={rule.id} className="rule-row"><div><strong>{rule.name}</strong><small>優先度 {rule.priority} ・ {Object.entries(rule.selectionPolicy).map(([key, value]) => `${key}: ${String(value)}`).join(' / ') || '条件なし'}</small><small>選択Role: {props.taskRoles.filter((role) => rule.taskRoleIds.includes(role.id)).map((role) => role.displayName).join('、') || '未割り当てのみ'}</small><RuleDestinationEditor rule={rule} props={props} /></div><span className={`rule-state ${rule.state}`}>{rule.state}</span></article>) : <p className="rules-empty">まだルールはありません。</p>}</section>
       <form className="rule-builder" onSubmit={(event) => void createPrompt(event)}><div><p>PROMPTS</p><h2>Promptを作成</h2><span>Agent Ruleが実行直前に読むOrganization固有の指示です。</span></div><label>Prompt名<input required value={promptName} onChange={(event) => setPromptName(event.target.value)} /></label><label>Instructions<textarea required value={promptInstructions} onChange={(event) => setPromptInstructions(event.target.value)} /></label><button className="primary" disabled={creatingPrompt}>{creatingPrompt ? <><RefreshCw className="spin" size={14} />作成中…</> : 'Promptを作成'}</button></form>
       <section className="rules-list"><div className="rules-list-title"><h2>Prompts</h2><span>{props.prompts.length}件</span></div>{props.prompts.map((prompt) => <PromptEditor key={prompt.id} prompt={prompt} props={props} />)}</section>
-      <form className="rule-builder" onSubmit={(event) => void createAgentRule(event)}><div><p>AGENT RULE</p><h2>Agent Ruleを作成</h2><span>既定は、外部効果の前に内容を確認できるApprovalです。</span></div><label>Agent Rule名<input required value={agentName} onChange={(event) => setAgentName(event.target.value)} /></label><label>Prompt<select required value={agentPromptId} onChange={(event) => setAgentPromptId(event.target.value)}><option value="">選択してください</option>{props.prompts.map((prompt) => <option key={prompt.id} value={prompt.id}>{prompt.name}</option>)}</select></label><label>送信元ドメイン<input value={agentDomain} onChange={(event) => setAgentDomain(event.target.value)} placeholder="example.com" /></label><label>Execution Mode<select value={agentExecutionMode} onChange={(event) => setAgentExecutionMode(event.target.value as 'read_only' | 'approval' | 'unattended')}><option value="read_only">Read only</option><option value="approval">Approval</option><option value="unattended">Unattended</option></select></label><label>状態<select value={agentState} onChange={(event) => setAgentState(event.target.value as 'active' | 'suspended')}><option value="active">Active</option><option value="suspended">Suspended</option></select></label><DestinationListChoices legend="許可されたCalendar Recipient Lists" lists={recipientLists} selectedIds={agentRecipientListIds} onChange={setAgentRecipientListIds} /><DestinationListChoices legend="許可されたLINE Destination Lists" lists={lineLists} selectedIds={agentLineListIds} onChange={setAgentLineListIds} /><button className="primary" disabled={creatingAgentRule || !agentPromptId}>{creatingAgentRule ? <><RefreshCw className="spin" size={14} />作成中…</> : 'Agent Ruleを作成'}</button></form>
-      <section className="rules-list"><div className="rules-list-title"><h2>Agent Rules</h2><span>{props.agentRules.length}件</span></div>{props.agentRules.map((rule) => <article className="rule-row" key={rule.id}><div><strong>{rule.name}</strong><small>Prompt: {props.prompts.find((prompt) => prompt.id === rule.promptId)?.name ?? rule.promptId} ・ {rule.executionMode} ・ revision {rule.revision}</small><AgentRuleEditor rule={rule} props={props} /></div><div className="rule-state-control"><select aria-label={`${rule.name}の状態`} value={rule.state} disabled={props.isPending(pendingKey.agentRuleUpdate(rule.id))} onChange={(event) => void props.onUpdateAgentRule(rule.id, { state: event.target.value as 'active' | 'suspended' | 'archived' })}><option value="active">Active</option><option value="suspended">Suspended</option><option value="archived">Archived</option></select><FieldSaveState saving={props.isPending(pendingKey.agentRuleUpdate(rule.id))} saved={props.isSettled(pendingKey.agentRuleUpdate(rule.id))} /></div></article>)}</section>
+      <form className="rule-builder" onSubmit={(event) => void createAgentRule(event)}><div><p>AGENT RULE</p><h2>Agent Ruleを作成</h2><span>既定は Draft + Unattended です。Draft の間に write plan を効果なしで確認できます。</span></div><label>Agent Rule名<input required value={agentName} onChange={(event) => setAgentName(event.target.value)} /></label><label>Prompt<select required value={agentPromptId} onChange={(event) => setAgentPromptId(event.target.value)}><option value="">選択してください</option>{props.prompts.map((prompt) => <option key={prompt.id} value={prompt.id}>{prompt.name}</option>)}</select></label><label>送信元ドメイン<input value={agentDomain} onChange={(event) => setAgentDomain(event.target.value)} placeholder="example.com" /></label><label>Execution Mode<select value={agentExecutionMode} onChange={(event) => setAgentExecutionMode(event.target.value as 'read_only' | 'approval' | 'unattended')}><option value="read_only">Read only</option><option value="approval">Approval</option><option value="unattended">Unattended</option></select></label><label>状態<select value={agentState} onChange={(event) => setAgentState(event.target.value as 'draft' | 'active')}><option value="draft">Draft</option><option value="active">Active</option></select></label><DestinationListChoices legend="許可されたCalendar Recipient Lists" lists={recipientLists} selectedIds={agentRecipientListIds} onChange={setAgentRecipientListIds} /><DestinationListChoices legend="許可されたLINE Destination Lists" lists={lineLists} selectedIds={agentLineListIds} onChange={setAgentLineListIds} /><button className="primary" disabled={creatingAgentRule || !agentPromptId}>{creatingAgentRule ? <><RefreshCw className="spin" size={14} />作成中…</> : 'Agent Ruleを作成'}</button></form>
+      <section className="rules-list"><div className="rules-list-title"><h2>Agent Rules</h2><span>{props.agentRules.length}件</span></div>{props.agentRules.map((rule) => <article className="rule-row" key={rule.id}><div><strong>{rule.name}</strong><small>Prompt: {props.prompts.find((prompt) => prompt.id === rule.promptId)?.name ?? rule.promptId} ・ {rule.executionMode} ・ revision {rule.revision}</small><AgentRuleEditor rule={rule} props={props} /></div><div className="rule-state-control"><select aria-label={`${rule.name}の状態`} value={rule.state} disabled={props.isPending(pendingKey.agentRuleUpdate(rule.id))} onChange={(event) => void props.onUpdateAgentRule(rule.id, { state: event.target.value as 'draft' | 'active' | 'suspended' | 'archived' })}><option value="draft">Draft</option><option value="active">Active</option><option value="suspended">Suspended</option><option value="archived">Archived</option></select><FieldSaveState saving={props.isPending(pendingKey.agentRuleUpdate(rule.id))} saved={props.isSettled(pendingKey.agentRuleUpdate(rule.id))} /></div></article>)}</section>
       <AgentRunHistory {...props} />
     </>}
   </section>;

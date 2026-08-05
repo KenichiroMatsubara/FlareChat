@@ -1,22 +1,22 @@
-import { and, asc, eq, lte } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 
 import type { ConvertedAttachment } from './attachment-conversion';
 import { decrypt, encrypt } from './cryptography';
 import { openAiChatCompletionsUrl } from './event-details';
 import type { OrganizationDatabase } from './storage/database';
 import { organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
-import { attendance, events, members, proposedActions, tasks } from './storage/organization-schema';
+import { attendance, events, members, tasks } from './storage/organization-schema';
+import type { ExecutionMode } from './execution';
 
 export const MAX_AGENT_TOOL_CALLS = 12;
 export const AGENT_TOKEN_CEILING = 16_000;
 export const AGENT_TRANSCRIPT_RETENTION_DAYS = 90;
-export const PROPOSED_ACTION_EXPIRATION_DAYS = 7;
 export const AGENT_TOOL_WRITE_CAPS = Object.freeze({ send_line_message: 5, create_scheduled_event: 3 });
 
 export type ReadAgentToolName = 'read_source_message' | 'query_scheduled_events' | 'query_tasks' | 'query_attendance';
 export type WriteAgentToolName = keyof typeof AGENT_TOOL_WRITE_CAPS;
 export type AgentToolName = ReadAgentToolName | WriteAgentToolName;
-export type AgentExecutionMode = 'read_only' | 'approval' | 'unattended';
+export type AgentExecutionMode = ExecutionMode;
 
 export interface AgentToolCall {
   id: string;
@@ -65,6 +65,7 @@ export interface AgentRunResult {
   toolCallCount: number;
   tokens: number;
   messages: AgentMessage[];
+  plannedActions: Array<{ tool: WriteAgentToolName; arguments: Record<string, unknown> }>;
 }
 
 export class AgentRunFailure extends Error {
@@ -154,77 +155,6 @@ export interface AgentWritePort {
   createScheduledEvent(arguments_: { destination: string; title: string; startsAt: string; endsAt: string; location?: string; description?: string }): Promise<unknown>;
 }
 
-export interface ProposedActionView {
-  id: string;
-  runId: string;
-  tool: WriteAgentToolName;
-  arguments: Record<string, unknown>;
-  status: 'pending' | 'approved' | 'rejected' | 'expired' | 'failed';
-  expiresAt: string;
-}
-
-export const proposedActionsForRun = async (database: D1Database, runId: string): Promise<ProposedActionView[]> => {
-  const rows = await drizzleOrganizationDatabase(database).select().from(proposedActions)
-    .where(eq(proposedActions.agentRunId, runId)).orderBy(asc(proposedActions.createdAt)).all();
-  return rows.map((row) => ({ id: row.id, runId: row.agentRunId, tool: row.tool, arguments: JSON.parse(row.arguments) as Record<string, unknown>, status: row.status, expiresAt: row.expiresAt }));
-};
-
-/** Executes only durable Proposed Action arguments; no model dependency can cross this interface. */
-export const approveProposedAction = async (input: {
-  database: D1Database;
-  actionId: string;
-  actorIdentityId: string;
-  writes: AgentWritePort;
-}): Promise<ProposedActionView & { effect: unknown }> => {
-  const database = drizzleOrganizationDatabase(input.database);
-  const action = await database.select().from(proposedActions).where(eq(proposedActions.id, input.actionId)).get();
-  if (!action) throw new Error('Proposed Action was not found.');
-  if (action.status !== 'pending') throw new Error(`Proposed Action is already ${action.status}.`);
-  const decidedAt = new Date().toISOString();
-  if (Date.parse(action.expiresAt) <= Date.parse(decidedAt)) {
-    await database.update(proposedActions).set({ status: 'expired', decidedAt }).where(eq(proposedActions.id, action.id)).run();
-    throw new Error('Proposed Action has expired.');
-  }
-  const claimed = await database.update(proposedActions).set({ status: 'approved', decidedAt, decidedBy: input.actorIdentityId })
-    .where(and(eq(proposedActions.id, action.id), eq(proposedActions.status, 'pending'))).returning({ id: proposedActions.id }).get();
-  if (!claimed) throw new Error('Proposed Action could not be approved.');
-  const arguments_ = JSON.parse(action.arguments) as Record<string, unknown>;
-  try {
-    const effect = action.tool === 'send_line_message'
-      ? await input.writes.sendLine(arguments_ as { destination: string; message: string })
-      : await input.writes.createScheduledEvent(arguments_ as { destination: string; title: string; startsAt: string; endsAt: string; location?: string; description?: string });
-    return { id: action.id, runId: action.agentRunId, tool: action.tool, arguments: arguments_, status: 'approved', expiresAt: action.expiresAt, effect };
-  } catch (error) {
-    await database.update(proposedActions).set({ status: 'failed' }).where(eq(proposedActions.id, action.id)).run();
-    throw error;
-  }
-};
-
-export const rejectProposedAction = async (
-  databaseBinding: D1Database,
-  actionId: string,
-  actorIdentityId: string,
-): Promise<ProposedActionView> => {
-  const database = drizzleOrganizationDatabase(databaseBinding);
-  const action = await database.select().from(proposedActions).where(eq(proposedActions.id, actionId)).get();
-  if (!action) throw new Error('Proposed Action was not found.');
-  const decidedAt = new Date().toISOString();
-  const rejected = await database.update(proposedActions).set({ status: 'rejected', decidedAt, decidedBy: actorIdentityId })
-    .where(and(eq(proposedActions.id, actionId), eq(proposedActions.status, 'pending')))
-    .returning({ id: proposedActions.id }).get();
-  if (!rejected) throw new Error(`Proposed Action is already ${action.status}.`);
-  return { id: action.id, runId: action.agentRunId, tool: action.tool, arguments: JSON.parse(action.arguments) as Record<string, unknown>, status: 'rejected', expiresAt: action.expiresAt };
-};
-
-export const expireProposedActions = async (databaseBinding: D1Database, currentTime = new Date()): Promise<number> => {
-  const timestamp = currentTime.toISOString();
-  const expired = await drizzleOrganizationDatabase(databaseBinding).update(proposedActions)
-    .set({ status: 'expired', decidedAt: timestamp })
-    .where(and(eq(proposedActions.status, 'pending'), lte(proposedActions.expiresAt, timestamp)))
-    .returning({ id: proposedActions.id }).all();
-  return expired.length;
-};
-
 const writeArguments = (call: AgentToolCall): Record<string, unknown> => {
   const parsed = JSON.parse(call.arguments || '{}') as Record<string, unknown>;
   if (typeof parsed.destination !== 'string' || !parsed.destination) throw new Error(`${call.name} requires a destination.`);
@@ -255,7 +185,8 @@ export const runAgent = async (input: {
   const writeCallCounts: Record<WriteAgentToolName, number> = { send_line_message: 0, create_scheduled_event: 0 };
   let tokens = 0;
   let model = input.connection.model;
-  const failure = (message: string): AgentRunFailure => new AgentRunFailure(message, { model, output: '', toolCallCount, tokens, messages: [...messages] });
+  const plannedActions: AgentRunResult['plannedActions'] = [];
+  const failure = (message: string): AgentRunFailure => new AgentRunFailure(message, { model, output: '', toolCallCount, tokens, messages: [...messages], plannedActions: [...plannedActions] });
   while (true) {
     let completion: AgentModelCompletion;
     try {
@@ -267,7 +198,7 @@ export const runAgent = async (input: {
     tokens += completion.totalTokens;
     if (tokens > AGENT_TOKEN_CEILING) throw failure(`Agent Rule token ceiling of ${AGENT_TOKEN_CEILING} was exceeded.`);
     messages.push({ role: 'assistant', content: completion.content, ...(completion.toolCalls.length ? { toolCalls: completion.toolCalls } : {}) });
-    if (!completion.toolCalls.length) return { model, output: completion.content, toolCallCount, tokens, messages };
+    if (!completion.toolCalls.length) return { model, output: completion.content, toolCallCount, tokens, messages, plannedActions };
     toolCallCount += completion.toolCalls.length;
     if (toolCallCount > MAX_AGENT_TOOL_CALLS) throw failure(`Agent Rule tool-call maximum of ${MAX_AGENT_TOOL_CALLS} was exceeded.`);
     for (const call of completion.toolCalls) {
@@ -284,21 +215,8 @@ export const runAgent = async (input: {
         const arguments_ = writeArguments(call);
         const permitted = call.name === 'send_line_message' ? input.permittedLineDestinations : input.permittedRecipientDestinations;
         if (!permitted.includes(arguments_.destination as string)) throw new Error(`Destination ${arguments_.destination as string} is not permitted for ${call.name}.`);
-        if (input.executionMode === 'approval') {
-          const actionId = crypto.randomUUID();
-          const createdAt = new Date().toISOString();
-          await database.insert(proposedActions).values({
-            id: actionId, agentRunId: input.runId, agentRuleId: input.agentRuleId, tool: call.name,
-            arguments: JSON.stringify(arguments_), status: 'pending', createdAt,
-            expiresAt: new Date(Date.parse(createdAt) + PROPOSED_ACTION_EXPIRATION_DAYS * 86_400_000).toISOString(),
-          }).run();
-          messages.push({ role: 'tool', name: call.name, toolCallId: call.id, content: JSON.stringify({ status: 'proposed', actionId }) });
-        } else {
-          const result = call.name === 'send_line_message'
-            ? await input.writes.sendLine(arguments_ as { destination: string; message: string })
-            : await input.writes.createScheduledEvent(arguments_ as { destination: string; title: string; startsAt: string; endsAt: string; location?: string; description?: string });
-          messages.push({ role: 'tool', name: call.name, toolCallId: call.id, content: JSON.stringify(result) });
-        }
+        plannedActions.push({ tool: call.name, arguments: arguments_ });
+        messages.push({ role: 'tool', name: call.name, toolCallId: call.id, content: JSON.stringify({ status: 'planned' }) });
       } catch (error) {
         const message = error instanceof Error ? error.message : `Agent tool ${call.name} failed.`;
         messages.push({ role: 'tool', name: call.name, toolCallId: call.id, content: JSON.stringify({ status: 'refused', error: message }) });
