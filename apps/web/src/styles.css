@@ -92,6 +92,19 @@ svg { flex: none; }
 .info-panel p { margin: 5px 0 0; color: #6e7a70; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
 .info-panel code { padding: 2px 4px; color: #35664a; background: #edf5ee; border-radius: 4px; }
 
+.guest-registrations { display: grid; gap: 14px; padding: clamp(19px, 3.6vw, 25px); }
+.guest-registrations > h2 { margin: 0; color: #35473a; font-size: 14px; }
+.guest-registrations > p { margin: 0; color: #718073; font-size: 12px; line-height: 1.7; }
+.guest-registrations article { display: grid; gap: 7px; padding-top: 13px; border-top: 1px solid #e6ece7; }
+.guest-registrations h3 { display: flex; flex-wrap: wrap; gap: 9px; align-items: baseline; margin: 0; color: #334b3a; font-size: 13px; }
+.guest-registrations h3 small { color: #7d8a80; font-size: 11px; font-weight: 400; }
+.guest-total { margin: 0; color: #35664a; font-size: 12px; }
+.guest-registrations ul { display: flex; flex-wrap: wrap; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.guest-registrations li { display: flex; gap: 6px; align-items: baseline; padding: 5px 9px; color: #35473a; font-size: 12px; background: #edf5ee; border-radius: 5px; }
+.guest-registrations li small { color: #6e7a70; font-size: 11px; }
+.guest-registrations li span { color: #9a6a5e; font-size: 11px; }
+.guest-registrations .guest-absent { color: #7d8a80; background: #f2f4f2; }
+
 .empty-page { padding: clamp(48px, 12vw, 78px) clamp(20px, 5vw, 28px); color: #52705c; text-align: center; }
 .empty-page h2 { margin: 12px 0 5px; color: #35473a; font-size: clamp(16px, 3.6vw, 18px); }
 .empty-page p { margin: 0; color: #718073; font-size: 12px; line-height: 1.6; }

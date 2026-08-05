@@ -5,7 +5,7 @@ import { isRouteErrorResponse, NavLink, Outlet, useLoaderData, useNavigate, useN
 import type { AppState } from '@mail/domain';
 
 import { api } from './api';
-import type { MemberAttendanceStatus, MemberPortal, AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, OrganizationAgentRule, OrganizationConnections, OrganizationDashboard, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationMember, OrganizationMemberInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, ProposedAction, MemberLineDestinationInput, TaskAssignmentProposal, TaskReassignmentReview, TaskRoleConfiguration } from './api';
+import type { MemberAttendanceStatus, MemberPortal, AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, OrganizationAgentRule, OrganizationConnections, OrganizationDashboard, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationMember, OrganizationMemberInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, ProposedAction, MemberLineDestinationInput, TaskAssignmentProposal, TaskReassignmentReview, TaskRoleConfiguration } from './api';
 import { defaultOrganizationName, setupPhaseLabel, SignedOutEntry } from './entry';
 import { pendingKey, usePendingOperations, type PendingOperations } from './pending';
 import { PendingOverlay } from './progress';
@@ -180,6 +180,7 @@ export interface OrganizationRouteData {
   lineDestinations: OrganizationLineDestination[];
   presets: PresetSummary[];
   attachmentFolder: { path: string };
+  guestRegistrations: GuestRegistrationRoster[];
 }
 
 export const loadOrganization = async (organizationId: string): Promise<OrganizationRouteData> => {
@@ -187,7 +188,7 @@ export const loadOrganization = async (organizationId: string): Promise<Organiza
   if (state.kind !== 'ready') throw new Response('Organization is not ready', { status: 409 });
   const organization = state.organizations.find((value) => value.organizationId === organizationId);
   if (!organization) throw new Response('Organization was not found', { status: 404 });
-  const [automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, taskReassignment, members, lineDestinations, presets, attachmentFolder] = await Promise.all([
+  const [automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, taskReassignment, members, lineDestinations, presets, attachmentFolder, guestRegistrations] = await Promise.all([
     api.currentAutomation(organizationId),
     api.organizationConnections(organizationId),
     api.organizationDashboard(organizationId),
@@ -204,8 +205,9 @@ export const loadOrganization = async (organizationId: string): Promise<Organiza
     api.organizationLineDestinations(organizationId),
     api.presets(),
     api.organizationAttachmentFolder(organizationId),
+    api.organizationGuestRegistrations(organizationId),
   ]);
-  return { state, organization, automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, taskReassignment, members, lineDestinations, presets, attachmentFolder };
+  return { state, organization, automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, taskReassignment, members, lineDestinations, presets, attachmentFolder, guestRegistrations };
 };
 
 const roleChangeOpensReassignment = (current: OrganizationRouteData): OrganizationRouteData => ({
@@ -594,6 +596,7 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     onAiBaseUrlChange={value.setAiBaseUrl}
     onSaveLineConnection={value.saveLineConnection}
     onSaveAiConnection={value.saveAiConnection}
+    guestRegistrations={value.guestRegistrations}
     attachmentFolderPath={value.attachmentFolderPath}
     savedAttachmentFolderPath={value.attachmentFolder.path}
     onAttachmentFolderPathChange={value.setAttachmentFolderPath}

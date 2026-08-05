@@ -37,6 +37,7 @@ const dashboardProps = (): DashboardProps => ({
   prompts: [], agentRules: [], agentRuns: [], agentTranscript: null, proposedActions: [], onCreatePrompt: vi.fn(), onUpdatePrompt: vi.fn(), onDeletePrompt: vi.fn(), onCreateAgentRule: vi.fn(), onUpdateAgentRule: vi.fn(), onLoadAgentTranscript: vi.fn(), onDecideProposedAction: vi.fn(), onDecideProposedActionBatch: vi.fn(),
   organizationMembers: [], lineDestinations: [], onCreateMember: vi.fn(), onUpdateMember: vi.fn(),
   onSetLineDestination: vi.fn(), onUnlinkLineDestination: vi.fn(), onRegisterLineDestination: vi.fn(), onRemoveLineDestination: vi.fn(), onRefreshMembers: vi.fn(),
+  guestRegistrations: [],
   attachmentFolderPath: 'Mail Automation', savedAttachmentFolderPath: 'Mail Automation', onAttachmentFolderPathChange: vi.fn(), onSaveAttachmentFolderPath: vi.fn(),
   presets: [{ id: 'membership-organization', name: 'Membership organization', description: 'Starting configuration.' }], onApplyPreset: vi.fn(),
 });

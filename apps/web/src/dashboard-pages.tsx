@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import type { DashboardProps } from './dashboard';
+import type { GuestRegistrationRoster } from './api';
 import { pendingKey } from './pending';
 
 /**
@@ -25,6 +26,24 @@ const SecretInput = ({ value, onChange, label, placeholder }: { value: string; o
   return <div className="dashboard-secret"><input type="text" className={revealed ? '' : 'dashboard-secret-masked'} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} aria-label={label} autoComplete="off" autoCapitalize="none" spellCheck={false} data-1p-ignore="true" data-bwignore="true" data-lpignore="true" data-protonpass-ignore="true" /><button type="button" onClick={() => setRevealed((current) => !current)} aria-label={revealed ? `${label}を隠す` : `${label}を表示`}>{revealed ? <EyeOff size={16} /> : <Eye size={16} />}</button></div>;
 };
 
+/**
+ * The Guest Registrations returned against a Scheduled Event. Names are shown
+ * here and nowhere else: the Calendar description every invited Member reads
+ * carries the counts by Affiliation alone.
+ */
+const GuestRegistrations = (props: { rosters: GuestRegistrationRoster[] }) => {
+  if (!props.rosters.length) return null;
+  return <section className="guest-registrations">
+    <h2>外部からの参加登録</h2>
+    <p>他団体から返送された登録用紙の参加者です。Google Calendar の説明には人数だけを書き、氏名はこの画面にのみ表示します。</p>
+    {props.rosters.map((roster) => <article key={roster.eventId}>
+      <h3>{roster.title}<small>{formatted(roster.startsAt)}</small></h3>
+      <p className="guest-total">{roster.affiliations.length}団体 {roster.attendingCount}名{roster.affiliations.length ? `（${roster.affiliations.map((entry) => `${entry.affiliation} ${entry.attending}名`).join('、')}）` : ''}</p>
+      <ul>{roster.guests.map((guest) => <li key={`${guest.affiliation}-${guest.name}`} className={guest.attending ? '' : 'guest-absent'}>{guest.name}<small>{guest.affiliation || '所属未記載'}</small>{guest.attending ? '' : <span>欠席</span>}</li>)}</ul>
+    </article>)}
+  </section>;
+};
+
 export const AutomationPage = (props: DashboardProps) => {
   const running = props.isPending(pendingKey.automationRun);
   const toggling = props.isPending(pendingKey.automationEnabled);
@@ -37,6 +56,7 @@ export const AutomationPage = (props: DashboardProps) => {
       {props.summary && <p className="dashboard-success"><CheckCircle2 size={17} />今回: {props.summary.scanned}件をAI判定、{props.summary.created}件を予定化、{props.summary.skipped}件を対象外、{props.summary.exceptions}件でエラー</p>}
       <section className="metrics-row"><div><b>{props.automation.created}</b><span>予定を作成</span></div><div><b>{props.automation.skipped}</b><span>処理対象外</span></div><div><b>{props.automation.exceptions}</b><span>エラー</span></div></section>
       <section className="info-panel"><CalendarDays size={20} /><div><strong>AI がメール内容を判定します</strong><p>固定の日付書式は不要です。本文や添付ファイルから予定、タスク、お知らせを抽出します。</p></div></section>
+      <GuestRegistrations rosters={props.guestRegistrations} />
     </> : <section className="empty-page"><Mail size={30} /><h2>Googleアカウントを接続してください</h2><p>接続後、このページから自動化を操作できます。</p></section>}
   </section>;
 };

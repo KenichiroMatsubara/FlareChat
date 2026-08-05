@@ -2,7 +2,7 @@ import { CheckSquare, CircleAlert, LogOut, Mail, Menu, Play, RefreshCw, Settings
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
-import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, OperationalTaskRole, OrganizationAgentRule, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationMember, OrganizationMemberInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, ProposedAction, MemberLineDestinationInput, TaskAssignmentProposal, TaskReassignmentReview, TaskRoleAssignment } from './api';
+import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, OperationalTaskRole, OrganizationAgentRule, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationMember, OrganizationMemberInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, ProposedAction, MemberLineDestinationInput, TaskAssignmentProposal, TaskReassignmentReview, TaskRoleAssignment } from './api';
 import { AutomationPage, ConnectionsPage, MailboxTestPage, MembersPage, RulesPage, TasksPage } from './dashboard-pages';
 import { pendingKey, ROUTE_NAVIGATION_KEY } from './pending';
 import { PendingOverlay } from './progress';
@@ -69,6 +69,7 @@ export interface DashboardProps {
   onAiApiKeyChange: (value: string) => void;
   onAiModelChange: (value: string) => void;
   onAiBaseUrlChange: (value: string) => void;
+  guestRegistrations: GuestRegistrationRoster[];
   attachmentFolderPath: string;
   savedAttachmentFolderPath: string;
   onAttachmentFolderPathChange: (value: string) => void;

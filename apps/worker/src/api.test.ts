@@ -521,6 +521,49 @@ describe('Organization management', () => {
     }] });
   });
 
+  it('shows the guests of an upcoming Scheduled Event and leaves a finished one out', async () => {
+    fixture = createTestApp();
+    seedScheduledEvent(fixture.organization, {
+      id: 'event-upcoming', title: '例会', startsAt: '2999-08-03T19:00:00+09:00', endsAt: '2999-08-03T21:00:00+09:00',
+    });
+    seedScheduledEvent(fixture.organization, {
+      id: 'event-past', title: '前回の例会', startsAt: '2020-08-03T19:00:00+09:00', endsAt: '2020-08-03T21:00:00+09:00',
+    });
+    fixture.organization.execute(
+      "INSERT INTO source_messages (id, gmail_message_id, gmail_history_id, sender, subject, received_at, state) VALUES ('response-1', 'gmail-1', 'history-1', 'chair@example.com', 'Re: 例会', '2026-08-01', 'processed')",
+    );
+    const guest = (id: string, eventId: string, name: string, affiliation: string, attending: number): void =>
+      fixture!.organization.execute(
+        'INSERT INTO guest_registrations (id, event_id, source_message_id, name, affiliation, attending, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        id, eventId, 'response-1', name, affiliation, attending, '2026-08-01',
+      );
+    guest('guest-1', 'event-upcoming', '山田太郎', '北クラブ', 1);
+    guest('guest-2', 'event-upcoming', '鈴木花子', '北クラブ', 1);
+    guest('guest-3', 'event-upcoming', '佐藤一郎', '南クラブ', 0);
+    guest('guest-4', 'event-past', '過去太郎', '北クラブ', 1);
+
+    const response = await app.fetch(
+      fixture.request('/api/organizations/organization-1/guest-registrations'),
+      fixture.environment,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      data: [{
+        eventId: 'event-upcoming',
+        title: '例会',
+        startsAt: '2999-08-03T19:00:00+09:00',
+        attendingCount: 2,
+        affiliations: [{ affiliation: '北クラブ', attending: 2 }],
+        guests: [
+          { name: '佐藤一郎', affiliation: '南クラブ', attending: false },
+          { name: '山田太郎', affiliation: '北クラブ', attending: true },
+          { name: '鈴木花子', affiliation: '北クラブ', attending: true },
+        ],
+      }],
+    });
+  });
+
   it('creates, changes, imports, reads, and snapshots Members', async () => {
     fixture = createTestApp();
     seedScheduledEvent(fixture.organization, { id: 'event-1' });

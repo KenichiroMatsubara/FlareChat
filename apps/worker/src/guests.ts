@@ -26,9 +26,13 @@ export const affiliationCounts = (rows: readonly GuestRegistrationRow[]): Affili
     const affiliation = row.affiliation.trim() || UNSTATED_AFFILIATION;
     counts.set(affiliation, (counts.get(affiliation) ?? 0) + 1);
   }
+  // The tie-break compares code units rather than collating: Workers and Node
+  // carry different ICU data, and a description must not depend on which one
+  // rendered it.
   return [...counts.entries()]
     .map(([affiliation, attending]) => ({ affiliation, attending }))
-    .sort((left, right) => right.attending - left.attending || left.affiliation.localeCompare(right.affiliation, 'ja'));
+    .sort((left, right) => right.attending - left.attending
+      || (left.affiliation < right.affiliation ? -1 : left.affiliation > right.affiliation ? 1 : 0));
 };
 
 /**

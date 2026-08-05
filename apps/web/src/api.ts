@@ -139,6 +139,16 @@ export interface OrganizationDashboard {
   lastSyncedAt: string | null;
 }
 
+/** The Guest Registrations on one Scheduled Event, as an Admin reviews the roster. */
+export interface GuestRegistrationRoster {
+  eventId: string;
+  title: string;
+  startsAt: string;
+  attendingCount: number;
+  affiliations: Array<{ affiliation: string; attending: number }>;
+  guests: Array<{ name: string; affiliation: string; attending: boolean }>;
+}
+
 export interface OrganizationRule {
   id: string;
   organizationId: string;
@@ -475,6 +485,7 @@ export const api = {
   cancelOnboarding: (): Promise<{ cancelled: boolean }> => request('/api/onboarding', { method: 'DELETE' }),
   currentAutomation,
   organizationDashboard: (organizationId: string): Promise<OrganizationDashboard> => request(`/api/organizations/${encodeURIComponent(organizationId)}/dashboard`),
+  organizationGuestRegistrations: (organizationId: string): Promise<GuestRegistrationRoster[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/guest-registrations`),
   organizationRules: (organizationId: string): Promise<OrganizationRule[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules`),
   organizationPrompts: (organizationId: string): Promise<OrganizationPrompt[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/prompts`),
   organizationAgentRules: (organizationId: string): Promise<OrganizationAgentRule[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-rules`),
