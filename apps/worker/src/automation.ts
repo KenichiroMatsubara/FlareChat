@@ -1272,6 +1272,10 @@ const processOrganizationMessage = async (
     .where(eq(sourceMessages.gmailMessageId, gmailMessageId)).get();
   if (known && !(reprocessSkipped && known.state === 'skipped')) return;
   const message = await dependencies.google.request<GmailMessage>(accessToken, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(gmailMessageId)}?format=full`);
+  // Gmail history reports messages added to Sent as well as received mail. An
+  // outbound reply is not a Source Message and must be rejected before any D1,
+  // AI, Calendar, Drive, or recipient-delivery side effect can occur.
+  if (message.labelIds?.includes('SENT')) return;
   const subject = subjectOf(message.payload);
   const sourceMessageId = known?.id ?? crypto.randomUUID();
   const timestamp = now();

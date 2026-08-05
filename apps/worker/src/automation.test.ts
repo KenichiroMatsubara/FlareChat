@@ -34,11 +34,17 @@ const gmailBody = (value: string): string =>
     .replaceAll('/', '_')
     .replace(/=+$/u, '');
 
-const sourceMessageResponse = (input: { subject?: string; body?: string } = {}): Response => new Response(JSON.stringify({
+const sourceMessageResponse = (input: {
+  subject?: string;
+  body?: string;
+  sender?: string;
+  labelIds?: string[];
+} = {}): Response => new Response(JSON.stringify({
+  ...(input.labelIds === undefined ? {} : { labelIds: input.labelIds }),
   payload: {
     headers: [
       { name: 'Subject', value: input.subject ?? '例会のお知らせ' },
-      { name: 'From', value: 'member@example.com' },
+      { name: 'From', value: input.sender ?? 'member@example.com' },
     ],
     body: { data: gmailBody(input.body ?? '日時: 2026年8月3日 19:00〜21:30') },
   },
@@ -107,6 +113,50 @@ describe('Source Message processing primitives', () => {
 });
 
 describe('Organization Automation Inbox scheduling', () => {
+  it('ignores a message sent by the Automation Inbox and still advances Gmail history', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    seedMember(fixture.organization, { id: 'member-1', name: '一郎', email: 'member@example.com' });
+    const requests: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      requests.push(url);
+      if (url.includes('/history')) return Response.json({
+        historyId: 'history-after-sent-reply',
+        history: [{ messagesAdded: [{ message: { id: 'sent-reply' } }] }],
+      });
+      if (url.includes('/messages/sent-reply')) return sourceMessageResponse({
+        subject: 'Re: Volunteer activity',
+        body: '説明会は2026年8月5日19:30から20:30です。',
+        sender: '"Automation Inbox" <automation@example.com>',
+        labelIds: ['SENT'],
+      });
+      if (url.includes('ai.example.com')) return Response.json({ choices: [{ message: { content: JSON.stringify({
+        summary: '説明会です。',
+        events: [{
+          title: '説明会',
+          startsAt: '2026-08-05T19:30:00+09:00',
+          endsAt: '2026-08-05T20:30:00+09:00',
+          timeZone: 'Asia/Tokyo',
+          location: '',
+          description: '説明会です。',
+        }],
+        tasks: [],
+      }) } }] });
+      return Response.json({ id: 'calendar-event-that-must-not-exist' });
+    }));
+
+    await expect(runOrganizationAutomation(
+      fixture.environment,
+      'organization-1',
+      fixture.organization.binding,
+    )).resolves.toEqual({ scanned: 0, created: 0, skipped: 0, exceptions: 0 });
+
+    expect(requests.some((url) => url.includes('ai.example.com') || url.includes('/calendar/'))).toBe(false);
+    expect(fixture.organization.rows('SELECT * FROM source_messages')).toEqual([]);
+    expect(fixture.organization.row<{ gmail_history_id: string }>(
+      "SELECT gmail_history_id FROM google_connections WHERE kind = 'automation_inbox'",
+    )).toEqual({ gmail_history_id: 'history-after-sent-reply' });
+  });
+
   it('repairs a rule-less Organization with a catch-all Schema Rule and sends ordinary mail through AI', async () => {
     fixture = await createAutomationTestApp({ ai: true });
     fixture.organization.execute('DELETE FROM rules');
