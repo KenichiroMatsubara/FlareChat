@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0128
+---
+
 # Refresh Scheduled Events only through a confirmed manual exit
 
 A Scheduled Event created before a product improvement keeps whatever its Calendar description said at the time: a raw Drive URL instead of a labelled link (ADR 0114), no Event Summary (ADR 0115). The Event Refresh is the one path that rewrites such an event. It runs from the Mailbox Test screen, one Source Message at a time, and writes only after an Admin has seen the current and the replacing value of each field. Unattended automation still never updates an existing Scheduled Event, because correlating every later message with an existing event is a larger decision than reformatting one that is already identified.
