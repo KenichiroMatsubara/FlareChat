@@ -39,6 +39,7 @@ import { canApplyCalendarUpdate } from './calendar-revisions';
 import { writeRecoveryReceipt } from './recovery-receipts';
 import { resolveSourceMessageFolder } from './attachment-folders';
 import { createTaskWorkflow } from './tasks';
+import { createRuleExecution, type ExecutionMode, type RuleEffectPort } from './execution';
 import { activeMemberInvitees, deliverLineBatch, deliverSourceMessageEmail, recordDeliveryAttempt, recordEventInvitations } from './delivery';
 import type { PublishedDriveAttachment, SourceAttachment, SourceAttachmentContent } from './drive-attachments';
 import { GoogleGrantRejectedError } from './google';
@@ -54,8 +55,8 @@ import {
 import { productionAutomationDependencies } from './automation/providers';
 import { GoogleApiError } from './automation/providers';
 import type { AutomationDependencies, GoogleAutomationPort } from './automation/providers';
-import { AGENT_TRANSCRIPT_RETENTION_DAYS, AgentRunFailure, expireProposedActions, runAgent, writeAgentRunTranscript } from './agent-runs';
-import type { AgentExecutionMode, AgentWritePort } from './agent-runs';
+import { AGENT_TRANSCRIPT_RETENTION_DAYS, AgentRunFailure, runAgent, writeAgentRunTranscript } from './agent-runs';
+import type { AgentWritePort } from './agent-runs';
 import { createDatabaseAccess } from './database-access';
 import type { Bindings } from './types';
 import { validateAttachmentIntake } from '@mail/domain';
@@ -164,7 +165,9 @@ export interface MailboxTestSource extends MailboxTestMatch {
 
 export interface ActiveRule {
   id: string;
+  revision: number;
   priority: number;
+  executionMode: ExecutionMode;
   selectionPolicy: Record<string, unknown>;
   taskRoleIds?: string[];
   permittedRecipientListIds?: string[];
@@ -177,7 +180,7 @@ interface ActiveAgentRule {
   promptId: string;
   revision: number;
   selectionPolicy: Record<string, unknown>;
-  executionMode: AgentExecutionMode;
+  executionMode: ExecutionMode;
   permittedRecipientListIds: string[];
   permittedLineListIds: string[];
 }
@@ -684,6 +687,31 @@ const runMatchingAgentRules = async (input: {
         permittedLineDestinations,
         writes,
       });
+      const execution = createRuleExecution({
+        database: input.database,
+        planner: { plan: async () => [{
+          rule: { type: 'agent', id: rule.id, revision: rule.revision },
+          executionMode: rule.executionMode,
+          effects: runResult!.plannedActions.map((action, index) => ({
+            key: `${action.tool}:${index}`,
+            kind: `agent.${action.tool}`,
+            arguments: action.arguments,
+            dependsOn: [],
+          })),
+        }] },
+        effects: { apply: async ({ effect }) => effect.kind === 'agent.send_line_message'
+          ? writes.sendLine(effect.arguments as { destination: string; message: string })
+          : writes.createScheduledEvent(effect.arguments as { destination: string; title: string; startsAt: string; endsAt: string; location?: string; description?: string }) },
+        id: (() => {
+          let runIdAvailable = true;
+          return () => {
+            if (!runIdAvailable) return crypto.randomUUID();
+            runIdAvailable = false;
+            return runId;
+          };
+        })(),
+      });
+      await execution.start({ sourceMessageId: input.sourceMessageId, intent: { kind: 'live' } });
     } catch (error) {
       if (error instanceof AgentRunFailure) runResult = error.result;
       runError = error instanceof Error ? error.message : 'Agent Rule run failed.';
@@ -750,6 +778,7 @@ const extractMailboxTestPackage = async (
   attachments: SourceAttachmentContent[],
   receivedAt: string | undefined,
   dependencies: AutomationDependencies,
+  allowedTaskRoleIds?: ReadonlySet<string>,
 ): Promise<MailExtraction | null> => {
   const connection = await drizzleOrganizationDatabase(database).select().from(connections)
     .where(and(eq(connections.kind, 'ai'), eq(connections.status, 'active'))).limit(1).get();
@@ -757,11 +786,11 @@ const extractMailboxTestPackage = async (
   const key = await organizationKeyFor(env, organizationId);
   const credential = JSON.parse(await decrypt(JSON.parse(connection.credential), key, `organization-connection:${organizationId}:ai`)) as AiCredential;
   if (!credential.apiKey || !credential.model) throw new Error('先に OpenAI 互換 API を設定してください。');
-  const taskRoles = await drizzleOrganizationDatabase(database).select({
+  const taskRoles = (await drizzleOrganizationDatabase(database).select({
     id: operationalTaskRoles.id,
     displayName: operationalTaskRoles.displayName,
     description: operationalTaskRoles.description,
-  }).from(operationalTaskRoles).all();
+  }).from(operationalTaskRoles).all()).filter((role) => !allowedTaskRoleIds || allowedTaskRoleIds.has(role.id));
   return dependencies.ai.extract({
     apiKey: credential.apiKey,
     baseUrl: credential.baseUrl || LEGACY_AI_BASE_URL,
@@ -772,6 +801,33 @@ const extractMailboxTestPackage = async (
     taskRoles,
     markdown: env.AI,
   });
+};
+
+/** Evaluates a Draft Schema Rule before making the Mailbox Test's AI request. */
+export const previewSchemaDraftRule = async (input: {
+  env: Bindings;
+  database: D1Database;
+  organizationId: string;
+  ruleId: string;
+  messageId: string;
+}): Promise<{ source: MailboxTestSource; extraction: MailExtraction }> => {
+  const db = drizzleOrganizationDatabase(input.database);
+  const rule = await db.select().from(automationRules).where(eq(automationRules.id, input.ruleId)).get();
+  if (!rule || rule.status !== 'draft') throw new Error('Mailbox Test requires a Draft Schema Rule.');
+  const source = await readMailboxTestSourceWithGoogle(
+    input.env, input.organizationId, input.database, input.messageId, productionDependencies,
+  );
+  if (!ruleMatches({ selectionPolicy: JSON.parse(rule.selectionPolicy) as Record<string, unknown> }, {
+    sender: source.sender, subject: source.subject, body: source.source,
+  })) {
+    throw new Error('The selected Source Message does not match this Rule Selection Policy.');
+  }
+  const extraction = await extractMailboxTestPackage(
+    input.env, input.organizationId, input.database, source.source, source.attachments,
+    source.receivedAt, productionDependencies, new Set(JSON.parse(rule.taskRoleIds) as string[]),
+  );
+  if (!extraction) throw new Error('メールから安全な予定を抽出できませんでした。日付・開始時刻・終了時刻を確認してください。');
+  return { source, extraction };
 };
 
 /** Produces the exact bounded OpenAI-compatible payload for review before sending. */
@@ -878,74 +934,6 @@ export const readMailboxTestSource = async (
   database: D1Database,
   messageId: string,
 ): Promise<MailboxTestSource> => readMailboxTestSourceWithGoogle(env, organizationId, database, messageId, productionDependencies);
-
-/** Creates a Calendar event only after a separately confirmed, encrypted test preview. */
-const createMailboxTestCalendarEventsWithGoogle = async (
-  env: Bindings,
-  organizationId: string,
-  database: D1Database,
-  input: { messageId: string; events: EventDetails[] },
-  dependencies: AutomationDependencies,
-): Promise<{ eventIds: string[] }> => {
-  const accessToken = await accessTokenForInbox(env, organizationId, database, await activeAutomationInbox(database), dependencies);
-  const message = await mailboxMessage(dependencies.google, accessToken, input.messageId);
-  const attachments = sourceAttachments(message.payload);
-  const intake = validateAttachmentIntake(attachments.map((attachment) => attachment.size));
-  if (!intake.accepted) throw new Error('Source Message attachments exceed the configured intake limit.');
-  const attachmentContents = await dependencies.attachments.read({ accessToken, gmailMessageId: input.messageId, attachments });
-  const attachmentFolderId = attachmentContents.length ? await resolveSourceMessageFolder({
-    database: drizzleOrganizationDatabase(database),
-    drive: dependencies.attachments,
-    accessToken,
-    subject: subjectOf(message.payload),
-    receivedAt: receivedAtOf(message.internalDate) ?? new Date().toISOString(),
-  }) : null;
-  const publications = await Promise.all(attachmentContents.map(async (attachment) => ({
-    attachment,
-    publication: attachmentFolderId
-      ? await dependencies.attachments.publish({ accessToken, attachment, parentFolderId: attachmentFolderId })
-      : unpublishedAttachment,
-  })));
-  if (publications.some(({ publication }) => publication.outcome === 'failed')) {
-    throw new Error('添付ファイルを公開できなかったため、テスト予定を作成しませんでした。');
-  }
-  const attachmentLinks = publications.flatMap(({ attachment, publication }) => publication.publicUrl
-    ? [{ filename: attachment.filename, url: publication.publicUrl }]
-    : []);
-  const calendarUrl = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
-  if (publications.length) calendarUrl.searchParams.set('supportsAttachments', 'true');
-  const created = await Promise.all(input.events.map(async (details) => {
-    const event = await dependencies.google.request<CalendarEvent>(accessToken, calendarUrl.toString(), {
-      method: 'POST',
-      body: JSON.stringify({
-        summary: details.title,
-        description: calendarEventDescription({
-          summary: details.summary,
-          attachments: attachmentLinks,
-          attribution: `Mail Automation の手動テストで Gmail メッセージ ${input.messageId} から作成しました。`,
-        }),
-        location: details.location,
-        start: { dateTime: details.startsAt, timeZone: details.timeZone },
-        end: { dateTime: details.endsAt, timeZone: details.timeZone },
-        attachments: publications.map(({ attachment, publication }) => ({
-          fileUrl: publication.publicUrl,
-          title: attachment.filename,
-          mimeType: attachment.mimeType,
-        })),
-      }),
-    });
-    if (!event.id) throw new Error('Google Calendar が予定 ID を返しませんでした。');
-    return event.id;
-  }));
-  return { eventIds: created };
-};
-
-export const createMailboxTestCalendarEvent = async (
-  env: Bindings,
-  organizationId: string,
-  database: D1Database,
-  input: { messageId: string; events: EventDetails[] },
-): Promise<{ eventIds: string[] }> => createMailboxTestCalendarEventsWithGoogle(env, organizationId, database, input, productionDependencies);
 
 const CALENDAR_EVENTS_URL = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
 
@@ -1407,6 +1395,44 @@ const correlatedTargets = async (
   return matched;
 };
 
+interface PlannedSchemaCorrelation {
+  candidateIndex: number;
+  target: CorrelationTarget;
+}
+
+/** Freezes every AI correspondence and Calendar revision before a Rule Run may wait for approval. */
+const planSchemaCorrelations = async (input: {
+  env: Bindings;
+  organizationId: string;
+  database: D1Database;
+  dependencies: AutomationDependencies;
+  accessToken: string;
+  extraction: MailExtraction;
+}): Promise<PlannedSchemaCorrelation[]> => {
+  const candidates = input.extraction.events;
+  if (!candidates.length) return [];
+  const windowDays = input.extraction.kind === 'response'
+    ? await organizationResponseWindowDays(drizzleOrganizationDatabase(input.database))
+    : null;
+  const window = input.extraction.kind === 'response'
+    ? responseSearchWindow(candidates, windowDays!)
+    : refreshSearchWindow(candidates);
+  if (!window) return [];
+  const targets = await correlationTargets(input.dependencies, input.accessToken, input.database, window);
+  const matched = await correlatedTargets(
+    input.env,
+    input.organizationId,
+    input.database,
+    input.dependencies,
+    candidates,
+    targets,
+    input.extraction.kind === 'response'
+      ? (candidateStartsAt, eventStartsAt) => withinResponseWindow(candidateStartsAt, eventStartsAt, windowDays!)
+      : withinRefreshWindow,
+  );
+  return [...matched].map(([candidateIndex, target]) => ({ candidateIndex, target }));
+};
+
 /** Keeps the first link for each published URL when a later message republishes a file. */
 const distinctAttachmentLinks = (links: AttachmentLink[]): AttachmentLink[] => {
   const seen = new Set<string>();
@@ -1547,6 +1573,355 @@ const rewriteScheduledEventDescription = async (input: {
   }).where(eq(events.id, input.target.rowId)).run();
 };
 
+interface SchemaExtractionEffectArguments {
+  organizationId: string;
+  sourceMessageId: string;
+  gmailMessageId: string;
+  subject: string;
+  receivedAt: string;
+  recordedFolderId: string | null;
+  rule: ActiveRule;
+  extraction: MailExtraction;
+  correlations: PlannedSchemaCorrelation[];
+  attachments: SourceAttachment[];
+  agentFailed: boolean;
+}
+
+const schemaPlannedEffects = (arguments_: SchemaExtractionEffectArguments) => [
+  ...(arguments_.extraction.warnings.length ? [{ key: 'record-warnings', kind: 'schema.record_warnings', arguments: arguments_ as unknown as Record<string, unknown>, dependsOn: [] }] : []),
+  { key: 'deliver-summary', kind: 'schema.deliver_summary', arguments: arguments_ as unknown as Record<string, unknown>, dependsOn: [] },
+  ...(arguments_.extraction.tasks.length ? [{ key: 'create-tasks', kind: 'schema.create_tasks', arguments: arguments_ as unknown as Record<string, unknown>, dependsOn: [] }] : []),
+  { key: 'apply-events', kind: 'schema.apply_events', arguments: arguments_ as unknown as Record<string, unknown>, dependsOn: [] },
+];
+
+/** Applies only the frozen output of Schema Rule planning; it never invokes AI. */
+const applySchemaExtraction = async (
+  dependencies: AutomationDependencies,
+  database: D1Database,
+  accessToken: string,
+  input: SchemaExtractionEffectArguments,
+  attachmentContents: SourceAttachmentContent[],
+): Promise<void> => {
+  const db = drizzleOrganizationDatabase(database);
+  const { extraction, rule, sourceMessageId, subject, gmailMessageId } = input;
+  const candidates = extraction.events;
+  if (!candidates.length) {
+    await db.update(sourceMessages).set({ state: input.agentFailed ? 'exception' : 'processed', processedAt: now() })
+      .where(eq(sourceMessages.id, sourceMessageId)).run();
+    return;
+  }
+  let attachmentFolderId: string | null = null;
+  if (attachmentContents.length) {
+    try {
+      attachmentFolderId = await resolveSourceMessageFolder({
+        database: db, drive: dependencies.attachments, accessToken, subject,
+        receivedAt: input.receivedAt, recordedFolderId: input.recordedFolderId,
+        sourceMessageId,
+      });
+    } catch (error) {
+      await db.insert(automationWarnings).values({
+        id: crypto.randomUUID(), sourceMessageId, code: 'attachment_folder_unavailable',
+        message: error instanceof Error ? error.message : 'The Attachment Folder Path could not be created in Drive.',
+        createdAt: now(),
+      }).run();
+    }
+  }
+  const publications = await Promise.all(attachmentContents.map(async (attachment) => ({
+    attachment,
+    publication: attachmentFolderId
+      ? await dependencies.attachments.publish({ accessToken, attachment, parentFolderId: attachmentFolderId })
+      : unpublishedAttachment,
+  })));
+  const publicationFailed = publications.some(({ publication }) => publication.outcome === 'failed');
+  const attachmentLinks = publications.flatMap(({ attachment, publication }) => publication.publicUrl
+    ? [{ filename: attachment.filename, url: publication.publicUrl }] : []);
+  const calendarAttachments = publications.flatMap(({ attachment, publication }) => publication.publicUrl ? [{
+    fileUrl: publication.publicUrl, title: attachment.filename, mimeType: attachment.mimeType,
+  }] : []);
+  const recordEventAttachments = async (eventId: string): Promise<void> => {
+    for (const { attachment, publication } of publications) {
+      await db.insert(eventAttachments).values({
+        id: crypto.randomUUID(), eventId, gmailAttachmentId: attachment.attachmentId,
+        filename: attachment.filename, mimeType: attachment.mimeType, byteSize: attachment.size,
+        driveFileId: publication.driveFileId, publicUrl: publication.publicUrl,
+        outcome: publication.outcome, createdAt: now(),
+      }).run();
+      await db.insert(deliveries).values({
+        id: crypto.randomUUID(), eventId, channel: 'drive', destination: attachment.filename,
+        outcome: publication.outcome, externalId: publication.driveFileId, createdAt: now(),
+      }).run();
+    }
+  };
+  if (extraction.kind === 'response') {
+    const matched = new Map(input.correlations.map(({ candidateIndex, target }) => [candidateIndex, target]));
+    const target = [...matched.values()][0];
+    if (target) {
+      await db.delete(guestRegistrations).where(and(
+        eq(guestRegistrations.eventId, target.rowId), eq(guestRegistrations.sourceMessageId, sourceMessageId),
+      )).run();
+      if (extraction.guests.length) {
+        await db.insert(guestRegistrations).values(extraction.guests.map((guest) => ({
+          id: crypto.randomUUID(), eventId: target.rowId, sourceMessageId,
+          name: guest.name, affiliation: guest.affiliation, attending: guest.attending, createdAt: now(),
+        }))).run();
+      }
+      await recordEventAttachments(target.rowId);
+      await rewriteScheduledEventDescription({ dependencies, database, accessToken, target, gmailMessageId });
+    }
+    await db.update(sourceMessages).set({
+      state: publicationFailed || input.agentFailed ? 'exception' : 'processed', processedAt: now(),
+    }).where(eq(sourceMessages.id, sourceMessageId)).run();
+    return;
+  }
+  const invitees = await activeMemberInvitees(database);
+  const attendees = publicationFailed ? [] : invitees;
+  const mergeMatches = new Map(input.correlations.map(({ candidateIndex, target }) => [candidateIndex, target]));
+  const calendarUrl = new URL(CALENDAR_EVENTS_URL);
+  if (calendarAttachments.length) calendarUrl.searchParams.set('supportsAttachments', 'true');
+  if (attendees.length) calendarUrl.searchParams.set('sendUpdates', 'all');
+  for (const [index, candidate] of candidates.entries()) {
+    const merged = mergeMatches.get(index);
+    if (merged) {
+      await mergeScheduledEvent({
+        dependencies, database, accessToken, target: merged, candidate, attachmentLinks, gmailMessageId,
+      });
+      await recordEventAttachments(merged.rowId);
+      continue;
+    }
+    const description = calendarEventDescription({
+      summary: candidate.summary, attachments: attachmentLinks,
+      attribution: sourceMessageAttribution(gmailMessageId),
+    });
+    const event = await dependencies.google.request<CalendarEventResource>(accessToken, calendarUrl.toString(), {
+      method: 'POST',
+      body: JSON.stringify({
+        summary: candidate.title, description, location: candidate.location,
+        start: { dateTime: candidate.startsAt, timeZone: 'Asia/Tokyo' },
+        end: { dateTime: candidate.endsAt, timeZone: 'Asia/Tokyo' },
+        attachments: calendarAttachments,
+        attendees: attendees.map(({ email }) => ({ email })),
+      }),
+    });
+    if (!event.id) throw new Error('Google Calendar did not return an event ID.');
+    const eventId = crypto.randomUUID();
+    const eventCreatedAt = now();
+    await db.insert(events).values({
+      id: eventId, organizationId: input.organizationId, ruleId: rule.id, sourceMessageId,
+      googleEventId: event.id, title: candidate.title, startsAt: candidate.startsAt,
+      endsAt: candidate.endsAt, location: candidate.location, description: candidate.summary,
+      calendarDescription: description, calendarEtag: event.etag ?? null,
+      status: publicationFailed ? 'draft' : 'scheduled', createdAt: eventCreatedAt, updatedAt: eventCreatedAt,
+    }).run();
+    await recordEventInvitations({
+      database, eventId, googleEventId: event.id, invitees,
+      outcome: publicationFailed ? 'pending' : 'succeeded',
+    });
+    await recordEventAttachments(eventId);
+  }
+  if (publicationFailed) {
+    await db.insert(automationExceptions).values({
+      id: crypto.randomUUID(), sourceMessageId, code: 'drive_attachment_publish_failed',
+      message: '一部の添付ファイルを公開できませんでした。', state: 'open', createdAt: now(),
+    }).run();
+  }
+  await db.update(sourceMessages).set({
+    state: publicationFailed || input.agentFailed ? 'exception' : 'processed', processedAt: now(),
+  }).where(eq(sourceMessages.id, sourceMessageId)).run();
+};
+
+const schemaRuleEffectPort = (input: {
+  dependencies: AutomationDependencies;
+  env: Bindings;
+  database: D1Database;
+  accessToken: string;
+  cachedAttachmentContents?: SourceAttachmentContent[];
+}): RuleEffectPort => ({
+  apply: async ({ effect }) => {
+    const arguments_ = effect.arguments as unknown as SchemaExtractionEffectArguments;
+    const db = drizzleOrganizationDatabase(input.database);
+    if (effect.kind === 'schema.record_warnings') {
+      if (arguments_.extraction.warnings.length) await db.insert(automationWarnings).values(arguments_.extraction.warnings.map((warning) => ({
+        id: crypto.randomUUID(), sourceMessageId: arguments_.sourceMessageId, code: warning.code, message: warning.message, createdAt: now(),
+      }))).run();
+    } else if (effect.kind === 'schema.deliver_summary') {
+      await deliverSourceMessageNotice({
+        dependencies: input.dependencies, env: input.env, database: input.database,
+        organizationId: arguments_.organizationId, googleAccessToken: input.accessToken,
+        sourceMessageId: arguments_.sourceMessageId, rule: arguments_.rule,
+        subject: `Message Summary: ${arguments_.subject}`, body: arguments_.extraction.summary,
+      });
+    } else if (effect.kind === 'schema.create_tasks') {
+      await createTaskWorkflow(db).createFromSourceMessage({
+        organizationId: arguments_.organizationId,
+        sourceMessageId: arguments_.sourceMessageId,
+        sourceMessageSubject: arguments_.subject,
+        extractedTasks: arguments_.extraction.tasks,
+      });
+    } else if (effect.kind === 'schema.apply_events') {
+      const attachmentContents = input.cachedAttachmentContents ?? (arguments_.attachments.length
+        ? await input.dependencies.attachments.read({
+          accessToken: input.accessToken,
+          gmailMessageId: arguments_.gmailMessageId,
+          attachments: arguments_.attachments,
+        })
+        : []);
+      await applySchemaExtraction(
+        input.dependencies,
+        input.database,
+        input.accessToken,
+        arguments_,
+        attachmentContents,
+      );
+    } else {
+      throw new Error(`Unsupported Rule Effect: ${effect.kind}`);
+    }
+    return { applied: true };
+  },
+});
+
+export const schemaRuleEffectPortForApproval = async (input: {
+  env: Bindings;
+  database: D1Database;
+  organizationId: string;
+}): Promise<RuleEffectPort> => {
+  const inbox = await activeAutomationInbox(input.database);
+  const accessToken = await accessTokenForInbox(input.env, input.organizationId, input.database, inbox, productionDependencies);
+  return schemaRuleEffectPort({ ...input, dependencies: productionDependencies, accessToken });
+};
+
+/** Resumes due effects without rerunning selection, AI, or planning. */
+export const resumeDueRuleRuns = async (input: {
+  env: Bindings;
+  database: D1Database;
+  organizationId: string;
+}) => {
+  let schemaPort: RuleEffectPort | undefined;
+  const agentPorts = new Map<string, Awaited<ReturnType<typeof agentWritePortForApproval>>>();
+  const execution = createRuleExecution({
+    database: input.database,
+    planner: { plan: async () => [] },
+    effects: {
+      apply: async (application) => {
+        if (application.run.rule.type === 'schema') {
+          schemaPort ??= await schemaRuleEffectPortForApproval(input);
+          return schemaPort.apply(application);
+        }
+        let writes = agentPorts.get(application.run.rule.id);
+        if (!writes) {
+          writes = await agentWritePortForApproval({
+            ...input,
+            sourceMessageId: application.run.sourceMessageId,
+            agentRuleId: application.run.rule.id,
+          });
+          agentPorts.set(application.run.rule.id, writes);
+        }
+        if (application.effect.kind === 'agent.send_line_message') {
+          return writes.sendLine(application.effect.arguments as { destination: string; message: string });
+        }
+        if (application.effect.kind === 'agent.create_scheduled_event') {
+          return writes.createScheduledEvent(application.effect.arguments as {
+            destination: string; title: string; startsAt: string; endsAt: string; location?: string; description?: string;
+          });
+        }
+        throw new Error(`Unsupported Rule Effect: ${application.effect.kind}`);
+      },
+    },
+  });
+  await execution.expireApprovals();
+  return execution.resumeDue();
+};
+
+/** Starts a side-effect-free Draft run for one selected Schema Rule revision. */
+export const startSchemaDraftRuleRun = async (input: {
+  env: Bindings;
+  database: D1Database;
+  organizationId: string;
+  ruleId: string;
+  messageId: string;
+  extraction: MailExtraction;
+}) => {
+  const db = drizzleOrganizationDatabase(input.database);
+  const row = await db.select().from(automationRules).where(eq(automationRules.id, input.ruleId)).get();
+  if (!row || row.status !== 'draft') throw new Error('Mailbox Test requires a Draft Schema Rule.');
+  const [recipientReferences, lineReferences] = await Promise.all([
+    db.select().from(rulePermittedRecipientLists).where(eq(rulePermittedRecipientLists.ruleId, row.id)).all(),
+    db.select().from(rulePermittedLineLists).where(eq(rulePermittedLineLists.ruleId, row.id)).all(),
+  ]);
+  const rule: ActiveRule = {
+    id: row.id,
+    revision: row.currentRevision,
+    priority: row.priority,
+    executionMode: row.executionMode,
+    selectionPolicy: JSON.parse(row.selectionPolicy) as Record<string, unknown>,
+    taskRoleIds: JSON.parse(row.taskRoleIds) as string[],
+    permittedRecipientListIds: recipientReferences.map(({ listId }) => listId),
+    permittedLineListIds: lineReferences.map(({ listId }) => listId),
+  };
+  const source = await readMailboxTestSourceWithGoogle(
+    input.env, input.organizationId, input.database, input.messageId, productionDependencies,
+  );
+  if (!ruleMatches(rule, { sender: source.sender, subject: source.subject, body: source.source })) {
+    throw new Error('The selected Source Message does not match this Rule Selection Policy.');
+  }
+  const existing = await db.select({ id: sourceMessages.id, driveFolderId: sourceMessages.driveFolderId })
+    .from(sourceMessages).where(eq(sourceMessages.gmailMessageId, input.messageId)).get();
+  const sourceMessageId = existing?.id ?? crypto.randomUUID();
+  if (!existing) {
+    const timestamp = now();
+    await db.insert(sourceMessages).values({
+      id: sourceMessageId,
+      gmailMessageId: input.messageId,
+      gmailHistoryId: `draft-preview:${input.messageId}`,
+      sender: source.sender,
+      subject: source.subject,
+      receivedAt: source.receivedAt ?? timestamp,
+      processedAt: timestamp,
+      state: 'processed',
+    }).run();
+  }
+  const allowedRoles = new Set(rule.taskRoleIds ?? []);
+  const extraction: MailExtraction = {
+    ...input.extraction,
+    tasks: input.extraction.tasks.filter((task) => allowedRoles.has(task.assigneeRoleId)),
+  };
+  const arguments_: SchemaExtractionEffectArguments = {
+    organizationId: input.organizationId,
+    sourceMessageId,
+    gmailMessageId: input.messageId,
+    subject: source.subject,
+    receivedAt: source.receivedAt ?? now(),
+    recordedFolderId: existing?.driveFolderId ?? null,
+    rule,
+    extraction,
+    correlations: await planSchemaCorrelations({
+      env: input.env,
+      organizationId: input.organizationId,
+      database: input.database,
+      dependencies: productionDependencies,
+      accessToken: await accessTokenForInbox(
+        input.env,
+        input.organizationId,
+        input.database,
+        await activeAutomationInbox(input.database),
+        productionDependencies,
+      ),
+      extraction,
+    }),
+    attachments: source.attachments.map(({ data: _, ...attachment }) => attachment),
+    agentFailed: false,
+  };
+  const execution = createRuleExecution({
+    database: input.database,
+    planner: { plan: async () => [{
+      rule: { type: 'schema', id: rule.id, revision: rule.revision },
+      executionMode: 'read_only',
+      effects: schemaPlannedEffects(arguments_),
+    }] },
+    effects: schemaRuleEffectPort({ dependencies: productionDependencies, env: input.env, database: input.database, accessToken: '' }),
+  });
+  return (await execution.start({ sourceMessageId, intent: { kind: 'draft_preview', ruleRevisionId: String(rule.revision) } }))[0]!;
+};
+
 const processOrganizationMessage = async (
   dependencies: AutomationDependencies,
   env: Bindings,
@@ -1593,7 +1968,9 @@ const processOrganizationMessage = async (
   const [activeRules, activeAgentRuleRows] = await Promise.all([
     db.select({
       id: automationRules.id,
+      revision: automationRules.currentRevision,
       priority: automationRules.priority,
+      executionMode: automationRules.executionMode,
       selectionPolicy: automationRules.selectionPolicy,
       taskRoleIds: automationRules.taskRoleIds,
     }).from(automationRules).where(eq(automationRules.status, 'active')).orderBy(automationRules.priority).all(),
@@ -1616,7 +1993,9 @@ const processOrganizationMessage = async (
   const rule = selectActiveRule(activeRules.flatMap((row) => {
     try { return [{
       id: row.id,
+      revision: row.revision,
       priority: row.priority,
+      executionMode: row.executionMode,
       selectionPolicy: JSON.parse(row.selectionPolicy) as Record<string, unknown>,
       taskRoleIds: JSON.parse(row.taskRoleIds) as string[],
       permittedRecipientListIds: permittedRecipientLists.flatMap((reference) => reference.ruleId === row.id ? [reference.listId] : []),
@@ -1769,223 +2148,47 @@ const processOrganizationMessage = async (
       .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
   }
-  if (extraction?.warnings.length) {
-    await db.insert(automationWarnings).values(extraction.warnings.map((warning) => ({
-      id: crypto.randomUUID(),
-      sourceMessageId,
-      code: warning.code,
-      message: warning.message,
-      createdAt: now(),
-    }))).run();
-  }
-  if (extraction) await deliverSourceMessageNotice({
-    dependencies,
-    env,
-    database,
+  const schemaArguments: SchemaExtractionEffectArguments = {
     organizationId,
-    googleAccessToken: accessToken,
     sourceMessageId,
+    gmailMessageId,
+    subject,
+    receivedAt: receivedAtOf(message.internalDate) ?? timestamp,
+    recordedFolderId: known?.driveFolderId ?? null,
     rule,
-    subject: `Message Summary: ${subject}`,
-    body: extraction.summary,
-  });
-  const candidates = extraction.events;
-  if (extraction.tasks.length) {
-    await createTaskWorkflow(db).createFromSourceMessage({
+    extraction,
+    correlations: await planSchemaCorrelations({
+      env,
       organizationId,
-      sourceMessageId,
-      sourceMessageSubject: subject,
-      extractedTasks: extraction.tasks,
-    });
-  }
-  if (!candidates.length) {
+      database,
+      dependencies,
+      accessToken,
+      extraction,
+    }),
+    attachments,
+    agentFailed,
+  };
+  const schemaExecution = createRuleExecution({
+    database,
+    planner: { plan: async () => [{
+      rule: { type: 'schema', id: rule.id, revision: rule.revision },
+      executionMode: rule.executionMode,
+      effects: schemaPlannedEffects(schemaArguments),
+    }] },
+    effects: schemaRuleEffectPort({
+      dependencies,
+      env,
+      database,
+      accessToken,
+      cachedAttachmentContents: attachmentContents,
+    }),
+  });
+  await schemaExecution.start({ sourceMessageId, intent: { kind: 'live' } });
+  if (rule.executionMode !== 'unattended') {
     await db.update(sourceMessages).set({ state: agentFailed ? 'exception' : 'processed', processedAt: now() })
       .where(eq(sourceMessages.id, sourceMessageId)).run();
-    return;
   }
-  let attachmentFolderId: string | null = null;
-  if (attachmentContents.length) {
-    try {
-      attachmentFolderId = await resolveSourceMessageFolder({
-        database: db,
-        drive: dependencies.attachments,
-        accessToken,
-        subject,
-        receivedAt: receivedAtOf(message.internalDate) ?? timestamp,
-        recordedFolderId: known?.driveFolderId,
-        sourceMessageId,
-      });
-    } catch (error) {
-      await db.insert(automationWarnings).values({
-        id: crypto.randomUUID(),
-        sourceMessageId,
-        code: 'attachment_folder_unavailable',
-        message: error instanceof Error ? error.message : 'The Attachment Folder Path could not be created in Drive.',
-        createdAt: now(),
-      }).run();
-    }
-  }
-  const publications = await Promise.all(attachmentContents.map(async (attachment) => ({
-    attachment,
-    publication: attachmentFolderId
-      ? await dependencies.attachments.publish({ accessToken, attachment, parentFolderId: attachmentFolderId })
-      : unpublishedAttachment,
-  })));
-  const publicationFailed = publications.some(({ publication }) => publication.outcome === 'failed');
-  const attachmentLinks = publications.flatMap(({ attachment, publication }) => publication.publicUrl
-    ? [{ filename: attachment.filename, url: publication.publicUrl }]
-    : []);
-  const calendarAttachments = publications.flatMap(({ attachment, publication }) => publication.publicUrl ? [{
-    fileUrl: publication.publicUrl,
-    title: attachment.filename,
-    mimeType: attachment.mimeType,
-  }] : []);
-  const recordEventAttachments = async (eventId: string): Promise<void> => {
-    for (const { attachment, publication } of publications) {
-      await db.insert(eventAttachments).values({
-        id: crypto.randomUUID(),
-        eventId,
-        gmailAttachmentId: attachment.attachmentId,
-        filename: attachment.filename,
-        mimeType: attachment.mimeType,
-        byteSize: attachment.size,
-        driveFileId: publication.driveFileId,
-        publicUrl: publication.publicUrl,
-        outcome: publication.outcome,
-        createdAt: now(),
-      }).run();
-      await db.insert(deliveries).values({
-        id: crypto.randomUUID(),
-        eventId,
-        channel: 'drive',
-        destination: attachment.filename,
-        outcome: publication.outcome,
-        externalId: publication.driveFileId,
-        createdAt: now(),
-      }).run();
-    }
-  };
-  if (extraction.kind === 'response') {
-    const windowDays = await organizationResponseWindowDays(db);
-    const window = responseSearchWindow(candidates, windowDays);
-    const targets = window ? await correlationTargets(dependencies, accessToken, database, window) : [];
-    const matched = await correlatedTargets(
-      env, organizationId, database, dependencies, candidates, targets,
-      (candidateStartsAt, eventStartsAt) => withinResponseWindow(candidateStartsAt, eventStartsAt, windowDays),
-    );
-    const target = [...matched.values()][0];
-    // An Event Response that locates nothing creates nothing: it proposed no
-    // event, so there is neither a Scheduled Event to write nor one to withhold.
-    if (target) {
-      await db.delete(guestRegistrations).where(and(
-        eq(guestRegistrations.eventId, target.rowId),
-        eq(guestRegistrations.sourceMessageId, sourceMessageId),
-      )).run();
-      if (extraction.guests.length) {
-        await db.insert(guestRegistrations).values(extraction.guests.map((guest) => ({
-          id: crypto.randomUUID(),
-          eventId: target.rowId,
-          sourceMessageId,
-          name: guest.name,
-          affiliation: guest.affiliation,
-          attending: guest.attending,
-          createdAt: now(),
-        }))).run();
-      }
-      await recordEventAttachments(target.rowId);
-      await rewriteScheduledEventDescription({
-        dependencies, database, accessToken, target, gmailMessageId,
-      });
-    }
-    await db.update(sourceMessages).set({
-      state: publicationFailed || agentFailed ? 'exception' : 'processed',
-      processedAt: now(),
-    }).where(eq(sourceMessages.id, sourceMessageId)).run();
-    return;
-  }
-  const invitees = await activeMemberInvitees(database);
-  /** An unpublished attachment keeps the event an administrative draft, so its Members are not invited yet. */
-  const attendees = publicationFailed ? [] : invitees;
-  const mergeWindow = refreshSearchWindow(candidates);
-  const mergeTargets = mergeWindow
-    ? await correlationTargets(dependencies, accessToken, database, mergeWindow)
-    : [];
-  const mergeMatches = await correlatedTargets(
-    env, organizationId, database, dependencies, candidates, mergeTargets, withinRefreshWindow,
-  );
-  const calendarUrl = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
-  if (calendarAttachments.length) calendarUrl.searchParams.set('supportsAttachments', 'true');
-  if (attendees.length) calendarUrl.searchParams.set('sendUpdates', 'all');
-  for (const [index, candidate] of candidates.entries()) {
-    const merged = mergeMatches.get(index);
-    if (merged) {
-      await mergeScheduledEvent({
-        dependencies, database, accessToken, target: merged, candidate,
-        attachmentLinks, gmailMessageId,
-      });
-      await recordEventAttachments(merged.rowId);
-      continue;
-    }
-    const description = calendarEventDescription({
-      summary: candidate.summary,
-      attachments: attachmentLinks,
-      attribution: sourceMessageAttribution(gmailMessageId),
-    });
-    const event = await dependencies.google.request<CalendarEventResource>(accessToken, calendarUrl.toString(), {
-      method: 'POST',
-      body: JSON.stringify({
-        summary: candidate.title,
-        description,
-        location: candidate.location,
-        start: { dateTime: candidate.startsAt, timeZone: 'Asia/Tokyo' },
-        end: { dateTime: candidate.endsAt, timeZone: 'Asia/Tokyo' },
-        attachments: calendarAttachments,
-        attendees: attendees.map(({ email }) => ({ email })),
-      }),
-    });
-    if (!event.id) throw new Error('Google Calendar did not return an event ID.');
-    const eventId = crypto.randomUUID();
-    const eventCreatedAt = now();
-    await db.insert(events).values({
-      id: eventId,
-      organizationId,
-      ruleId: rule.id,
-      sourceMessageId,
-      googleEventId: event.id,
-      title: candidate.title,
-      startsAt: candidate.startsAt,
-      endsAt: candidate.endsAt,
-      location: candidate.location,
-      description: candidate.summary,
-      calendarDescription: description,
-      calendarEtag: event.etag ?? null,
-      status: publicationFailed ? 'draft' : 'scheduled',
-      createdAt: eventCreatedAt,
-      updatedAt: eventCreatedAt,
-    }).run();
-    await recordEventInvitations({
-      database,
-      eventId,
-      googleEventId: event.id,
-      invitees,
-      outcome: publicationFailed ? 'pending' : 'succeeded',
-    });
-    await recordEventAttachments(eventId);
-  }
-  if (publicationFailed) {
-    await db.insert(automationExceptions).values({
-      id: crypto.randomUUID(),
-      sourceMessageId,
-      code: 'drive_attachment_publish_failed',
-      message: '一部の添付ファイルを公開できませんでした。',
-      state: 'open',
-      createdAt: now(),
-    }).run();
-  }
-  await db.update(sourceMessages).set({
-    state: publicationFailed || agentFailed ? 'exception' : 'processed',
-    processedAt: now(),
-  }).where(eq(sourceMessages.id, sourceMessageId)).run();
+  return;
 };
 
 const runOrganizationInbox = async (
@@ -2096,7 +2299,7 @@ const runOrganizationAutomationWithGoogle = async (
   if (!inbox) throw new Error('有効な Automation Inbox が見つかりません。');
   await requireActiveAiConnection(database);
   const baseline = await ensureBaselineSchemaRule(db, organizationId);
-  await expireProposedActions(database);
+  await resumeDueRuleRuns({ env, database, organizationId });
   const before = await automationCounts(database);
   const run = await runOrganizationInbox(dependencies, env, organizationId, database, inbox, baseline.repairSkipped);
   await completeBaselineSkippedRepair(db);
@@ -2129,7 +2332,7 @@ const runEnabledAutomationsWithDependencies = async (env: Bindings, dependencies
         databaseId: organization.databaseId,
       });
       const orgDb = drizzleOrganizationDatabase(database.raw);
-      await expireProposedActions(database.raw);
+      await resumeDueRuleRuns({ env, database: database.raw, organizationId: organization.id });
       const inboxes = await orgDb.select().from(googleConnections).where(and(
         eq(googleConnections.kind, 'automation_inbox'),
         eq(googleConnections.status, 'active'),
@@ -2182,8 +2385,6 @@ export const createAutomation = (
         searchMailboxForTestWithGoogle(env, input.organizationId, input.database, input.subject, dependencies),
       readSource: (input: { organizationId: string; database: D1Database; messageId: string }): Promise<MailboxTestSource> =>
         readMailboxTestSourceWithGoogle(env, input.organizationId, input.database, input.messageId, dependencies),
-      createCalendarEvents: (input: { organizationId: string; database: D1Database; messageId: string; events: EventDetails[] }): Promise<{ eventIds: string[] }> =>
-        createMailboxTestCalendarEventsWithGoogle(env, input.organizationId, input.database, { messageId: input.messageId, events: input.events }, dependencies),
       extractPackage: (input: { organizationId: string; database: D1Database; source: string; attachments: SourceAttachmentContent[]; receivedAt?: string }): Promise<MailExtraction | null> =>
         extractMailboxTestPackage(env, input.organizationId, input.database, input.source, input.attachments, input.receivedAt, dependencies),
       previewAiRequest: (input: { database: D1Database; source: string; attachments: SourceAttachmentContent[]; receivedAt?: string }): Promise<AiEventDetailsRequest> =>

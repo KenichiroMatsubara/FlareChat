@@ -63,6 +63,24 @@ const databaseBeforeOperationalTaskRoles = (): TestD1Database => {
   return database;
 };
 
+const databaseBeforeRuleExecution = (): TestD1Database => {
+  const database = createTestD1Database();
+  openDatabases.push(database);
+  const migrationDirectory = resolve(import.meta.dirname, '../migrations/organization');
+  const names = readdirSync(migrationDirectory)
+    .filter((name) => name.endsWith('.sql') && name < '0021_rule_execution.sql')
+    .sort();
+  for (const name of names) {
+    const migration = readFileSync(resolve(migrationDirectory, name), 'utf8');
+    for (const statement of migration.split('--> statement-breakpoint').map((value) => value.trim()).filter(Boolean)) database.execute(statement);
+  }
+  database.execute(
+    'CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)',
+  );
+  for (const name of names) database.execute('INSERT INTO d1_migrations (name) VALUES (?)', name);
+  return database;
+};
+
 describe('Schema Lifecycle', () => {
   it('makes a partially migrated Control database ready for current code', async () => {
     const database = databaseAtInitialControlSchema();
@@ -137,7 +155,7 @@ describe('Schema Lifecycle', () => {
 
     expect(receipt).toMatchObject({
       kind: 'organization',
-      currentMigration: '0020_event_responses_and_guests.sql',
+      currentMigration: '0021_rule_execution.sql',
       appliedMigrations: [
         '0001_tasks.sql',
         '0002_line_destination_roster.sql',
@@ -159,6 +177,7 @@ describe('Schema Lifecycle', () => {
         '0018_automation_inbox_health.sql',
         '0019_task_role_revisions.sql',
         '0020_event_responses_and_guests.sql',
+        '0021_rule_execution.sql',
       ],
     });
     expect(database.rows<{ display_name: string }>(
@@ -191,7 +210,7 @@ describe('Schema Lifecycle', () => {
       category: 'migration_apply_failed',
       kind: 'organization',
       currentMigration: '0000_initial.sql',
-      expectedMigration: '0020_event_responses_and_guests.sql',
+      expectedMigration: '0021_rule_execution.sql',
     });
 
     database.execute('DROP INDEX tasks_source_role_deadline_title_idx');
@@ -200,7 +219,7 @@ describe('Schema Lifecycle', () => {
       kind: 'organization',
       database: database.binding,
     })).resolves.toMatchObject({
-      currentMigration: '0020_event_responses_and_guests.sql',
+      currentMigration: '0021_rule_execution.sql',
     });
   });
 
@@ -221,7 +240,7 @@ describe('Schema Lifecycle', () => {
       category: 'checksum_mismatch',
       kind: 'organization',
       currentMigration: '0000_initial.sql',
-      expectedMigration: '0020_event_responses_and_guests.sql',
+      expectedMigration: '0021_rule_execution.sql',
     });
   });
 
@@ -237,7 +256,7 @@ describe('Schema Lifecycle', () => {
     await expect(schemaLifecycle.ensureCurrent({
       kind: 'organization',
       database: database.binding,
-    })).resolves.toMatchObject({ currentMigration: '0020_event_responses_and_guests.sql' });
+    })).resolves.toMatchObject({ currentMigration: '0021_rule_execution.sql' });
   });
 
   it('migrates existing Tasks into Organization-owned role records and unassigns the Control identities they named', async () => {
@@ -255,6 +274,25 @@ describe('Schema Lifecycle', () => {
       { assignee_role_id: 'legacy-registration', assignee_role_name: 'legacy-registration', assignee_name: '未割り当て', assignee_member_id: null },
     ]);
     expect(database.rows('SELECT role_id, member_id FROM task_role_assignments')).toEqual([]);
+    expect(database.rows('PRAGMA foreign_key_check')).toEqual([]);
+  });
+
+  it('migrates an existing Agent Proposed Action into the common Rule Run with the Agent Run identity', async () => {
+    const database = databaseBeforeRuleExecution();
+    database.execute("INSERT INTO prompts (id, organization_id, name, instructions, current_revision, created_at, updated_at) VALUES ('prompt-1', 'organization-1', 'Prompt', 'Act.', 1, '2026-08-01', '2026-08-01')");
+    database.execute("INSERT INTO agent_rules (id, organization_id, name, status, execution_mode, prompt_id, selection_policy, priority, current_revision, created_at, updated_at) VALUES ('agent-rule-1', 'organization-1', 'Agent', 'active', 'approval', 'prompt-1', '{}', 0, 1, '2026-08-01', '2026-08-01')");
+    database.execute("INSERT INTO source_messages (id, gmail_message_id, gmail_history_id, sender, subject, received_at, state) VALUES ('source-1', 'gmail-1', 'history-1', 'sender@example.com', 'Notice', '2026-08-01', 'processed')");
+    database.execute("INSERT INTO agent_runs (id, agent_rule_id, agent_rule_revision, prompt_id, prompt_revision, source_message_id, model, started_at, completed_at, outcome, tool_call_count, tokens, transcript_key, expires_at) VALUES ('agent-run-1', 'agent-rule-1', 1, 'prompt-1', 1, 'source-1', 'model', '2026-08-01', '2026-08-01', 'succeeded', 1, 10, 'transcript', '2026-11-01')");
+    database.execute("INSERT INTO proposed_actions (id, agent_run_id, agent_rule_id, tool, arguments, status, created_at, expires_at) VALUES ('action-1', 'agent-run-1', 'agent-rule-1', 'send_line_message', '{\"destination\":\"line-1\",\"message\":\"Hello\"}', 'pending', '2026-08-01', '2026-08-08')");
+
+    await schemaLifecycle.ensureCurrent({ kind: 'organization', database: database.binding });
+
+    expect(database.rows<{ id: string; agent_rule_id: string; status: string }>('SELECT id, agent_rule_id, status FROM rule_runs')).toEqual([
+      { id: 'agent-run-1', agent_rule_id: 'agent-rule-1', status: 'pending_approval' },
+    ]);
+    expect(database.rows<{ id: string; rule_run_id: string; status: string }>('SELECT id, rule_run_id, status FROM rule_effects')).toEqual([
+      { id: 'action-1', rule_run_id: 'agent-run-1', status: 'pending' },
+    ]);
     expect(database.rows('PRAGMA foreign_key_check')).toEqual([]);
   });
 
@@ -353,8 +391,8 @@ describe('Schema Lifecycle', () => {
     ]);
 
     expect(receipts).toEqual([
-      expect.objectContaining({ currentMigration: '0020_event_responses_and_guests.sql' }),
-      expect.objectContaining({ currentMigration: '0020_event_responses_and_guests.sql' }),
+      expect.objectContaining({ currentMigration: '0021_rule_execution.sql' }),
+      expect.objectContaining({ currentMigration: '0021_rule_execution.sql' }),
     ]);
   });
 });

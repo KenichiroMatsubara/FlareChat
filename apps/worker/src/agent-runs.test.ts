@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { AGENT_TOKEN_CEILING, AGENT_TOOL_WRITE_CAPS, approveProposedAction, expireProposedActions, proposedActionsForRun, rejectProposedAction, runAgent, runReadOnlyAgent } from './agent-runs';
-import { recordDeliveryAttempt } from './delivery';
+import { AGENT_TOKEN_CEILING, AGENT_TOOL_WRITE_CAPS, runAgent, runReadOnlyAgent } from './agent-runs';
 import { createMigratedTestD1, type TestD1Database } from '../test/d1';
 
 let database: TestD1Database | undefined;
@@ -30,7 +29,7 @@ describe('read-only Agent Rule bounds', () => {
 });
 
 describe('Agent Rule writes', () => {
-  it('completes approval mode without an external effect and preserves the exact Proposed Action arguments', async () => {
+  it('completes approval mode without an external effect and returns the exact planned arguments', async () => {
     database = createMigratedTestD1('organization');
     const sendLine = vi.fn();
     let turn = 0;
@@ -56,10 +55,9 @@ describe('Agent Rule writes', () => {
 
     expect(result.output).toBe('Done');
     expect(sendLine).not.toHaveBeenCalled();
-    await expect(proposedActionsForRun(database.binding, 'run-1')).resolves.toMatchObject([{
+    expect(result.plannedActions).toEqual([{
       tool: 'send_line_message',
       arguments: { destination: 'line-user-1', message: 'Bring shoes.' },
-      status: 'pending',
     }]);
   });
 
@@ -129,73 +127,12 @@ describe('Agent Rule writes', () => {
     })).rejects.toThrow(`Agent Rule create_scheduled_event call cap of ${AGENT_TOOL_WRITE_CAPS.create_scheduled_event} was exceeded.`);
   });
 
-  it('approves the stored arguments without another model call and returns the resulting Delivery Record', async () => {
-    database = createMigratedTestD1('organization');
-    let turn = 0;
-    await runAgent({
-      database: database.binding, runId: 'run-approve', agentRuleId: 'agent-rule-1', executionMode: 'approval',
-      permittedLineDestinations: ['line-user-1'], permittedRecipientDestinations: [],
-      writes: { sendLine: vi.fn(), createScheduledEvent: vi.fn() },
-      model: { complete: async () => turn++ === 0
-        ? { model: 'test-model', content: '', toolCalls: [{ id: 'call-1', name: 'send_line_message', arguments: '{"destination":"line-user-1","message":"Stored text"}' }], totalTokens: 1 }
-        : { model: 'test-model', content: 'done', toolCalls: [], totalTokens: 1 } },
-      connection: { apiKey: 'test-key', baseUrl: 'https://ai.example.com/v1', model: 'test-model' }, prompt: 'Notify.',
-      source: { id: 'source-approve', sender: 'sender@example.com', subject: 'Practice', body: 'Body', attachments: [] },
-    });
-    const [proposal] = await proposedActionsForRun(database.binding, 'run-approve');
-
-    const approved = await approveProposedAction({
-      database: database.binding,
-      actionId: proposal!.id,
-      actorIdentityId: 'identity-1',
-      writes: {
-        sendLine: async ({ destination }) => recordDeliveryAttempt(database!.binding, { destination, channel: 'line', outcome: 'succeeded', externalId: 'line-request-1' }),
-        createScheduledEvent: vi.fn(),
-      },
-    });
-
-    expect(approved).toMatchObject({
-      status: 'approved',
-      arguments: { destination: 'line-user-1', message: 'Stored text' },
-      effect: { destination: 'line-user-1', outcome: 'succeeded', externalId: 'line-request-1' },
-    });
-  });
-
-  it('rejects a Proposed Action without performing it and records the member decision', async () => {
-    database = createMigratedTestD1('organization');
-    let turn = 0;
-    const writes = { sendLine: vi.fn(), createScheduledEvent: vi.fn() };
-    await runAgent({
-      database: database.binding, runId: 'run-reject', agentRuleId: 'agent-rule-1', executionMode: 'approval',
-      permittedLineDestinations: ['line-user-1'], permittedRecipientDestinations: [], writes,
-      model: { complete: async () => turn++ === 0
-        ? { model: 'test-model', content: '', toolCalls: [{ id: 'call-1', name: 'send_line_message', arguments: '{"destination":"line-user-1","message":"Do not send"}' }], totalTokens: 1 }
-        : { model: 'test-model', content: 'done', toolCalls: [], totalTokens: 1 } },
-      connection: { apiKey: 'test-key', baseUrl: 'https://ai.example.com/v1', model: 'test-model' }, prompt: 'Notify.',
-      source: { id: 'source-reject', sender: 'sender@example.com', subject: 'Practice', body: 'Body', attachments: [] },
-    });
-    const [proposal] = await proposedActionsForRun(database.binding, 'run-reject');
-
-    await expect(rejectProposedAction(database.binding, proposal!.id, 'identity-1')).resolves.toMatchObject({ status: 'rejected' });
-    expect(writes.sendLine).not.toHaveBeenCalled();
-    await expect(proposedActionsForRun(database.binding, 'run-reject')).resolves.toMatchObject([{ status: 'rejected' }]);
-  });
-
-  it('records an unapproved Proposed Action as expired after the configured deadline', async () => {
-    database = createMigratedTestD1('organization');
-    database.execute(`INSERT INTO proposed_actions (id, agent_run_id, agent_rule_id, tool, arguments, status, created_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`, 'action-expired', 'run-expired', 'agent-rule-1', 'send_line_message', '{}', '2026-07-01T00:00:00.000Z', '2026-07-08T00:00:00.000Z');
-
-    await expect(expireProposedActions(database.binding, new Date('2026-07-08T00:00:00.001Z'))).resolves.toBe(1);
-    await expect(proposedActionsForRun(database.binding, 'run-expired')).resolves.toMatchObject([{ status: 'expired' }]);
-  });
-
-  it('performs LINE and Scheduled Event writes immediately in unattended mode without Proposed Actions', async () => {
+  it('returns a complete unattended write plan without writing during the model loop', async () => {
     database = createMigratedTestD1('organization');
     const sendLine = vi.fn().mockResolvedValue({ outcome: 'succeeded' });
     const createScheduledEvent = vi.fn().mockResolvedValue({ outcome: 'succeeded', eventId: 'event-1' });
     let turn = 0;
-    await runAgent({
+    const result = await runAgent({
       database: database.binding, runId: 'run-unattended', agentRuleId: 'agent-rule-1', executionMode: 'unattended',
       permittedLineDestinations: ['line-user-1'], permittedRecipientDestinations: ['guest@example.com'],
       writes: { sendLine, createScheduledEvent },
@@ -209,8 +146,11 @@ describe('Agent Rule writes', () => {
       source: { id: 'source-unattended', sender: 'sender@example.com', subject: 'Practice', body: 'Body', attachments: [] },
     });
 
-    expect(sendLine).toHaveBeenCalledWith({ destination: 'line-user-1', message: 'Bring shoes.' });
-    expect(createScheduledEvent).toHaveBeenCalledWith(expect.objectContaining({ destination: 'guest@example.com', title: 'Practice' }));
-    await expect(proposedActionsForRun(database.binding, 'run-unattended')).resolves.toEqual([]);
+    expect(sendLine).not.toHaveBeenCalled();
+    expect(createScheduledEvent).not.toHaveBeenCalled();
+    expect(result.plannedActions).toEqual([
+      { tool: 'send_line_message', arguments: { destination: 'line-user-1', message: 'Bring shoes.' } },
+      { tool: 'create_scheduled_event', arguments: expect.objectContaining({ destination: 'guest@example.com', title: 'Practice' }) },
+    ]);
   });
 });

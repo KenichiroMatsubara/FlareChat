@@ -5,7 +5,7 @@ import { isRouteErrorResponse, NavLink, Outlet, useLoaderData, useNavigate, useN
 import type { AppState } from '@mail/domain';
 
 import { api } from './api';
-import type { MemberAttendanceStatus, MemberPortal, AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, OrganizationAgentRule, OrganizationConnections, OrganizationDashboard, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationMember, OrganizationMemberInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, ProposedAction, MemberLineDestinationInput, TaskAssignmentProposal, TaskReassignmentReview, TaskRoleConfiguration } from './api';
+import type { MemberAttendanceStatus, MemberPortal, AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, OrganizationAgentRule, OrganizationConnections, OrganizationDashboard, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationMember, OrganizationMemberInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, MemberLineDestinationInput, RuleRun, TaskAssignmentProposal, TaskReassignmentReview, TaskRoleConfiguration } from './api';
 import { defaultOrganizationName, setupPhaseLabel, SignedOutEntry } from './entry';
 import { pendingKey, usePendingOperations, type PendingOperations } from './pending';
 import { PendingOverlay } from './progress';
@@ -171,6 +171,7 @@ export interface OrganizationRouteData {
   prompts: OrganizationPrompt[];
   agentRules: OrganizationAgentRule[];
   agentRuns: AgentRunIndex[];
+  ruleRuns: RuleRun[];
   lists: OrganizationTypedList[];
   audit: DeliveryAuditRecord[];
   tasks: OrganizationTask[];
@@ -189,7 +190,7 @@ export const loadOrganization = async (organizationId: string): Promise<Organiza
   if (state.kind !== 'ready') throw new Response('Organization is not ready', { status: 409 });
   const organization = state.organizations.find((value) => value.organizationId === organizationId);
   if (!organization) throw new Response('Organization was not found', { status: 404 });
-  const [automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, taskReassignment, members, lineDestinations, presets, attachmentFolder, guestRegistrations, responseWindow] = await Promise.all([
+  const [automation, connections, dashboard, rules, prompts, agentRules, agentRuns, ruleRuns, lists, audit, tasks, taskRoles, taskReassignment, members, lineDestinations, presets, attachmentFolder, guestRegistrations, responseWindow] = await Promise.all([
     api.currentAutomation(organizationId),
     api.organizationConnections(organizationId),
     api.organizationDashboard(organizationId),
@@ -197,6 +198,7 @@ export const loadOrganization = async (organizationId: string): Promise<Organiza
     api.organizationPrompts(organizationId),
     api.organizationAgentRules(organizationId),
     api.organizationAgentRuns(organizationId),
+    api.organizationRuleRuns(organizationId),
     api.organizationLists(organizationId),
     api.organizationDeliveryAudit(organizationId),
     api.organizationTasks(organizationId),
@@ -209,7 +211,7 @@ export const loadOrganization = async (organizationId: string): Promise<Organiza
     api.organizationGuestRegistrations(organizationId),
     api.organizationResponseWindow(organizationId),
   ]);
-  return { state, organization, automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, taskReassignment, members, lineDestinations, presets, attachmentFolder, guestRegistrations, responseWindow };
+  return { state, organization, automation, connections, dashboard, rules, prompts, agentRules, agentRuns, ruleRuns, lists, audit, tasks, taskRoles, taskReassignment, members, lineDestinations, presets, attachmentFolder, guestRegistrations, responseWindow };
 };
 
 const roleChangeOpensReassignment = (current: OrganizationRouteData): OrganizationRouteData => ({
@@ -226,23 +228,21 @@ interface OrganizationContextValue extends OrganizationRouteData, PendingOperati
   testAi: () => void;
   searchMailbox: () => void;
   prepareMailbox: (messageId: string) => void;
-  previewMailbox: (messageId: string) => void;
-  createCalendarEvent: () => void;
+  previewMailbox: (messageId: string, ruleId: string) => void;
+  startDraftRuleRun: (ruleId: string) => void;
   prepareRefresh: () => void;
   planRefresh: () => void;
   applyRefresh: (candidateIndexes: number[]) => void;
   createRule: (input: OrganizationRuleInput) => Promise<void>;
-  updateRule: (ruleId: string, input: Pick<OrganizationRuleInput, 'permittedRecipientListIds' | 'permittedLineListIds'>) => Promise<void>;
+  updateRule: (ruleId: string, input: Partial<Pick<OrganizationRule, 'state' | 'executionMode' | 'permittedRecipientListIds' | 'permittedLineListIds'>>) => Promise<void>;
   agentTranscript: AgentRunTranscript | null;
-  proposedActions: ProposedAction[];
   createPrompt: (input: { name: string; instructions: string }) => Promise<void>;
   updatePrompt: (promptId: string, input: { name?: string; instructions?: string }) => Promise<void>;
   deletePrompt: (promptId: string) => Promise<void>;
-  createAgentRule: (input: { name: string; promptId: string; state: 'active' | 'suspended'; executionMode?: 'read_only' | 'approval' | 'unattended'; selectionPolicy: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[]; priority?: number }) => Promise<void>;
-  updateAgentRule: (agentRuleId: string, input: { state?: 'active' | 'suspended' | 'archived'; executionMode?: 'read_only' | 'approval' | 'unattended'; permittedRecipientListIds?: string[]; permittedLineListIds?: string[] }) => Promise<void>;
+  createAgentRule: (input: { name: string; promptId: string; state: 'draft' | 'active'; executionMode?: 'read_only' | 'approval' | 'unattended'; selectionPolicy: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[]; priority?: number }) => Promise<void>;
+  updateAgentRule: (agentRuleId: string, input: { state?: 'draft' | 'active' | 'suspended' | 'archived'; executionMode?: 'read_only' | 'approval' | 'unattended'; permittedRecipientListIds?: string[]; permittedLineListIds?: string[] }) => Promise<void>;
   loadAgentTranscript: (runId: string) => void;
-  decideProposedAction: (actionId: string, decision: 'approve' | 'reject') => void;
-  decideProposedActionBatch: (runId: string, decision: 'approve' | 'reject') => void;
+  decideRuleRun: (runId: string, decision: 'approve' | 'reject') => void;
   updateTask: (taskId: string, input: { completed?: boolean; remarks?: string }) => void;
   createTaskRole: (input: { displayName: string; description: string }) => Promise<void>;
   updateTaskRole: (roleId: string, input: { displayName?: string; description?: string }) => Promise<void>;
@@ -272,7 +272,7 @@ interface OrganizationContextValue extends OrganizationRouteData, PendingOperati
   mailTestMatches: MailboxTestMatch[];
   mailTestAiRequest: MailboxTestAiRequest | null;
   mailTestPreview: MailboxTestPreview | null;
-  mailTestCreatedEventIds: string[];
+  mailTestRuleRunIds: string[];
   mailTestRefreshRequest: MailboxTestRefreshRequest | null;
   mailTestRefreshPlan: MailboxTestRefreshPlan | null;
   mailTestRefreshOutcome: MailboxTestRefreshOutcome | null;
@@ -319,12 +319,11 @@ export const OrganizationLayout = () => {
   const [mailTestMatches, setMailTestMatches] = useState<MailboxTestMatch[]>([]);
   const [mailTestAiRequest, setMailTestAiRequest] = useState<MailboxTestAiRequest | null>(null);
   const [mailTestPreview, setMailTestPreview] = useState<MailboxTestPreview | null>(null);
-  const [mailTestCreatedEventIds, setMailTestCreatedEventIds] = useState<string[]>([]);
+  const [mailTestRuleRunIds, setMailTestRuleRunIds] = useState<string[]>([]);
   const [mailTestRefreshRequest, setMailTestRefreshRequest] = useState<MailboxTestRefreshRequest | null>(null);
   const [mailTestRefreshPlan, setMailTestRefreshPlan] = useState<MailboxTestRefreshPlan | null>(null);
   const [mailTestRefreshOutcome, setMailTestRefreshOutcome] = useState<MailboxTestRefreshOutcome | null>(null);
   const [agentTranscript, setAgentTranscript] = useState<AgentRunTranscript | null>(null);
-  const [proposedActions, setProposedActions] = useState<ProposedAction[]>([]);
   const [taskReassignmentProposals, setTaskReassignmentProposals] = useState<TaskAssignmentProposal[]>([]);
   const [taskReassignmentSkipped, setTaskReassignmentSkipped] = useState<string[]>([]);
 
@@ -344,9 +343,12 @@ export const OrganizationLayout = () => {
   const runOperation = operations.run;
   const runAutomation = () => void runOperation(pendingKey.automationRun, async () => {
     const value = await api.runAutomation(organizationId);
-    const automation = await api.currentAutomation(organizationId);
+    const [automation, ruleRuns] = await Promise.all([
+      api.currentAutomation(organizationId),
+      api.organizationRuleRuns(organizationId),
+    ]);
     setSummary(value);
-    setData((current) => ({ ...current, automation }));
+    setData((current) => ({ ...current, automation, ruleRuns }));
   });
   const setEnabled = (enabled: boolean) => void runOperation(pendingKey.automationEnabled, async () => {
     await api.setEnabled(organizationId, enabled);
@@ -389,21 +391,25 @@ export const OrganizationLayout = () => {
   const searchMailbox = () => void runOperation(pendingKey.mailSearch, async () => {
     setMailTestAiRequest(null);
     setMailTestPreview(null);
-    setMailTestCreatedEventIds([]);
+    setMailTestRuleRunIds([]);
     setMailTestMatches((await api.searchMailboxForTest(organizationId, mailTestSubject.trim())).messages);
   });
   const prepareMailbox = (messageId: string) => void runOperation(pendingKey.mailPrepare(messageId), async () => {
     setMailTestAiRequest(await api.prepareMailboxTestAiRequest(organizationId, messageId));
     setMailTestPreview(null);
-    setMailTestCreatedEventIds([]);
+    setMailTestRuleRunIds([]);
   });
-  const previewMailbox = (messageId: string) => void runOperation(pendingKey.mailPreview, async () => {
+  const previewMailbox = (messageId: string, ruleId: string) => void runOperation(pendingKey.mailPreview, async () => {
     if (mailTestAiRequest?.id !== messageId) throw new Error('先に AI への送信内容を確認してください。');
-    setMailTestPreview(await api.previewMailboxTestEvent(organizationId, messageId));
-    setMailTestCreatedEventIds([]);
+    setMailTestPreview(await api.previewMailboxTestEvent(organizationId, messageId, ruleId));
+    setMailTestRuleRunIds([]);
   });
-  const createCalendarEvent = () => void runOperation(pendingKey.mailCreateEvents, async () => {
-    if (mailTestPreview) setMailTestCreatedEventIds((await api.createMailboxTestCalendarEvent(organizationId, mailTestPreview.confirmationToken)).eventIds);
+  const startDraftRuleRun = (ruleId: string) => void runOperation(pendingKey.mailStartRuleRun, async () => {
+    if (mailTestPreview) {
+      const run = await api.startMailboxTestRuleRun(organizationId, mailTestPreview.confirmationToken, ruleId);
+      setMailTestRuleRunIds([run.id]);
+      setData((current) => ({ ...current, ruleRuns: [run, ...current.ruleRuns] }));
+    }
   });
   const prepareRefresh = () => void runOperation(pendingKey.refreshPrepare, async () => {
     if (!mailTestPreview) throw new Error('先に AI 抽出を実行してください。');
@@ -439,7 +445,7 @@ export const OrganizationLayout = () => {
     const rule = await api.createOrganizationRule(organizationId, input);
     setData((current) => ({ ...current, rules: [...current.rules, rule] }));
   });
-  const updateRule = async (ruleId: string, input: Pick<OrganizationRuleInput, 'permittedRecipientListIds' | 'permittedLineListIds'>): Promise<void> => runOperation(pendingKey.ruleUpdate(ruleId), async () => {
+  const updateRule = async (ruleId: string, input: Partial<Pick<OrganizationRule, 'state' | 'executionMode' | 'permittedRecipientListIds' | 'permittedLineListIds'>>): Promise<void> => runOperation(pendingKey.ruleUpdate(ruleId), async () => {
     const updated = await api.updateOrganizationRule(organizationId, ruleId, input);
     setData((current) => ({ ...current, rules: current.rules.map((rule) => rule.id === ruleId ? { ...rule, ...updated } : rule) }));
   });
@@ -455,27 +461,20 @@ export const OrganizationLayout = () => {
     await api.removeOrganizationPrompt(organizationId, promptId);
     setData((current) => ({ ...current, prompts: current.prompts.filter((prompt) => prompt.id !== promptId) }));
   });
-  const createAgentRule = async (input: { name: string; promptId: string; state: 'active' | 'suspended'; executionMode?: 'read_only' | 'approval' | 'unattended'; selectionPolicy: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[]; priority?: number }): Promise<void> => runOperation(pendingKey.agentRuleCreate, async () => {
+  const createAgentRule = async (input: { name: string; promptId: string; state: 'draft' | 'active'; executionMode?: 'read_only' | 'approval' | 'unattended'; selectionPolicy: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[]; priority?: number }): Promise<void> => runOperation(pendingKey.agentRuleCreate, async () => {
     const rule = await api.createOrganizationAgentRule(organizationId, input);
     setData((current) => ({ ...current, agentRules: [...current.agentRules, rule] }));
   });
-  const updateAgentRule = async (agentRuleId: string, input: { state?: 'active' | 'suspended' | 'archived'; executionMode?: 'read_only' | 'approval' | 'unattended'; permittedRecipientListIds?: string[]; permittedLineListIds?: string[] }): Promise<void> => runOperation(pendingKey.agentRuleUpdate(agentRuleId), async () => {
+  const updateAgentRule = async (agentRuleId: string, input: { state?: 'draft' | 'active' | 'suspended' | 'archived'; executionMode?: 'read_only' | 'approval' | 'unattended'; permittedRecipientListIds?: string[]; permittedLineListIds?: string[] }): Promise<void> => runOperation(pendingKey.agentRuleUpdate(agentRuleId), async () => {
     const updated = await api.updateOrganizationAgentRule(organizationId, agentRuleId, input);
     setData((current) => ({ ...current, agentRules: current.agentRules.map((rule) => rule.id === agentRuleId ? updated : rule) }));
   });
   const loadAgentTranscript = (runId: string) => void runOperation(pendingKey.agentRunTranscript(runId), async () => {
-    const [transcript, actions] = await Promise.all([api.agentRunTranscript(organizationId, runId), api.agentProposedActions(organizationId, runId)]);
-    setAgentTranscript(transcript);
-    setProposedActions(actions);
+    setAgentTranscript(await api.agentRunTranscript(organizationId, runId));
   });
-  const decideProposedAction = (actionId: string, decision: 'approve' | 'reject') => void runOperation(pendingKey.actionDecision(actionId, decision), async () => {
-    const decided = await api.decideProposedAction(organizationId, actionId, decision);
-    setProposedActions((current) => current.map((action) => action.id === actionId ? { ...action, ...decided } : action));
-  });
-  const decideProposedActionBatch = (runId: string, decision: 'approve' | 'reject') => void runOperation(pendingKey.actionBatch(runId, decision), async () => {
-    const decided = await api.decideProposedActionBatch(organizationId, runId, decision);
-    const byId = new Map(decided.map((action) => [action.id, action]));
-    setProposedActions((current) => current.map((action) => byId.get(action.id) ?? action));
+  const decideRuleRun = (runId: string, decision: 'approve' | 'reject') => void runOperation(pendingKey.ruleRunDecision(runId, decision), async () => {
+    const decided = await api.decideRuleRun(organizationId, runId, decision);
+    setData((current) => ({ ...current, ruleRuns: current.ruleRuns.map((run) => run.id === runId ? decided : run) }));
   });
   const updateTask = (taskId: string, input: { completed?: boolean; remarks?: string }) => void runOperation(pendingKey.taskUpdate(taskId), async () => {
     const task = await api.updateOrganizationTask(organizationId, taskId, input);
@@ -570,11 +569,11 @@ export const OrganizationLayout = () => {
   });
   const logout = () => void runOperation(pendingKey.logout, async () => { await api.logout(); navigate('/', { replace: true }); });
   const reauthenticate = () => void runOperation(pendingKey.reauthenticate, async () => { window.location.assign((await api.reauthorizeAutomationInbox(organizationId)).authorizationUrl); });
-  const value: OrganizationContextValue = { ...data, ...operations, summary, setEnabled, runAutomation, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateRule, agentTranscript, proposedActions, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, decideProposedAction, decideProposedActionBatch, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, taskReassignmentProposals, taskReassignmentSkipped, suggestTaskReassignments, applyTaskReassignments, discardTaskReassignments, createMember, updateMember, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshMembers, applyPreset, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestCreatedEventIds, mailTestRefreshRequest, mailTestRefreshPlan, mailTestRefreshOutcome, prepareRefresh, planRefresh, applyRefresh, attachmentFolderPath, setAttachmentFolderPath, saveAttachmentFolderPath, responseWindowDays, setResponseWindowDays, saveResponseWindowDays, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
+  const value: OrganizationContextValue = { ...data, ...operations, summary, setEnabled, runAutomation, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, startDraftRuleRun, createRule, updateRule, agentTranscript, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, decideRuleRun, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, taskReassignmentProposals, taskReassignmentSkipped, suggestTaskReassignments, applyTaskReassignments, discardTaskReassignments, createMember, updateMember, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshMembers, applyPreset, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestRuleRunIds, mailTestRefreshRequest, mailTestRefreshPlan, mailTestRefreshOutcome, prepareRefresh, planRefresh, applyRefresh, attachmentFolderPath, setAttachmentFolderPath, saveAttachmentFolderPath, responseWindowDays, setResponseWindowDays, saveResponseWindowDays, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
   return <OrganizationContext.Provider value={value}><Outlet /></OrganizationContext.Provider>;
 };
 
-type OrganizationPage = 'automation' | 'connections' | 'rules' | 'members' | 'mail-test' | 'tasks';
+type OrganizationPage = 'automation' | 'connections' | 'rules' | 'members' | 'rule-runs' | 'event-refresh' | 'tasks';
 export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
   const value = useOrganization();
   const navigation = useNavigation();
@@ -625,7 +624,7 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     mailTestMatches={value.mailTestMatches}
     mailTestAiRequest={value.mailTestAiRequest}
     mailTestPreview={value.mailTestPreview}
-    mailTestCreatedEventIds={value.mailTestCreatedEventIds}
+    mailTestRuleRunIds={value.mailTestRuleRunIds}
     mailTestRefreshRequest={value.mailTestRefreshRequest}
     mailTestRefreshPlan={value.mailTestRefreshPlan}
     mailTestRefreshOutcome={value.mailTestRefreshOutcome}
@@ -636,7 +635,7 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     onSearchMailbox={value.searchMailbox}
     onPrepareMailbox={value.prepareMailbox}
     onPreviewMailbox={value.previewMailbox}
-    onCreateCalendarEvent={value.createCalendarEvent}
+    onStartDraftRuleRun={value.startDraftRuleRun}
     organizationRules={value.rules}
     organizationLists={value.lists}
     onCreateRule={value.createRule}
@@ -645,15 +644,14 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     agentRules={value.agentRules}
     agentRuns={value.agentRuns}
     agentTranscript={value.agentTranscript}
-    proposedActions={value.proposedActions}
+    ruleRuns={value.ruleRuns}
+    onDecideRuleRun={value.decideRuleRun}
     onCreatePrompt={value.createPrompt}
     onUpdatePrompt={value.updatePrompt}
     onDeletePrompt={value.deletePrompt}
     onCreateAgentRule={value.createAgentRule}
     onUpdateAgentRule={value.updateAgentRule}
     onLoadAgentTranscript={value.loadAgentTranscript}
-    onDecideProposedAction={value.decideProposedAction}
-    onDecideProposedActionBatch={value.decideProposedActionBatch}
     organizationTasks={value.tasks}
     onUpdateTask={value.updateTask}
     taskRoles={value.taskRoles.roles}
