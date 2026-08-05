@@ -130,15 +130,61 @@ describe('OpenAI-compatible Event Details validation', () => {
     expect(request.messages[0]?.content).toContain("Write each event's summary");
   });
 
+  it('reads an Event Response and the guests its registration named', () => {
+    expect(validatedMailExtraction(JSON.stringify({
+      kind: 'response',
+      summary: '北クラブから2名の参加申込がありました。',
+      events: [{
+        title: '例会', startsAt: '2026-08-03T19:00:00+09:00', endsAt: '2026-08-03T21:00:00+09:00',
+        timeZone: 'Asia/Tokyo', location: '本部会館', description: '例会です。', summary: '毎月の例会です。',
+      }],
+      tasks: [],
+      guests: [
+        { name: '山田太郎', affiliation: '北クラブ', attending: true },
+        { name: '鈴木花子', affiliation: '北クラブ', attending: false },
+      ],
+    }))).toMatchObject({
+      kind: 'response',
+      guests: [
+        { name: '山田太郎', affiliation: '北クラブ', attending: true },
+        { name: '鈴木花子', affiliation: '北クラブ', attending: false },
+      ],
+    });
+  });
+
+  it('rejects a guest that names nobody rather than counting a blank', () => {
+    expect(validatedMailExtraction(JSON.stringify({
+      kind: 'response', summary: '参加申込です。', events: [], tasks: [],
+      guests: [{ name: '  ', affiliation: '北クラブ', attending: true }],
+    }))).toBeNull();
+  });
+
+  it('reads an extraction written before the kind existed as an invitation', () => {
+    expect(validatedMailExtraction(JSON.stringify({
+      summary: 'お知らせです。', events: [], tasks: [],
+    }))).toMatchObject({ kind: 'invitation', guests: [] });
+  });
+
+  it('tells the extraction to judge the sender rather than the quoted text', async () => {
+    const request = await buildAiEventDetailsRequest({ source: '件名: Re: 例会のご案内\nOKです' });
+
+    expect(request.messages[0]?.content).toContain('First decide kind');
+    expect(request.messages[0]?.content).toContain('Quoted text from an earlier email never makes the reply an invitation');
+    expect(request.response_format.json_schema.schema.properties?.kind)
+      .toMatchObject({ type: 'string', enum: ['invitation', 'response'] });
+  });
+
   it('retains a Message Summary when extraction produces no Event Candidate', () => {
     expect(validatedMailExtraction(JSON.stringify({
       summary: '次年度の活動方針を共有するお知らせです。',
       events: [],
       tasks: [],
     }))).toEqual({
+      kind: 'invitation',
       summary: '次年度の活動方針を共有するお知らせです。',
       events: [],
       tasks: [],
+      guests: [],
       warnings: [],
     });
   });
@@ -166,7 +212,7 @@ describe('OpenAI-compatible Event Details validation', () => {
     };
     expect(body.model).toBe('test-model');
     expect(body.messages[1]?.content).toContain(source);
-    expect(body.response_format.json_schema.schema.required).toEqual(['summary', 'events', 'tasks']);
+    expect(body.response_format.json_schema.schema.required).toEqual(['kind', 'summary', 'guests', 'events', 'tasks']);
     expect(body.response_format.json_schema.schema.additionalProperties).toBe(false);
     expect(body.response_format.json_schema.schema.properties.summary).toMatchObject({ type: 'string' });
     expect(body.response_format.json_schema.schema.properties.events).toMatchObject({ type: 'array' });

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import type { DashboardProps } from './dashboard';
+import type { GuestRegistrationRoster } from './api';
 import { pendingKey } from './pending';
 
 /**
@@ -25,6 +26,24 @@ const SecretInput = ({ value, onChange, label, placeholder }: { value: string; o
   return <div className="dashboard-secret"><input type="text" className={revealed ? '' : 'dashboard-secret-masked'} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} aria-label={label} autoComplete="off" autoCapitalize="none" spellCheck={false} data-1p-ignore="true" data-bwignore="true" data-lpignore="true" data-protonpass-ignore="true" /><button type="button" onClick={() => setRevealed((current) => !current)} aria-label={revealed ? `${label}を隠す` : `${label}を表示`}>{revealed ? <EyeOff size={16} /> : <Eye size={16} />}</button></div>;
 };
 
+/**
+ * The Guest Registrations returned against a Scheduled Event. Names are shown
+ * here and nowhere else: the Calendar description every invited Member reads
+ * carries the counts by Affiliation alone.
+ */
+const GuestRegistrations = (props: { rosters: GuestRegistrationRoster[] }) => {
+  if (!props.rosters.length) return null;
+  return <section className="guest-registrations">
+    <h2>外部からの参加登録</h2>
+    <p>他団体から返送された登録用紙の参加者です。Google Calendar の説明には人数だけを書き、氏名はこの画面にのみ表示します。</p>
+    {props.rosters.map((roster) => <article key={roster.eventId}>
+      <h3>{roster.title}<small>{formatted(roster.startsAt)}</small></h3>
+      <p className="guest-total">{roster.affiliations.length}団体 {roster.attendingCount}名{roster.affiliations.length ? `（${roster.affiliations.map((entry) => `${entry.affiliation} ${entry.attending}名`).join('、')}）` : ''}</p>
+      <ul>{roster.guests.map((guest) => <li key={`${guest.affiliation}-${guest.name}`} className={guest.attending ? '' : 'guest-absent'}>{guest.name}<small>{guest.affiliation || '所属未記載'}</small>{guest.attending ? '' : <span>欠席</span>}</li>)}</ul>
+    </article>)}
+  </section>;
+};
+
 export const AutomationPage = (props: DashboardProps) => {
   const running = props.isPending(pendingKey.automationRun);
   const toggling = props.isPending(pendingKey.automationEnabled);
@@ -37,6 +56,7 @@ export const AutomationPage = (props: DashboardProps) => {
       {props.summary && <p className="dashboard-success"><CheckCircle2 size={17} />今回: {props.summary.scanned}件をAI判定、{props.summary.created}件を予定化、{props.summary.skipped}件を対象外、{props.summary.exceptions}件でエラー</p>}
       <section className="metrics-row"><div><b>{props.automation.created}</b><span>予定を作成</span></div><div><b>{props.automation.skipped}</b><span>処理対象外</span></div><div><b>{props.automation.exceptions}</b><span>エラー</span></div></section>
       <section className="info-panel"><CalendarDays size={20} /><div><strong>AI がメール内容を判定します</strong><p>固定の日付書式は不要です。本文や添付ファイルから予定、タスク、お知らせを抽出します。</p></div></section>
+      <GuestRegistrations rosters={props.guestRegistrations} />
     </> : <section className="empty-page"><Mail size={30} /><h2>Googleアカウントを接続してください</h2><p>接続後、このページから自動化を操作できます。</p></section>}
   </section>;
 };
@@ -387,6 +407,11 @@ export const ConnectionsPage = (props: DashboardProps) => {
   const savedLine = props.isSettled(pendingKey.lineConnection);
   const savingFolder = props.isPending(pendingKey.attachmentFolder);
   const savedFolder = props.isSettled(pendingKey.attachmentFolder);
+  const savingWindow = props.isPending(pendingKey.responseWindow);
+  const savedWindow = props.isSettled(pendingKey.responseWindow);
+  const windowDays = Number(props.responseWindowDays.trim());
+  const windowValid = Number.isInteger(windowDays) && windowDays >= 1 && windowDays <= 365;
+  const windowChanged = windowDays !== props.savedResponseWindowDays;
   const testingAi = props.isPending(pendingKey.aiTest);
   useEffect(() => () => { if (webhookCopyTimer.current) clearTimeout(webhookCopyTimer.current); }, []);
   const settingsReady = Boolean(props.organization);
@@ -442,6 +467,7 @@ export const ConnectionsPage = (props: DashboardProps) => {
           <div className="settings-card-actions"><p className="connection-state">{savingLine ? <><RefreshCw className="spin" size={13} />保存中…</> : savedLine ? <><CheckCircle2 size={13} />保存しました</> : hasLineAccessToken && hasLineSecret ? '接続設定済み' : '未設定'}</p><button className="primary" onClick={props.onSaveLineConnection} disabled={savingLine || !lineChanged || !lineReady}>{savingLine ? <RefreshCw className="spin" size={17} /> : <Save size={17} />}{savingLine ? '保存中…' : 'LINE設定を保存'}</button></div>
         </section>
       </div>
+      <section className="settings-card"><div className="settings-card-title"><Settings size={19} /><div><h2>返信を予定に結びつける範囲</h2><p>返信メールが「どの予定への返信か」を探す日数です。</p></div></div><p className="api-guide">出欠の返事や登録用紙の返送は、そこに書かれた日付が予定当日とずれていることがあります。この日数だけ前後を探して、一致した予定に参加者を記録します。長くすると取りこぼしは減りますが、別の予定に結びつく可能性が上がります。返信は予定の日時や場所を書き換えないため、予定そのものを更新する範囲（7日）とは別の設定です。</p><label>前後の日数<input type="number" inputMode="numeric" min={1} max={365} value={props.responseWindowDays} onChange={(event) => props.onResponseWindowDaysChange(event.target.value)} placeholder="60" /></label><div className="settings-card-actions"><p className="connection-state">{savingWindow ? <><RefreshCw className="spin" size={13} />保存中…</> : savedWindow ? <><CheckCircle2 size={13} />保存しました</> : `現在: 前後${props.savedResponseWindowDays}日`}</p><button className="primary" onClick={props.onSaveResponseWindowDays} disabled={savingWindow || !windowChanged || !windowValid}>{savingWindow ? <RefreshCw className="spin" size={17} /> : <Save size={17} />}{savingWindow ? '保存中…' : '日数を保存'}</button></div></section>
       <section className="settings-card"><div className="settings-card-title"><Settings size={19} /><div><h2>添付ファイルの保存先</h2><p>Google Driveのどこに添付ファイルを置くかを決めます。</p></div></div><p className="api-guide">「/」で階層を区切ります。ここで指定したフォルダの下に、メール1通ごとのフォルダを受信日と件名で作成します。Mail Automationが作成したフォルダだけを扱うため、手作業で作った同名フォルダとは別に作成されます。</p><label>保存先<input value={props.attachmentFolderPath} onChange={(event) => props.onAttachmentFolderPathChange(event.target.value)} placeholder="Mail Automation/添付ファイル" autoCapitalize="none" spellCheck={false} /></label><div className="settings-card-actions"><p className="connection-state">{savingFolder ? <><RefreshCw className="spin" size={13} />保存中…</> : savedFolder ? <><CheckCircle2 size={13} />保存しました</> : `現在: ${props.savedAttachmentFolderPath}`}</p><button className="primary" onClick={props.onSaveAttachmentFolderPath} disabled={savingFolder || !props.attachmentFolderPath.trim() || props.attachmentFolderPath === props.savedAttachmentFolderPath}>{savingFolder ? <RefreshCw className="spin" size={17} /> : <Save size={17} />}{savingFolder ? '保存中…' : '保存先を保存'}</button></div></section>
       <section className="test-card"><div><p>AI CONNECTION TEST</p><h2>OpenAI 互換 API をテスト</h2><span>保存済みの接続設定を使って、任意の質問を送信します。</span></div><textarea value={props.aiTestPrompt} onChange={(event) => props.onAiTestPromptChange(event.target.value)} maxLength={10_000} aria-label="APIへの質問" /><button className="secondary" onClick={props.onTestAi} disabled={testingAi || !hasAiApi}>{testingAi ? <><RefreshCw className="spin" size={14} />問い合わせ中…</> : 'API に質問する'}</button>{testingAi && <p className="field-state saving"><RefreshCw className="spin" size={12} />APIの応答を待っています…</p>}{props.aiTestResult && <pre>{props.aiTestResult}</pre>}</section>
       <PresetSettings

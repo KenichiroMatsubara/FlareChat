@@ -75,6 +75,42 @@ describe('Organization Automation routes', () => {
     await expect(saved.json()).resolves.toMatchObject({ data: { path: '会計 2026/添付' } });
   });
 
+  it('answers the default Event Response Window until an Organization sets its own', async () => {
+    fixture = createTestApp();
+
+    const initial = await automationRoutes.fetch(
+      fixture.request('/organizations/organization-1/response-window'),
+      fixture.environment,
+    );
+    await expect(initial.json()).resolves.toMatchObject({ data: { days: 60 } });
+
+    const saved = await automationRoutes.fetch(
+      fixture.jsonRequest('/organizations/organization-1/response-window', { days: 21 }, 'PUT'),
+      fixture.environment,
+    );
+    const reread = await automationRoutes.fetch(
+      fixture.request('/organizations/organization-1/response-window'),
+      fixture.environment,
+    );
+
+    expect(saved.status).toBe(200);
+    await expect(reread.json()).resolves.toMatchObject({ data: { days: 21 } });
+  });
+
+  it('refuses an Event Response Window of no days, which would discard every response', async () => {
+    fixture = createTestApp();
+
+    const response = await automationRoutes.fetch(
+      fixture.jsonRequest('/organizations/organization-1/response-window', { days: 0 }, 'PUT'),
+      fixture.environment,
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { message: '日数は1〜365日の範囲で入力してください。' },
+    });
+  });
+
   it('refuses an empty Attachment Folder Path, because an empty path is the Drive root', async () => {
     fixture = createTestApp();
 

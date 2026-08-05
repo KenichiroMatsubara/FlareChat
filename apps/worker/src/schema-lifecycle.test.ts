@@ -137,7 +137,7 @@ describe('Schema Lifecycle', () => {
 
     expect(receipt).toMatchObject({
       kind: 'organization',
-      currentMigration: '0019_task_role_revisions.sql',
+      currentMigration: '0020_event_responses_and_guests.sql',
       appliedMigrations: [
         '0001_tasks.sql',
         '0002_line_destination_roster.sql',
@@ -158,6 +158,7 @@ describe('Schema Lifecycle', () => {
         '0017_member_portal.sql',
         '0018_automation_inbox_health.sql',
         '0019_task_role_revisions.sql',
+        '0020_event_responses_and_guests.sql',
       ],
     });
     expect(database.rows<{ display_name: string }>(
@@ -190,7 +191,7 @@ describe('Schema Lifecycle', () => {
       category: 'migration_apply_failed',
       kind: 'organization',
       currentMigration: '0000_initial.sql',
-      expectedMigration: '0019_task_role_revisions.sql',
+      expectedMigration: '0020_event_responses_and_guests.sql',
     });
 
     database.execute('DROP INDEX tasks_source_role_deadline_title_idx');
@@ -199,7 +200,7 @@ describe('Schema Lifecycle', () => {
       kind: 'organization',
       database: database.binding,
     })).resolves.toMatchObject({
-      currentMigration: '0019_task_role_revisions.sql',
+      currentMigration: '0020_event_responses_and_guests.sql',
     });
   });
 
@@ -220,7 +221,7 @@ describe('Schema Lifecycle', () => {
       category: 'checksum_mismatch',
       kind: 'organization',
       currentMigration: '0000_initial.sql',
-      expectedMigration: '0019_task_role_revisions.sql',
+      expectedMigration: '0020_event_responses_and_guests.sql',
     });
   });
 
@@ -236,7 +237,7 @@ describe('Schema Lifecycle', () => {
     await expect(schemaLifecycle.ensureCurrent({
       kind: 'organization',
       database: database.binding,
-    })).resolves.toMatchObject({ currentMigration: '0019_task_role_revisions.sql' });
+    })).resolves.toMatchObject({ currentMigration: '0020_event_responses_and_guests.sql' });
   });
 
   it('migrates existing Tasks into Organization-owned role records and unassigns the Control identities they named', async () => {
@@ -352,8 +353,8 @@ describe('Schema Lifecycle', () => {
     ]);
 
     expect(receipts).toEqual([
-      expect.objectContaining({ currentMigration: '0019_task_role_revisions.sql' }),
-      expect.objectContaining({ currentMigration: '0019_task_role_revisions.sql' }),
+      expect.objectContaining({ currentMigration: '0020_event_responses_and_guests.sql' }),
+      expect.objectContaining({ currentMigration: '0020_event_responses_and_guests.sql' }),
     ]);
   });
 });

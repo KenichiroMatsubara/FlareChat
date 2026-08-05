@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { app } from './api';
-import { extractAiEventDetails, type EventDetails } from './event-details';
+import { extractAiEventDetails, type EventDetails, type MailExtraction } from './event-details';
 import {
   createAutomation,
   decodedBody,
@@ -493,7 +493,7 @@ describe('Organization Automation Inbox scheduling', () => {
       } },
       agent: { complete },
       ai: {
-        extract: async () => ({ summary: '例会のお知らせです。', events: [], tasks: [], warnings: [] }),
+        extract: async () => ({ kind: 'invitation' as const, summary: '例会のお知らせです。', events: [], tasks: [], guests: [], warnings: [] }),
         correspond: async () => [],
       },
     });
@@ -832,12 +832,14 @@ describe('Organization Automation Inbox scheduling', () => {
       ai: {
         correspond: async () => [],
         extract: async () => ({
+          kind: 'invitation' as const,
           summary: '例会のお知らせです。',
           events: [{
             title: '例会', startsAt: '2026-08-03T19:00:00+09:00', endsAt: '2026-08-03T21:30:00+09:00',
             timeZone: 'Asia/Tokyo', location: '', description: '例会です。', summary: '毎月の例会です。',
           }],
           tasks: [],
+          guests: [],
           warnings: [],
         }),
       },
@@ -852,6 +854,147 @@ describe('Organization Automation Inbox scheduling', () => {
       fixture.environment,
     );
     await expect(dashboard.json()).resolves.toMatchObject({ data: { upcomingEvents: 1 } });
+  });
+
+  const upsertFixture = (active: AutomationTestApp, extractions: Array<() => MailExtraction>) => {
+    const created: Array<Record<string, string>> = [];
+    const patched: Array<{ url: string; body: Record<string, string> }> = [];
+    const meeting = {
+      id: 'calendar-event-upsert',
+      etag: 'etag-1',
+      summary: '例会',
+      description: '',
+      location: '',
+      start: { dateTime: '2026-08-03T19:00:00+09:00', timeZone: 'Asia/Tokyo' },
+      end: { dateTime: '2026-08-03T21:00:00+09:00', timeZone: 'Asia/Tokyo' },
+    };
+    let run = 0;
+    const messageId = (): string => `gmail-message-upsert-${run}`;
+    const google = {
+      request: async <T>(_accessToken: string, url: string, init?: RequestInit): Promise<T> => {
+        if (url.includes('/history')) return {
+          historyId: `history-${run}`,
+          history: [{ messagesAdded: [{ message: { id: messageId() } }] }],
+        } as T;
+        if (url.includes(`/messages/${messageId()}`)) return {
+          id: messageId(),
+          payload: {
+            headers: [{ name: 'Subject', value: '例会のお知らせ' }, { name: 'From', value: 'chair@example.com' }],
+            body: { data: gmailBody('日時: 2026年8月3日 19:00〜21:00') },
+          },
+        } as T;
+        if (url.includes('/calendar/') && init?.method === 'POST') {
+          const body = JSON.parse(init.body as string) as Record<string, string>;
+          created.push(body);
+          meeting.description = body.description ?? '';
+          meeting.location = body.location ?? '';
+          return { id: meeting.id, etag: meeting.etag } as T;
+        }
+        if (url.includes('/calendar/') && init?.method === 'PATCH') {
+          const body = JSON.parse(init.body as string) as Record<string, string>;
+          patched.push({ url, body });
+          if (body.description !== undefined) meeting.description = body.description;
+
+          return { id: meeting.id, etag: 'etag-2' } as T;
+        }
+        return { items: created.length ? [meeting] : [] } as T;
+      },
+    };
+    const automation = () => createAutomation(active.environment, {
+      google,
+      ai: {
+        correspond: async (input) => input.existing.map((event) => ({ candidateIndex: 0, eventId: event.id })),
+        extract: async () => extractions[run] ? extractions[run]!() : null,
+      },
+    });
+    const runOnce = async (index: number) => {
+      run = index;
+      return automation().runOrganization({
+        organizationId: 'organization-1',
+        database: active.organization.binding,
+      });
+    };
+    return { created, patched, runOnce };
+  };
+
+  const meetingExtraction = (overrides: Partial<MailExtraction> = {}): MailExtraction => ({
+    kind: 'invitation',
+    summary: '例会のお知らせです。',
+    events: [{
+      title: '例会', startsAt: '2026-08-03T19:00:00+09:00', endsAt: '2026-08-03T21:00:00+09:00',
+      timeZone: 'Asia/Tokyo', location: '本部会館', description: '例会です。', summary: '毎月の例会です。',
+    }],
+    tasks: [],
+    guests: [],
+    warnings: [],
+    ...overrides,
+  });
+
+  it('merges a later message about the same meeting instead of creating a second Scheduled Event', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    const { created, patched, runOnce } = upsertFixture(fixture, [
+      () => meetingExtraction(),
+      () => meetingExtraction({
+        summary: '会場が変わりました。',
+        events: [{
+          title: '例会', startsAt: '2026-08-03T19:00:00+09:00', endsAt: '2026-08-03T21:00:00+09:00',
+          timeZone: 'Asia/Tokyo', location: '市民ホール', description: '例会です。', summary: '会場が変わりました。',
+        }],
+      }),
+    ]);
+
+    await runOnce(0);
+    await runOnce(1);
+
+    expect(created).toHaveLength(1);
+    expect(patched).toHaveLength(1);
+    expect(patched[0]?.body.location).toBe('市民ホール');
+    // A moved meeting is a Significant Change, so its Members are told.
+    expect(patched[0]?.url).toContain('sendUpdates=all');
+    expect(fixture.organization.rows('SELECT count(*) AS total FROM events')).toEqual([{ total: 1 }]);
+  });
+
+  it('records the guests an Event Response returned without creating a Scheduled Event for it', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    const { created, patched, runOnce } = upsertFixture(fixture, [
+      () => meetingExtraction(),
+      () => meetingExtraction({
+        kind: 'response',
+        summary: '北クラブから2名の参加申込です。',
+        guests: [
+          { name: '山田太郎', affiliation: '北クラブ', attending: true },
+          { name: '鈴木花子', affiliation: '北クラブ', attending: true },
+        ],
+      }),
+    ]);
+
+    await runOnce(0);
+    await runOnce(1);
+
+    expect(created).toHaveLength(1);
+    expect(fixture.organization.rows('SELECT count(*) AS total FROM events')).toEqual([{ total: 1 }]);
+    expect(fixture.organization.rows(
+      'SELECT name, affiliation FROM guest_registrations ORDER BY name',
+    )).toEqual([
+      { name: '山田太郎', affiliation: '北クラブ' },
+      { name: '鈴木花子', affiliation: '北クラブ' },
+    ]);
+    expect(patched[0]?.body.description).toContain('外部からの参加登録: 1団体 2名（北クラブ 2名）');
+    expect(patched[0]?.body.description).not.toContain('山田太郎');
+    // A guest moves neither the meeting nor its deadline, so this is never news to a Member.
+    expect(patched[0]?.url).toContain('sendUpdates=none');
+  });
+
+  it('creates nothing for an Event Response that locates no Scheduled Event', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    const { created, patched, runOnce } = upsertFixture(fixture, [
+      () => meetingExtraction({ kind: 'response', summary: 'OKです。' }),
+    ]);
+
+    await expect(runOnce(0)).resolves.toMatchObject({ created: 0, exceptions: 0 });
+    expect(created).toEqual([]);
+    expect(patched).toEqual([]);
+    expect(fixture.organization.rows('SELECT count(*) AS total FROM events')).toEqual([{ total: 0 }]);
   });
 
   it('runs an Automation Inbox only after an authorized member enables it', async () => {
@@ -955,6 +1098,8 @@ describe('Organization Automation Inbox scheduling', () => {
         }],
         tasks: [],
       }) } }] });
+      // The correlation search that precedes every insertion; no event exists yet.
+      if (url.includes('timeMin=')) return new Response(JSON.stringify({ items: [] }), { status: 200 });
       calendarUrl = url;
       calendarRequest = JSON.parse(init?.body as string) as typeof calendarRequest;
       return new Response(JSON.stringify({ id: 'calendar-event-1' }), { status: 200 });
@@ -1477,6 +1622,8 @@ describe('Organization Automation Inbox scheduling', () => {
         calendarRequest = JSON.parse(init.body as string) as typeof calendarRequest;
         return new Response(JSON.stringify({ id: 'calendar-event-draft' }), { status: 200 });
       }
+      // The correlation search that precedes every insertion; no event exists yet.
+      if (url.includes('timeMin=')) return new Response(JSON.stringify({ items: [] }), { status: 200 });
       return new Response(JSON.stringify({ error: { message: `unexpected request: ${url}` } }), { status: 500 });
     }));
 

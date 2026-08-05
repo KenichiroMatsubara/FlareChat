@@ -15,6 +15,7 @@ import {
   refreshPlan,
   refreshSearchWindow,
   sourceMessageAttribution,
+  withinRefreshWindow,
 } from './event-refresh';
 import type {
   AiEventCorrespondenceRequest,
@@ -24,6 +25,17 @@ import type {
   EventCorrespondence,
   RefreshPlan,
 } from './event-refresh';
+import {
+  lockedCalendarFields,
+  mergedCalendarFields,
+  isSignificantChange,
+  organizationResponseWindowDays,
+  responseSearchWindow,
+  withinResponseWindow,
+} from './event-merge';
+import type { RecordedEventFields } from './event-merge';
+import { guestCountsLine } from './guests';
+import { canApplyCalendarUpdate } from './calendar-revisions';
 import { writeRecoveryReceipt } from './recovery-receipts';
 import { resolveSourceMessageFolder } from './attachment-folders';
 import { createTaskWorkflow } from './tasks';
@@ -61,6 +73,7 @@ import {
   eventAttachments,
   events,
   exceptions as automationExceptions,
+  guestRegistrations,
   googleConnections,
   listItems,
   operationalTaskRoles,
@@ -1283,6 +1296,257 @@ const applyEventRefreshWithGoogle = async (
   return outcome;
 };
 
+/** One Scheduled Event a candidate may be merged into, as Calendar holds it and as D1 recorded it. */
+interface CorrelationTarget {
+  rowId: string;
+  googleEventId: string;
+  current: CalendarEventFields;
+  recorded: RecordedEventFields;
+  /** The Calendar Revision recorded at the last write, held as the optimistic lock. */
+  storedEtag: string | null;
+}
+
+/**
+ * The Scheduled Events this Organization's automation owns inside a time window,
+ * each paired with the values Mail Automation last wrote. Calendar supplies the
+ * window and the live state; D1 supplies what a merge is allowed to overwrite.
+ */
+const correlationTargets = async (
+  dependencies: AutomationDependencies,
+  accessToken: string,
+  database: D1Database,
+  window: { timeMin: string; timeMax: string },
+): Promise<CorrelationTarget[]> => {
+  const url = new URL(CALENDAR_EVENTS_URL);
+  url.searchParams.set('timeMin', window.timeMin);
+  url.searchParams.set('timeMax', window.timeMax);
+  url.searchParams.set('showDeleted', 'false');
+  url.searchParams.set('singleEvents', 'false');
+  url.searchParams.set('maxResults', '250');
+  const list = await dependencies.google.request<CalendarEventList>(accessToken, url.toString());
+  const attributed = (list.items ?? []).flatMap((item) => {
+    const fields = calendarEventFields(item);
+    return fields && attributedMessageId(fields.description) !== null ? [fields] : [];
+  });
+  if (!attributed.length) return [];
+  const rows = await drizzleOrganizationDatabase(database).select({
+    id: events.id,
+    googleEventId: events.googleEventId,
+    title: events.title,
+    calendarDescription: events.calendarDescription,
+    calendarEtag: events.calendarEtag,
+    location: events.location,
+    startsAt: events.startsAt,
+    endsAt: events.endsAt,
+  }).from(events).where(inArray(events.googleEventId, attributed.map((event) => event.id))).all();
+  const recorded = new Map(rows.flatMap((row) => row.googleEventId ? [[row.googleEventId, row] as const] : []));
+  return attributed.flatMap((current) => {
+    const row = recorded.get(current.id);
+    return row ? [{
+      rowId: row.id,
+      googleEventId: current.id,
+      current,
+      storedEtag: row.calendarEtag,
+      recorded: {
+        title: row.title,
+        description: row.calendarDescription,
+        location: row.location,
+        startsAt: row.startsAt,
+        endsAt: row.endsAt,
+      },
+    }] : [];
+  });
+};
+
+/** The Guest Registration line for a Scheduled Event, or undefined when nobody outside has registered. */
+const guestCountsFor = async (database: D1Database, eventId: string): Promise<string | undefined> => {
+  const rows = await drizzleOrganizationDatabase(database).select({
+    name: guestRegistrations.name,
+    affiliation: guestRegistrations.affiliation,
+    attending: guestRegistrations.attending,
+  }).from(guestRegistrations).where(eq(guestRegistrations.eventId, eventId)).all();
+  return guestCountsLine(rows) ?? undefined;
+};
+
+/** The published attachments already linked from a Scheduled Event's description. */
+const recordedAttachmentLinks = async (database: D1Database, eventId: string): Promise<AttachmentLink[]> => {
+  const rows = await drizzleOrganizationDatabase(database).select({
+    filename: eventAttachments.filename,
+    publicUrl: eventAttachments.publicUrl,
+  }).from(eventAttachments).where(eq(eventAttachments.eventId, eventId)).all();
+  return rows.flatMap((row) => row.publicUrl ? [{ filename: row.filename, url: row.publicUrl }] : []);
+};
+
+/**
+ * Asks which existing Scheduled Event each candidate belongs to and keeps only
+ * the answers that fall inside the caller's window. The window is applied after
+ * the AI has spoken, so a confident but distant match still cannot carry an
+ * existing invitation list onto another meeting.
+ */
+const correlatedTargets = async (
+  env: Bindings,
+  organizationId: string,
+  database: D1Database,
+  dependencies: AutomationDependencies,
+  candidates: EventDetails[],
+  targets: CorrelationTarget[],
+  withinWindow: (candidateStartsAt: string, eventStartsAt: string) => boolean,
+): Promise<Map<number, CorrelationTarget>> => {
+  const matched = new Map<number, CorrelationTarget>();
+  if (!targets.length) return matched;
+  const correspondences = await aiEventCorrespondence(
+    env, organizationId, database, candidates, targets.map((target) => target.current), dependencies,
+  );
+  for (const correspondence of correspondences) {
+    if (correspondence.eventId === null) continue;
+    const target = targets.find((value) => value.googleEventId === correspondence.eventId);
+    const candidate = candidates[correspondence.candidateIndex];
+    if (!target || !candidate || !withinWindow(candidate.startsAt, target.current.startsAt)) continue;
+    matched.set(correspondence.candidateIndex, target);
+  }
+  return matched;
+};
+
+/** Keeps the first link for each published URL when a later message republishes a file. */
+const distinctAttachmentLinks = (links: AttachmentLink[]): AttachmentLink[] => {
+  const seen = new Set<string>();
+  return links.filter((link) => {
+    if (seen.has(link.url)) return false;
+    seen.add(link.url);
+    return true;
+  });
+};
+
+const patchScheduledEvent = async (input: {
+  dependencies: AutomationDependencies;
+  accessToken: string;
+  googleEventId: string;
+  notify: boolean;
+  body: Record<string, unknown>;
+}): Promise<CalendarEventResource> => {
+  const url = new URL(`${CALENDAR_EVENTS_URL}/${encodeURIComponent(input.googleEventId)}`);
+  url.searchParams.set('sendUpdates', input.notify ? 'all' : 'none');
+  return input.dependencies.google.request<CalendarEventResource>(input.accessToken, url.toString(), {
+    method: 'PATCH',
+    body: JSON.stringify(input.body),
+  });
+};
+
+/**
+ * Merges one Event Candidate into the Scheduled Event it was correlated with.
+ * The Calendar `attachments` list is deliberately left alone: a `PATCH` replaces
+ * it wholesale, so writing this message's files would drop the chips an earlier
+ * message put there. The description still links every published file.
+ */
+const mergeScheduledEvent = async (input: {
+  dependencies: AutomationDependencies;
+  database: D1Database;
+  accessToken: string;
+  target: CorrelationTarget;
+  candidate: EventDetails;
+  attachmentLinks: AttachmentLink[];
+  gmailMessageId: string;
+}): Promise<void> => {
+  const guestCounts = await guestCountsFor(input.database, input.target.rowId);
+  const description = calendarEventDescription({
+    summary: input.candidate.summary,
+    ...(guestCounts === undefined ? {} : { guestCounts }),
+    attachments: distinctAttachmentLinks([
+      ...await recordedAttachmentLinks(input.database, input.target.rowId),
+      ...input.attachmentLinks,
+    ]),
+    attribution: sourceMessageAttribution(input.gmailMessageId),
+  });
+  const desired: DesiredCalendarFields = {
+    title: input.candidate.title,
+    description,
+    location: input.candidate.location,
+    startsAt: input.candidate.startsAt,
+    endsAt: input.candidate.endsAt,
+    timeZone: input.target.current.timeZone || 'Asia/Tokyo',
+  };
+  const lockedFields = lockedCalendarFields(input.target.current, input.target.recorded);
+  const merged = mergedCalendarFields({ current: input.target.current, desired, locked: lockedFields });
+  const changedFields = changedCalendarFields(input.target.current, merged);
+  if (!canApplyCalendarUpdate({
+    storedRevision: input.target.storedEtag,
+    incomingRevision: input.target.current.etag,
+    changedFields,
+    lockedFields,
+  })) return;
+  const updated = await patchScheduledEvent({
+    dependencies: input.dependencies,
+    accessToken: input.accessToken,
+    googleEventId: input.target.googleEventId,
+    notify: isSignificantChange(changedFields),
+    body: {
+      summary: merged.title,
+      description: merged.description,
+      location: merged.location,
+      start: { dateTime: merged.startsAt, timeZone: merged.timeZone },
+      end: { dateTime: merged.endsAt, timeZone: merged.timeZone },
+    },
+  });
+  await drizzleOrganizationDatabase(input.database).update(events).set({
+    title: merged.title,
+    startsAt: merged.startsAt,
+    endsAt: merged.endsAt,
+    location: merged.location,
+    description: input.candidate.summary,
+    calendarDescription: merged.description,
+    calendarEtag: updated.etag ?? null,
+    updatedAt: now(),
+  }).where(eq(events.id, input.target.rowId)).run();
+};
+
+/**
+ * Rewrites only the description of the Scheduled Event an Event Response
+ * answered, so the Guest Registration counts it just changed are visible. A
+ * guest moves neither the meeting nor its deadline, so this is never news to a
+ * Member and never sends an update.
+ */
+const rewriteScheduledEventDescription = async (input: {
+  dependencies: AutomationDependencies;
+  database: D1Database;
+  accessToken: string;
+  target: CorrelationTarget;
+  gmailMessageId: string;
+}): Promise<void> => {
+  const db = drizzleOrganizationDatabase(input.database);
+  const row = await db.select({ summary: events.description }).from(events)
+    .where(eq(events.id, input.target.rowId)).get();
+  const guestCounts = await guestCountsFor(input.database, input.target.rowId);
+  const description = calendarEventDescription({
+    summary: row?.summary ?? '',
+    ...(guestCounts === undefined ? {} : { guestCounts }),
+    attachments: distinctAttachmentLinks(await recordedAttachmentLinks(input.database, input.target.rowId)),
+    // The event keeps naming the message that described it, not the one answering it.
+    attribution: sourceMessageAttribution(
+      attributedMessageId(input.target.current.description) ?? input.gmailMessageId,
+    ),
+  });
+  const lockedFields = lockedCalendarFields(input.target.current, input.target.recorded);
+  const changedFields = description.trim() === input.target.current.description.trim() ? [] : ['description'];
+  if (!canApplyCalendarUpdate({
+    storedRevision: input.target.storedEtag,
+    incomingRevision: input.target.current.etag,
+    changedFields,
+    lockedFields,
+  })) return;
+  const updated = await patchScheduledEvent({
+    dependencies: input.dependencies,
+    accessToken: input.accessToken,
+    googleEventId: input.target.googleEventId,
+    notify: false,
+    body: { description },
+  });
+  await db.update(events).set({
+    calendarDescription: description,
+    calendarEtag: updated.etag ?? null,
+    updatedAt: now(),
+  }).where(eq(events.id, input.target.rowId)).run();
+};
+
 const processOrganizationMessage = async (
   dependencies: AutomationDependencies,
   env: Bindings,
@@ -1576,51 +1840,7 @@ const processOrganizationMessage = async (
     title: attachment.filename,
     mimeType: attachment.mimeType,
   }] : []);
-  const invitees = await activeMemberInvitees(database);
-  /** An unpublished attachment keeps the event an administrative draft, so its Members are not invited yet. */
-  const attendees = publicationFailed ? [] : invitees;
-  const calendarUrl = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
-  if (calendarAttachments.length) calendarUrl.searchParams.set('supportsAttachments', 'true');
-  if (attendees.length) calendarUrl.searchParams.set('sendUpdates', 'all');
-  for (const candidate of candidates) {
-    const event = await dependencies.google.request<CalendarEvent>(accessToken, calendarUrl.toString(), {
-      method: 'POST',
-      body: JSON.stringify({
-        summary: candidate.title,
-        description: calendarEventDescription({
-          summary: candidate.summary,
-          attachments: attachmentLinks,
-          attribution: `Mail Automation が Gmail メッセージ ${gmailMessageId} から作成しました。`,
-        }),
-        start: { dateTime: candidate.startsAt, timeZone: 'Asia/Tokyo' },
-        end: { dateTime: candidate.endsAt, timeZone: 'Asia/Tokyo' },
-        attachments: calendarAttachments,
-        attendees: attendees.map(({ email }) => ({ email })),
-      }),
-    });
-    if (!event.id) throw new Error('Google Calendar did not return an event ID.');
-    const eventId = crypto.randomUUID();
-    const eventCreatedAt = now();
-    await db.insert(events).values({
-      id: eventId,
-      organizationId,
-      ruleId: rule.id,
-      sourceMessageId,
-      googleEventId: event.id,
-      title: candidate.title,
-      startsAt: candidate.startsAt,
-      endsAt: candidate.endsAt,
-      status: publicationFailed ? 'draft' : 'scheduled',
-      createdAt: eventCreatedAt,
-      updatedAt: eventCreatedAt,
-    }).run();
-    await recordEventInvitations({
-      database,
-      eventId,
-      googleEventId: event.id,
-      invitees,
-      outcome: publicationFailed ? 'pending' : 'succeeded',
-    });
+  const recordEventAttachments = async (eventId: string): Promise<void> => {
     for (const { attachment, publication } of publications) {
       await db.insert(eventAttachments).values({
         id: crypto.randomUUID(),
@@ -1644,6 +1864,113 @@ const processOrganizationMessage = async (
         createdAt: now(),
       }).run();
     }
+  };
+  if (extraction.kind === 'response') {
+    const windowDays = await organizationResponseWindowDays(db);
+    const window = responseSearchWindow(candidates, windowDays);
+    const targets = window ? await correlationTargets(dependencies, accessToken, database, window) : [];
+    const matched = await correlatedTargets(
+      env, organizationId, database, dependencies, candidates, targets,
+      (candidateStartsAt, eventStartsAt) => withinResponseWindow(candidateStartsAt, eventStartsAt, windowDays),
+    );
+    const target = [...matched.values()][0];
+    // An Event Response that locates nothing creates nothing: it proposed no
+    // event, so there is neither a Scheduled Event to write nor one to withhold.
+    if (target) {
+      await db.delete(guestRegistrations).where(and(
+        eq(guestRegistrations.eventId, target.rowId),
+        eq(guestRegistrations.sourceMessageId, sourceMessageId),
+      )).run();
+      if (extraction.guests.length) {
+        await db.insert(guestRegistrations).values(extraction.guests.map((guest) => ({
+          id: crypto.randomUUID(),
+          eventId: target.rowId,
+          sourceMessageId,
+          name: guest.name,
+          affiliation: guest.affiliation,
+          attending: guest.attending,
+          createdAt: now(),
+        }))).run();
+      }
+      await recordEventAttachments(target.rowId);
+      await rewriteScheduledEventDescription({
+        dependencies, database, accessToken, target, gmailMessageId,
+      });
+    }
+    await db.update(sourceMessages).set({
+      state: publicationFailed || agentFailed ? 'exception' : 'processed',
+      processedAt: now(),
+    }).where(eq(sourceMessages.id, sourceMessageId)).run();
+    return;
+  }
+  const invitees = await activeMemberInvitees(database);
+  /** An unpublished attachment keeps the event an administrative draft, so its Members are not invited yet. */
+  const attendees = publicationFailed ? [] : invitees;
+  const mergeWindow = refreshSearchWindow(candidates);
+  const mergeTargets = mergeWindow
+    ? await correlationTargets(dependencies, accessToken, database, mergeWindow)
+    : [];
+  const mergeMatches = await correlatedTargets(
+    env, organizationId, database, dependencies, candidates, mergeTargets, withinRefreshWindow,
+  );
+  const calendarUrl = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
+  if (calendarAttachments.length) calendarUrl.searchParams.set('supportsAttachments', 'true');
+  if (attendees.length) calendarUrl.searchParams.set('sendUpdates', 'all');
+  for (const [index, candidate] of candidates.entries()) {
+    const merged = mergeMatches.get(index);
+    if (merged) {
+      await mergeScheduledEvent({
+        dependencies, database, accessToken, target: merged, candidate,
+        attachmentLinks, gmailMessageId,
+      });
+      await recordEventAttachments(merged.rowId);
+      continue;
+    }
+    const description = calendarEventDescription({
+      summary: candidate.summary,
+      attachments: attachmentLinks,
+      attribution: sourceMessageAttribution(gmailMessageId),
+    });
+    const event = await dependencies.google.request<CalendarEventResource>(accessToken, calendarUrl.toString(), {
+      method: 'POST',
+      body: JSON.stringify({
+        summary: candidate.title,
+        description,
+        location: candidate.location,
+        start: { dateTime: candidate.startsAt, timeZone: 'Asia/Tokyo' },
+        end: { dateTime: candidate.endsAt, timeZone: 'Asia/Tokyo' },
+        attachments: calendarAttachments,
+        attendees: attendees.map(({ email }) => ({ email })),
+      }),
+    });
+    if (!event.id) throw new Error('Google Calendar did not return an event ID.');
+    const eventId = crypto.randomUUID();
+    const eventCreatedAt = now();
+    await db.insert(events).values({
+      id: eventId,
+      organizationId,
+      ruleId: rule.id,
+      sourceMessageId,
+      googleEventId: event.id,
+      title: candidate.title,
+      startsAt: candidate.startsAt,
+      endsAt: candidate.endsAt,
+      location: candidate.location,
+      description: candidate.summary,
+      calendarDescription: description,
+      calendarEtag: event.etag ?? null,
+      status: publicationFailed ? 'draft' : 'scheduled',
+      createdAt: eventCreatedAt,
+      updatedAt: eventCreatedAt,
+    }).run();
+    await recordEventInvitations({
+      database,
+      eventId,
+      googleEventId: event.id,
+      invitees,
+      outcome: publicationFailed ? 'pending' : 'succeeded',
+    });
+    await recordEventAttachments(eventId);
   }
   if (publicationFailed) {
     await db.insert(automationExceptions).values({

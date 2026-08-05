@@ -16,6 +16,7 @@ export const pendingKey = {
   lineConnection: 'connection:line',
   aiConnection: 'connection:ai',
   attachmentFolder: 'connection:attachment-folder',
+  responseWindow: 'connection:response-window',
   aiTest: 'connection:ai-test',
   mailSearch: 'mail-test:search',
   mailPrepare: (messageId: string): string => `mail-test:prepare:${messageId}`,

@@ -52,7 +52,15 @@ Automation runs unattended for as long as its grant holds, without anyone signin
 
 Organization connection credentials are encrypted with an Organization-specific data-encryption key. That key is wrapped by a versioned deployment master key held as a Worker Secret, allowing stored credentials to be rewrapped during key rotation without exposing plaintext in D1.
 
-A Scheduled Event's Calendar description states its Event Summary first, then each Public Attachment as a link labelled with its filename, then the sentence naming the Source Message it came from. Google Calendar renders a small HTML subset, so untrusted extracted text and filenames are escaped and only absolute http(s) links are written.
+Every Scheduled Event insertion is an upsert. An Event Candidate is correlated against the Automation Inbox's calendar as it currently stands rather than against what Mail Automation last recorded, and a correlated candidate merges into that event field by field instead of creating a second one. A field whose current Calendar value differs from the value Mail Automation last wrote is a Manual Override and is left out of the merge while the remaining fields still update. A correspondence whose two start times stand more than seven days apart is never merged, so a distant match becomes a new Scheduled Event rather than moving an existing invitation list onto a different meeting. No Admin approval stands between a merge and the calendar.
+
+One extraction states the kind of the Source Message it read. An Event Response's extracted event fields locate the Scheduled Event it answers, within an Organization-configured number of days either side of that event's start, and are never written to it; an Event Response that locates nothing creates nothing. Its Message Summary, Tasks, and attachments are handled as they are for any other Source Message.
+
+An Event Response may return a completed registration naming people from outside the Organization. Each becomes one Guest Registration on the Scheduled Event that response answers, keyed by the Event Response that declared it so that reprocessing and correction replace those rows rather than accumulate beside them. Guest Registrations are retained with the delivery history and archived with it after twelve months.
+
+A merge notifies Members only when it changes a Scheduled Event's date, time, location, or Registration Deadline. Any other merge, including one that only rewrites the Event Summary and one that adds Guest Registrations, updates the Calendar silently. The Google Calendar update and the Member-facing LINE message are gated by the same judgement, so a Member never receives one without the other.
+
+A Scheduled Event's Calendar description states its Event Summary first, then the Guest Registration counts by Affiliation and never the guests' names, then each Public Attachment as a link labelled with its filename, then the sentence naming the Source Message it came from. Google Calendar renders a small HTML subset, so untrusted extracted text, Affiliations, and filenames are escaped and only absolute http(s) links are written.
 
 A Scheduled Event created from a Source Message invites every active Member that carries an address as a Google Calendar attendee of the Automation Inbox's event, so the invitation reaches that Member's own Google account and calendar. The invited Members are frozen as the event's Recipient Snapshot when it is created, and one Delivery Record per Member records the invitation, so a later roster change never rewrites who an already delivered event reached.
 
@@ -242,6 +250,14 @@ _Avoid_: recipient rule, distribution filter
 An AI-classified creation, modification, or cancellation derived from a Source Message and correlated with one Scheduled Event.
 _Avoid_: email action, event update
 
+**Event Response**:
+A Source Message correlated with an existing Scheduled Event that proposes no new event of its own, such as an acceptance, an acknowledgement, or a registration returned against it. Its extracted event fields locate the Scheduled Event it answers and never create one.
+_Avoid_: reply, response mail, follow-up
+
+**Event Response Window**:
+How many days either side of a Scheduled Event's start an Event Response may still be recognised as answering it. An Organization sets it for itself, because how far ahead a registration is returned is a fact about that Organization's correspondence rather than about Mail Automation.
+_Avoid_: correlation window, tolerance, matching range
+
 **Manual Override**:
 A field value changed by an Admin in the GUI or directly on the organizer's Google Calendar that automated Event Changes may not overwrite. An Event Refresh is the one exception, because an Admin approves that single rewrite after seeing what it replaces.
 _Avoid_: edit, correction
@@ -325,6 +341,14 @@ _Avoid_: instance, session
 **Attendance Registration**:
 A Member's authoritative attending, not-attending, or unanswered decision for a Scheduled Event, changeable until that event's registration deadline.
 _Avoid_: Calendar RSVP, attendance response
+
+**Guest Registration**:
+One declared attendance at a Scheduled Event by a person who is not a Member, carrying that person's name, their Affiliation, their attending or not-attending state, and the Event Response that declared it. A Guest Registration is written on someone else's behalf by whoever returned the Event Response, so it grants no Member Portal access, receives no invitation or reminder, and never becomes an Attendance Registration.
+_Avoid_: guest attendance, external attendee, participant
+
+**Affiliation**:
+The name a Guest Registration gives for the outside body its people came from. It is text that Mail Automation groups and counts by, never an Organization.
+_Avoid_: organization, club, group
 
 **Eligible Recipient**:
 A Member invited to a Scheduled Event and allowed to submit an Attendance Registration, without being presumed to attend.

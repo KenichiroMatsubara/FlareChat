@@ -191,6 +191,13 @@ export {
   validateAttachmentIntake,
 } from './attachments';
 export type { AttachmentFolderPathResult, AttachmentIntakeResult } from './attachments';
+export {
+  DEFAULT_RESPONSE_WINDOW_DAYS,
+  MAX_RESPONSE_WINDOW_DAYS,
+  MIN_RESPONSE_WINDOW_DAYS,
+  readResponseWindowDays,
+} from './responses';
+export type { ResponseWindowRejection, ResponseWindowResult } from './responses';
 export { MAX_DELIVERY_ATTEMPTS, MAX_RETRY_WINDOW_MS, nextRetry } from './retry';
 export type { RetryDecision } from './retry';
 export { CAPACITY_CRITICAL_THRESHOLD, CAPACITY_WARNING_THRESHOLD, capacityWarning } from './capacity';

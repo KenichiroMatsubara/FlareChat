@@ -9,6 +9,7 @@ import { decrypt, encrypt } from './cryptography';
 import { createDatabaseAccess } from './database-access';
 import { randomToken } from './encoding';
 import { readRecoveryReceipt, restoreDeliveryRecordFromReceipt } from './recovery-receipts';
+import { affiliationCounts } from './guests';
 import { exportMemberCsv, previewMemberCsv } from './roster';
 import { failure, json } from './response';
 import { entryRoutes, oauthRoutes } from './routes/entry';
@@ -40,6 +41,7 @@ import {
   eventOverrides,
   eventRecipients,
   events as organizationEvents,
+  guestRegistrations,
   exceptions as organizationExceptions,
   googleConnections,
   jobs as organizationJobs,
@@ -1848,6 +1850,49 @@ app.get('/api/organizations/:organizationId/dashboard', async (context) => {
     });
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Dashboard could not be loaded.', 403);
+  }
+});
+
+/**
+ * The Guest Registrations on each Scheduled Event still ahead. This is the one
+ * place the guests' names are shown: the Calendar description an invited Member
+ * reads carries the counts alone.
+ */
+app.get('/api/organizations/:organizationId/guest-registrations', async (context) => {
+  try {
+    const access = await organizationForRequest(context.req.raw, context.env, context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const database = drizzleOrganizationDatabase(access.database);
+    const rows = await database.select({
+      eventId: organizationEvents.id,
+      title: organizationEvents.title,
+      startsAt: organizationEvents.startsAt,
+      name: guestRegistrations.name,
+      affiliation: guestRegistrations.affiliation,
+      attending: guestRegistrations.attending,
+    }).from(guestRegistrations)
+      .innerJoin(organizationEvents, eq(organizationEvents.id, guestRegistrations.eventId))
+      .where(gte(organizationEvents.endsAt, now()))
+      .orderBy(asc(organizationEvents.startsAt), asc(guestRegistrations.name)).all();
+    const byEvent = new Map<string, {
+      eventId: string;
+      title: string;
+      startsAt: string;
+      guests: Array<{ name: string; affiliation: string; attending: boolean }>;
+    }>();
+    for (const row of rows) {
+      const entry = byEvent.get(row.eventId)
+        ?? { eventId: row.eventId, title: row.title, startsAt: row.startsAt, guests: [] };
+      entry.guests.push({ name: row.name, affiliation: row.affiliation, attending: row.attending });
+      byEvent.set(row.eventId, entry);
+    }
+    return json(context, [...byEvent.values()].map((entry) => ({
+      ...entry,
+      attendingCount: entry.guests.filter((guest) => guest.attending).length,
+      affiliations: affiliationCounts(entry.guests),
+    })));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Guest Registrations could not be loaded.', 403);
   }
 });
 

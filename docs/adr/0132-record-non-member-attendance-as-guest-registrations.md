@@ -1,0 +1,17 @@
+# Record non-Member attendance as Guest Registrations
+
+An Event Response may return a completed registration naming people from outside the Organization who intend to attend. Each named person becomes one Guest Registration row on the Scheduled Event the response answers, carrying their name, their Affiliation, their attending or not-attending state, and the Event Response that declared them.
+
+They are not Attendance Registrations. CONTEXT.md guarantees that `An Attendance Registration belongs to a Member rather than to an unguessable URL, so a leaked link grants nothing`, and that guarantee holds because a Member's attendance is written by that Member, signed in to the Member Portal. A guest is declared by whoever returned the registration, on someone else's behalf, and holds no Google binding, no LINE Destination, and no portal access. Widening Attendance Registration to admit a proxy declaration would dissolve the one property it exists to have. Keeping them apart leaves the Member-side guarantee untouched and costs a second table.
+
+The rows are structured rather than summarized as text because the requirement is to count. Counting from prose is the failure a language model makes most quietly, and a total nobody can check is worse than no total. Rows make the count `count(*)`. They also make reprocessing idempotent — `processOrganizationMessage` has a reprocess path and Jobs retry, and a tally accumulated into text double-counts on the second pass while rows keyed by their Event Response are replaced. Corrections need the same key: a later message reducing a party from three to two replaces that response's rows, where appended prose would leave the original claim standing beside the correction with the total agreeing with neither.
+
+The choice was made knowing it puts third parties' names in an Organization's D1, which no other part of the product does. Storing only Affiliation and a headcount was the alternative, and it was rejected because the names are what the day itself needs.
+
+The Calendar description carries the counts by Affiliation and no names. A Scheduled Event's description is rendered on every invited Member's own calendar, and a roster is something an Organization's operators work from, not something to distribute to everyone invited. The names are shown in the management GUI and remain readable in the published registration itself, which is already a Public Attachment linked from the same description. An Affiliation is untrusted text written by another organization, so the counts block is assembled inside `calendarEventDescription` where ADR 0114's escaping applies, never by a caller passing finished markup in.
+
+Guest Registrations are retained with the delivery history and archived to R2 with it after twelve months, names included. The alternative was to drop the names once the event had passed, on the grounds that a reception desk has no use for them afterwards; it was rejected because who attended from where is a record an Organization refers back to when it plans the next one.
+
+## Consequences
+
+An Organization's twelve-month archive now contains personal data belonging to people who have no relationship with that Organization, cannot see what is held, and cannot ask for it to be removed through any interface the product offers. Nothing here creates that path, and the retention decision is the reason it will be wanted.

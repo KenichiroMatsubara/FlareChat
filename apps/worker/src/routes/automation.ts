@@ -1,6 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import { Hono } from 'hono';
-import { readAttachmentFolderPath } from '@mail/domain';
+import { MAX_RESPONSE_WINDOW_DAYS, MIN_RESPONSE_WINDOW_DAYS, readAttachmentFolderPath, readResponseWindowDays } from '@mail/domain';
 
 import { beginGoogleEntry, entryConfigurationError } from '../entry';
 import { createAutomation } from '../automation';
@@ -11,6 +11,7 @@ import { organizationDatabase } from '../storage/database';
 import { createOrganizationStore } from '../storage/organization-store';
 import { connections } from '../storage/organization-schema';
 import { organizationAttachmentFolderPath, saveOrganizationAttachmentFolderPath } from '../attachment-folders';
+import { organizationResponseWindowDays, saveOrganizationResponseWindowDays } from '../event-merge';
 
 export const automationRoutes = new Hono<{ Bindings: Bindings }>();
 
@@ -83,6 +84,35 @@ const ATTACHMENT_FOLDER_PATH_REJECTIONS: Record<string, string> = {
   segment_too_long: 'フォルダ名が1階層あたりの上限を超えています。',
   too_many_segments: '階層が深すぎます。',
 };
+
+const RESPONSE_WINDOW_REJECTIONS: Record<string, string> = {
+  not_a_number: '日数は整数で入力してください。',
+  out_of_range: `日数は${MIN_RESPONSE_WINDOW_DAYS}〜${MAX_RESPONSE_WINDOW_DAYS}日の範囲で入力してください。`,
+};
+
+automationRoutes.get('/organizations/:organizationId/response-window', async (context) => {
+  try {
+    const access = await createRequestContext(context.req.raw, context.env).organization(context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    return json(context, { days: await organizationResponseWindowDays(organizationDatabase(access.database)) });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Event Response window could not be loaded.', 403);
+  }
+});
+
+automationRoutes.put('/organizations/:organizationId/response-window', async (context) => {
+  try {
+    const access = await createRequestContext(context.req.raw, context.env).organization(context.req.param('organizationId'));
+    if (!access.database) throw new Error('Organization database is not available.');
+    const input = await context.req.json<{ days?: unknown }>();
+    const read = readResponseWindowDays(input.days);
+    if (!read.accepted) return failure(context, RESPONSE_WINDOW_REJECTIONS[read.reason] ?? '日数を保存できませんでした。');
+    await saveOrganizationResponseWindowDays(organizationDatabase(access.database), read.days, now());
+    return json(context, { days: read.days });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Event Response window could not be saved.', 409);
+  }
+});
 
 automationRoutes.get('/organizations/:organizationId/attachment-folder', async (context) => {
   try {

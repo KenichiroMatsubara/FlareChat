@@ -38,6 +38,35 @@ describe('Google Calendar description', () => {
     })).toBe('受付は&lt;会館&gt;前<br>持ち物は &quot;名札&quot; と資料 &amp; 筆記具');
   });
 
+  it('states the Guest Registration counts between the Event Summary and the attachments', () => {
+    expect(calendarEventDescription({
+      summary: '例会のご案内です。',
+      guestCounts: '外部からの参加登録: 1団体 2名（北クラブ 2名）',
+      attachments: [{ filename: '登録用紙.xlsx', url: 'https://drive.example/sheet' }],
+      attribution: 'Mail Automation が Gmail メッセージ abc から作成しました。',
+    })).toBe([
+      '例会のご案内です。',
+      '<br><br>外部からの参加登録: 1団体 2名（北クラブ 2名）',
+      '<br><br>添付ファイル:',
+      '<br><a href="https://drive.example/sheet">登録用紙.xlsx</a>',
+      '<br><br>Mail Automation が Gmail メッセージ abc から作成しました。',
+    ].join(''));
+  });
+
+  it('escapes an Affiliation another organization wrote into its registration', () => {
+    expect(calendarEventDescription({
+      summary: '',
+      guestCounts: '外部からの参加登録: 1団体 1名（<script>alert(1)</script> 1名）',
+      attachments: [],
+      attribution: '',
+    })).toBe('外部からの参加登録: 1団体 1名（&lt;script&gt;alert(1)&lt;/script&gt; 1名）');
+  });
+
+  it('omits the counts block when nobody from outside has registered', () => {
+    expect(calendarEventDescription({ summary: '例会のご案内です。', attachments: [], attribution: '' }))
+      .toBe('例会のご案内です。');
+  });
+
   it('escapes a filename that carries markup', () => {
     expect(attachmentLink({ filename: '<b>案内</b>.pdf', url: 'https://drive.example/file' }))
       .toBe('<a href="https://drive.example/file">&lt;b&gt;案内&lt;/b&gt;.pdf</a>');

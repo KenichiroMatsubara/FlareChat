@@ -138,6 +138,7 @@ describe('Organization database resolver', () => {
       { name: '0017_member_portal.sql' },
       { name: '0018_automation_inbox_health.sql' },
       { name: '0019_task_role_revisions.sql' },
+      { name: '0020_event_responses_and_guests.sql' },
     ]);
   });
 
