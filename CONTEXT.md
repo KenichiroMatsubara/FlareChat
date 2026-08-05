@@ -242,6 +242,10 @@ _Avoid_: recipient rule, distribution filter
 An AI-classified creation, modification, or cancellation derived from a Source Message and correlated with one Scheduled Event.
 _Avoid_: email action, event update
 
+**Event Response**:
+A Source Message correlated with an existing Scheduled Event that proposes no new event of its own, such as an acceptance, an acknowledgement, or a registration returned against it. Its extracted event fields locate the Scheduled Event it answers and never create one.
+_Avoid_: reply, response mail, follow-up
+
 **Manual Override**:
 A field value changed by an Admin in the GUI or directly on the organizer's Google Calendar that automated Event Changes may not overwrite. An Event Refresh is the one exception, because an Admin approves that single rewrite after seeing what it replaces.
 _Avoid_: edit, correction
@@ -325,6 +329,14 @@ _Avoid_: instance, session
 **Attendance Registration**:
 A Member's authoritative attending, not-attending, or unanswered decision for a Scheduled Event, changeable until that event's registration deadline.
 _Avoid_: Calendar RSVP, attendance response
+
+**Guest Registration**:
+One declared attendance at a Scheduled Event by a person who is not a Member, carrying that person's name, their Affiliation, their attending or not-attending state, and the Event Response that declared it. A Guest Registration is written on someone else's behalf by whoever returned the Event Response, so it grants no Member Portal access, receives no invitation or reminder, and never becomes an Attendance Registration.
+_Avoid_: guest attendance, external attendee, participant
+
+**Affiliation**:
+The name a Guest Registration gives for the outside body its people came from. It is text that Mail Automation groups and counts by, never an Organization.
+_Avoid_: organization, club, group
 
 **Eligible Recipient**:
 A Member invited to a Scheduled Event and allowed to submit an Attendance Registration, without being presumed to attend.
