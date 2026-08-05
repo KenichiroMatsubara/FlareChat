@@ -1,5 +1,30 @@
+import { eq } from 'drizzle-orm';
+import { DEFAULT_RESPONSE_WINDOW_DAYS } from '@mail/domain';
+
 import type { EventDetails } from './event-details';
 import type { CalendarEventFields, DesiredCalendarFields } from './event-refresh';
+import { settings } from './storage/organization-schema';
+import type { OrganizationDatabase } from './storage/database';
+
+export const RESPONSE_WINDOW_DAYS_SETTING = 'response_window_days';
+
+/** The Event Response window this Organization configured, falling back to the product default. */
+export const organizationResponseWindowDays = async (database: OrganizationDatabase): Promise<number> => {
+  const stored = await database.select({ value: settings.value }).from(settings)
+    .where(eq(settings.key, RESPONSE_WINDOW_DAYS_SETTING)).get();
+  const days = Number(stored?.value);
+  return Number.isInteger(days) && days > 0 ? days : DEFAULT_RESPONSE_WINDOW_DAYS;
+};
+
+export const saveOrganizationResponseWindowDays = async (
+  database: OrganizationDatabase,
+  days: number,
+  updatedAt: string,
+): Promise<void> => {
+  const value = String(days);
+  await database.insert(settings).values({ key: RESPONSE_WINDOW_DAYS_SETTING, value, updatedAt })
+    .onConflictDoUpdate({ target: settings.key, set: { value, updatedAt } }).run();
+};
 
 /**
  * The Calendar fields Mail Automation recorded the last time it wrote a
@@ -24,8 +49,6 @@ const MERGEABLE_FIELDS: readonly MergeableField[] = ['title', 'description', 'lo
  */
 const SIGNIFICANT_FIELDS: ReadonlySet<string> = new Set(['startsAt', 'endsAt', 'location', 'timeZone', 'attendanceDeadline']);
 
-/** An Event Response locates its Scheduled Event over a far wider span than a merge may write. */
-export const RESPONSE_WINDOW_DAYS = 60;
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
 const parsed = (value: string): number | null => {
@@ -91,22 +114,29 @@ export const isSignificantChange = (changedFields: readonly string[]): boolean =
   changedFields.some((field) => SIGNIFICANT_FIELDS.has(field));
 
 /** Two moments belong to the same meeting for the purpose of locating it from an Event Response. */
-export const withinResponseWindow = (candidateStartsAt: string, eventStartsAt: string): boolean => {
+export const withinResponseWindow = (
+  candidateStartsAt: string,
+  eventStartsAt: string,
+  windowDays: number = DEFAULT_RESPONSE_WINDOW_DAYS,
+): boolean => {
   const candidate = parsed(candidateStartsAt);
   const event = parsed(eventStartsAt);
   if (candidate === null || event === null) return false;
-  return Math.abs(candidate - event) <= RESPONSE_WINDOW_DAYS * DAY_MS;
+  return Math.abs(candidate - event) <= windowDays * DAY_MS;
 };
 
 /** The Calendar search span for locating the Scheduled Event an Event Response answers. */
-export const responseSearchWindow = (candidates: EventDetails[]): { timeMin: string; timeMax: string } | null => {
+export const responseSearchWindow = (
+  candidates: EventDetails[],
+  windowDays: number = DEFAULT_RESPONSE_WINDOW_DAYS,
+): { timeMin: string; timeMax: string } | null => {
   const times = candidates.flatMap((candidate) => {
     const time = parsed(candidate.startsAt);
     return time === null ? [] : [time];
   });
   if (!times.length) return null;
   return {
-    timeMin: new Date(Math.min(...times) - RESPONSE_WINDOW_DAYS * DAY_MS).toISOString(),
-    timeMax: new Date(Math.max(...times) + RESPONSE_WINDOW_DAYS * DAY_MS).toISOString(),
+    timeMin: new Date(Math.min(...times) - windowDays * DAY_MS).toISOString(),
+    timeMax: new Date(Math.max(...times) + windowDays * DAY_MS).toISOString(),
   };
 };

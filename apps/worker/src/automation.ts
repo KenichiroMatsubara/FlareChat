@@ -29,6 +29,7 @@ import {
   lockedCalendarFields,
   mergedCalendarFields,
   isSignificantChange,
+  organizationResponseWindowDays,
   responseSearchWindow,
   withinResponseWindow,
 } from './event-merge';
@@ -1865,10 +1866,12 @@ const processOrganizationMessage = async (
     }
   };
   if (extraction.kind === 'response') {
-    const window = responseSearchWindow(candidates);
+    const windowDays = await organizationResponseWindowDays(db);
+    const window = responseSearchWindow(candidates, windowDays);
     const targets = window ? await correlationTargets(dependencies, accessToken, database, window) : [];
     const matched = await correlatedTargets(
-      env, organizationId, database, dependencies, candidates, targets, withinResponseWindow,
+      env, organizationId, database, dependencies, candidates, targets,
+      (candidateStartsAt, eventStartsAt) => withinResponseWindow(candidateStartsAt, eventStartsAt, windowDays),
     );
     const target = [...matched.values()][0];
     // An Event Response that locates nothing creates nothing: it proposed no

@@ -75,6 +75,21 @@ describe('Scheduled Event merge', () => {
     expect(withinResponseWindow('2026-08-03T19:00:00+09:00', '2026-04-01T19:00:00+09:00')).toBe(false);
   });
 
+  it('narrows and widens with the window the Organization configured', () => {
+    expect(withinResponseWindow('2026-08-03T19:00:00+09:00', '2026-07-05T19:00:00+09:00', 14)).toBe(false);
+    expect(withinResponseWindow('2026-08-03T19:00:00+09:00', '2026-04-01T19:00:00+09:00', 180)).toBe(true);
+  });
+
+  it('searches the span its configured window reaches', () => {
+    expect(responseSearchWindow([{
+      title: '例会', startsAt: '2026-08-03T00:00:00Z', endsAt: '2026-08-03T02:00:00Z',
+      timeZone: 'Asia/Tokyo', location: '', description: '', summary: '',
+    }], 10)).toEqual({
+      timeMin: '2026-07-24T00:00:00.000Z',
+      timeMax: '2026-08-13T00:00:00.000Z',
+    });
+  });
+
   it('has no search window when no candidate carries a usable start time', () => {
     expect(responseSearchWindow([])).toBeNull();
   });

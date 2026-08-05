@@ -180,6 +180,7 @@ export interface OrganizationRouteData {
   lineDestinations: OrganizationLineDestination[];
   presets: PresetSummary[];
   attachmentFolder: { path: string };
+  responseWindow: { days: number };
   guestRegistrations: GuestRegistrationRoster[];
 }
 
@@ -188,7 +189,7 @@ export const loadOrganization = async (organizationId: string): Promise<Organiza
   if (state.kind !== 'ready') throw new Response('Organization is not ready', { status: 409 });
   const organization = state.organizations.find((value) => value.organizationId === organizationId);
   if (!organization) throw new Response('Organization was not found', { status: 404 });
-  const [automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, taskReassignment, members, lineDestinations, presets, attachmentFolder, guestRegistrations] = await Promise.all([
+  const [automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, taskReassignment, members, lineDestinations, presets, attachmentFolder, guestRegistrations, responseWindow] = await Promise.all([
     api.currentAutomation(organizationId),
     api.organizationConnections(organizationId),
     api.organizationDashboard(organizationId),
@@ -206,8 +207,9 @@ export const loadOrganization = async (organizationId: string): Promise<Organiza
     api.presets(),
     api.organizationAttachmentFolder(organizationId),
     api.organizationGuestRegistrations(organizationId),
+    api.organizationResponseWindow(organizationId),
   ]);
-  return { state, organization, automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, taskReassignment, members, lineDestinations, presets, attachmentFolder, guestRegistrations };
+  return { state, organization, automation, connections, dashboard, rules, prompts, agentRules, agentRuns, lists, audit, tasks, taskRoles, taskReassignment, members, lineDestinations, presets, attachmentFolder, guestRegistrations, responseWindow };
 };
 
 const roleChangeOpensReassignment = (current: OrganizationRouteData): OrganizationRouteData => ({
@@ -277,6 +279,9 @@ interface OrganizationContextValue extends OrganizationRouteData, PendingOperati
   attachmentFolderPath: string;
   setAttachmentFolderPath: (value: string) => void;
   saveAttachmentFolderPath: () => void;
+  responseWindowDays: string;
+  setResponseWindowDays: (value: string) => void;
+  saveResponseWindowDays: () => void;
   setLineChannelAccessToken: (value: string) => void;
   setLineChannelSecret: (value: string) => void;
   setAiApiKey: (value: string) => void;
@@ -307,6 +312,7 @@ export const OrganizationLayout = () => {
   const [aiModel, setAiModel] = useState(data.connections.ai.model);
   const [aiBaseUrl, setAiBaseUrl] = useState(data.connections.ai.baseUrl);
   const [attachmentFolderPath, setAttachmentFolderPath] = useState(data.attachmentFolder.path);
+  const [responseWindowDays, setResponseWindowDays] = useState(String(data.responseWindow.days));
   const [aiTestPrompt, setAiTestPrompt] = useState('日本の首都を一文で教えてください。');
   const [aiTestResult, setAiTestResult] = useState('');
   const [mailTestSubject, setMailTestSubject] = useState(DEFAULT_MAIL_TEST_SUBJECT);
@@ -365,6 +371,12 @@ export const OrganizationLayout = () => {
     setData((current) => ({ ...current, connections: { ...current.connections, ai } }));
     setAiApiKey('');
   });
+  const saveResponseWindowDays = () => void runOperation(pendingKey.responseWindow, async () => {
+    const responseWindow = await api.saveOrganizationResponseWindow(organizationId, Number(responseWindowDays.trim()));
+    setData((current) => ({ ...current, responseWindow }));
+    setResponseWindowDays(String(responseWindow.days));
+  });
+
   const saveAttachmentFolderPath = () => void runOperation(pendingKey.attachmentFolder, async () => {
     const attachmentFolder = await api.saveOrganizationAttachmentFolder(organizationId, attachmentFolderPath);
     setData((current) => ({ ...current, attachmentFolder }));
@@ -558,7 +570,7 @@ export const OrganizationLayout = () => {
   });
   const logout = () => void runOperation(pendingKey.logout, async () => { await api.logout(); navigate('/', { replace: true }); });
   const reauthenticate = () => void runOperation(pendingKey.reauthenticate, async () => { window.location.assign((await api.reauthorizeAutomationInbox(organizationId)).authorizationUrl); });
-  const value: OrganizationContextValue = { ...data, ...operations, summary, setEnabled, runAutomation, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateRule, agentTranscript, proposedActions, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, decideProposedAction, decideProposedActionBatch, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, taskReassignmentProposals, taskReassignmentSkipped, suggestTaskReassignments, applyTaskReassignments, discardTaskReassignments, createMember, updateMember, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshMembers, applyPreset, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestCreatedEventIds, mailTestRefreshRequest, mailTestRefreshPlan, mailTestRefreshOutcome, prepareRefresh, planRefresh, applyRefresh, attachmentFolderPath, setAttachmentFolderPath, saveAttachmentFolderPath, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
+  const value: OrganizationContextValue = { ...data, ...operations, summary, setEnabled, runAutomation, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, createCalendarEvent, createRule, updateRule, agentTranscript, proposedActions, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, decideProposedAction, decideProposedActionBatch, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, taskReassignmentProposals, taskReassignmentSkipped, suggestTaskReassignments, applyTaskReassignments, discardTaskReassignments, createMember, updateMember, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshMembers, applyPreset, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestCreatedEventIds, mailTestRefreshRequest, mailTestRefreshPlan, mailTestRefreshOutcome, prepareRefresh, planRefresh, applyRefresh, attachmentFolderPath, setAttachmentFolderPath, saveAttachmentFolderPath, responseWindowDays, setResponseWindowDays, saveResponseWindowDays, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
   return <OrganizationContext.Provider value={value}><Outlet /></OrganizationContext.Provider>;
 };
 
@@ -601,6 +613,10 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     savedAttachmentFolderPath={value.attachmentFolder.path}
     onAttachmentFolderPathChange={value.setAttachmentFolderPath}
     onSaveAttachmentFolderPath={value.saveAttachmentFolderPath}
+    responseWindowDays={value.responseWindowDays}
+    savedResponseWindowDays={value.responseWindow.days}
+    onResponseWindowDaysChange={value.setResponseWindowDays}
+    onSaveResponseWindowDays={value.saveResponseWindowDays}
     aiTestPrompt={value.aiTestPrompt}
     aiTestResult={value.aiTestResult}
     onAiTestPromptChange={value.setAiTestPrompt}

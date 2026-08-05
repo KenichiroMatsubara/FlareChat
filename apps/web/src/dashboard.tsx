@@ -74,6 +74,10 @@ export interface DashboardProps {
   savedAttachmentFolderPath: string;
   onAttachmentFolderPathChange: (value: string) => void;
   onSaveAttachmentFolderPath: () => void;
+  responseWindowDays: string;
+  savedResponseWindowDays: number;
+  onResponseWindowDaysChange: (value: string) => void;
+  onSaveResponseWindowDays: () => void;
   onSaveLineConnection: () => void;
   onSaveAiConnection: () => void;
   aiTestPrompt: string;

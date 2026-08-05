@@ -505,6 +505,13 @@ export const api = {
     body: JSON.stringify({ path }),
   }),
 
+  organizationResponseWindow: (organizationId: string): Promise<{ days: number }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/response-window`),
+
+  saveOrganizationResponseWindow: (organizationId: string, days: number): Promise<{ days: number }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/response-window`, {
+    method: 'PUT',
+    body: JSON.stringify({ days }),
+  }),
+
   organizationMembers: (organizationId: string): Promise<OrganizationMember[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/members`),
   organizationLineDestinations: (organizationId: string): Promise<OrganizationLineDestination[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/line-destinations`),
   createOrganizationMember: (organizationId: string, input: OrganizationMemberInput): Promise<OrganizationMember> => request(`/api/organizations/${encodeURIComponent(organizationId)}/members`, {

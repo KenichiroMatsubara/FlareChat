@@ -54,7 +54,7 @@ Organization connection credentials are encrypted with an Organization-specific 
 
 Every Scheduled Event insertion is an upsert. An Event Candidate is correlated against the Automation Inbox's calendar as it currently stands rather than against what Mail Automation last recorded, and a correlated candidate merges into that event field by field instead of creating a second one. A field whose current Calendar value differs from the value Mail Automation last wrote is a Manual Override and is left out of the merge while the remaining fields still update. A correspondence whose two start times stand more than seven days apart is never merged, so a distant match becomes a new Scheduled Event rather than moving an existing invitation list onto a different meeting. No Admin approval stands between a merge and the calendar.
 
-One extraction states the kind of the Source Message it read. An Event Response's extracted event fields locate the Scheduled Event it answers, within sixty days of that event's start, and are never written to it; an Event Response that locates nothing creates nothing. Its Message Summary, Tasks, and attachments are handled as they are for any other Source Message.
+One extraction states the kind of the Source Message it read. An Event Response's extracted event fields locate the Scheduled Event it answers, within an Organization-configured number of days either side of that event's start, and are never written to it; an Event Response that locates nothing creates nothing. Its Message Summary, Tasks, and attachments are handled as they are for any other Source Message.
 
 An Event Response may return a completed registration naming people from outside the Organization. Each becomes one Guest Registration on the Scheduled Event that response answers, keyed by the Event Response that declared it so that reprocessing and correction replace those rows rather than accumulate beside them. Guest Registrations are retained with the delivery history and archived with it after twelve months.
 
@@ -253,6 +253,10 @@ _Avoid_: email action, event update
 **Event Response**:
 A Source Message correlated with an existing Scheduled Event that proposes no new event of its own, such as an acceptance, an acknowledgement, or a registration returned against it. Its extracted event fields locate the Scheduled Event it answers and never create one.
 _Avoid_: reply, response mail, follow-up
+
+**Event Response Window**:
+How many days either side of a Scheduled Event's start an Event Response may still be recognised as answering it. An Organization sets it for itself, because how far ahead a registration is returned is a fact about that Organization's correspondence rather than about Mail Automation.
+_Avoid_: correlation window, tolerance, matching range
 
 **Manual Override**:
 A field value changed by an Admin in the GUI or directly on the organizer's Google Calendar that automated Event Changes may not overwrite. An Event Refresh is the one exception, because an Admin approves that single rewrite after seeing what it replaces.

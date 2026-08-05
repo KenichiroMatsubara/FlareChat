@@ -38,6 +38,7 @@ const dashboardProps = (): DashboardProps => ({
   organizationMembers: [], lineDestinations: [], onCreateMember: vi.fn(), onUpdateMember: vi.fn(),
   onSetLineDestination: vi.fn(), onUnlinkLineDestination: vi.fn(), onRegisterLineDestination: vi.fn(), onRemoveLineDestination: vi.fn(), onRefreshMembers: vi.fn(),
   guestRegistrations: [],
+  responseWindowDays: '60', savedResponseWindowDays: 60, onResponseWindowDaysChange: vi.fn(), onSaveResponseWindowDays: vi.fn(),
   attachmentFolderPath: 'Mail Automation', savedAttachmentFolderPath: 'Mail Automation', onAttachmentFolderPathChange: vi.fn(), onSaveAttachmentFolderPath: vi.fn(),
   presets: [{ id: 'membership-organization', name: 'Membership organization', description: 'Starting configuration.' }], onApplyPreset: vi.fn(),
 });
