@@ -43,12 +43,6 @@ export type MergeableField = keyof RecordedEventFields;
 
 const MERGEABLE_FIELDS: readonly MergeableField[] = ['title', 'description', 'location', 'startsAt', 'endsAt'];
 
-/**
- * The fields whose change warrants telling Members. `timeZone` counts as time:
- * the same wall clock in another zone is a different moment to whoever travels.
- */
-const SIGNIFICANT_FIELDS: ReadonlySet<string> = new Set(['startsAt', 'endsAt', 'location', 'timeZone', 'attendanceDeadline']);
-
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
 const parsed = (value: string): number | null => {
@@ -104,14 +98,6 @@ export const mergedCalendarFields = (input: {
     timeZone: input.desired.timeZone,
   };
 };
-
-/**
- * Whether a write earns a Member-facing notification. Both the Google Calendar
- * update mail and the LINE message are gated on this one answer, so a Member
- * never receives one channel without the other.
- */
-export const isSignificantChange = (changedFields: readonly string[]): boolean =>
-  changedFields.some((field) => SIGNIFICANT_FIELDS.has(field));
 
 /** Two moments belong to the same meeting for the purpose of locating it from an Event Response. */
 export const withinResponseWindow = (

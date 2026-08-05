@@ -1008,8 +1008,8 @@ describe('Organization Automation Inbox scheduling', () => {
     expect(created).toHaveLength(1);
     expect(patched).toHaveLength(1);
     expect(patched[0]?.body.location).toBe('市民ホール');
-    // A moved meeting is a Significant Change, so its Members are told.
-    expect(patched[0]?.url).toContain('sendUpdates=all');
+    // Calendar writes never notify Members; sendUpdates is always none.
+    expect(patched[0]?.url).toContain('sendUpdates=none');
     expect(fixture.organization.rows('SELECT count(*) AS total FROM events')).toEqual([{ total: 1 }]);
   });
 
@@ -1124,7 +1124,7 @@ describe('Organization Automation Inbox scheduling', () => {
 
     await runEnabledAutomations(fixture.environment);
 
-    expect(requests).toContain('https://www.googleapis.com/calendar/v3/calendars/primary/events');
+    expect(requests).toContain('https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=none');
     const dashboard = await app.fetch(
       fixture.request('/api/organizations/organization-1/dashboard'),
       fixture.environment,
@@ -1166,7 +1166,7 @@ describe('Organization Automation Inbox scheduling', () => {
 
     await runEnabledAutomations(fixture.environment);
 
-    expect(calendarUrl).toContain('sendUpdates=all');
+    expect(calendarUrl).toContain('sendUpdates=none');
     expect(calendarRequest.attendees).toEqual([
       { email: 'first@example.com' },
       { email: 'second@example.com' },
@@ -1693,7 +1693,7 @@ describe('Organization Automation Inbox scheduling', () => {
     )).resolves.toMatchObject({ created: 0, exceptions: 1 });
     expect(calendarRequest.attachments).toEqual([]);
     expect(calendarRequest.attendees).toEqual([]);
-    expect(calendarUrl).not.toContain('sendUpdates');
+    expect(calendarUrl).toContain('sendUpdates=none');
     expect(fixture.organization.rows(
       "SELECT destination, outcome, external_id FROM deliveries WHERE channel = 'calendar'",
     )).toEqual([{ destination: 'first@example.com', outcome: 'pending', external_id: null }]);
@@ -2134,7 +2134,7 @@ describe('the Event Refresh exit', () => {
 
     expect(outcome.updated).toEqual(['calendar-event-1']);
     expect(patched?.headers['If-Match']).toBe('"etag-1"');
-    expect(patched?.url).toContain('sendUpdates=all');
+    expect(patched?.url).toContain('sendUpdates=none');
     expect(patched?.body).toMatchObject({
       summary: '30周年記念式典',
       location: '市民ホール',
@@ -2185,7 +2185,7 @@ describe('the Event Refresh exit', () => {
     expect(patched?.body.attendees).toEqual([{ email: 'first@example.com', responseStatus: 'declined' }]);
   });
 
-  it('invites the active roster with sendUpdates=all when it creates a Scheduled Event through the refresh exit', async () => {
+  it('invites the active roster without notifying them when it creates a Scheduled Event through the refresh exit', async () => {
     fixture = await createAutomationTestApp({ ai: true });
     seedMember(fixture.organization, { id: 'member-1', name: '一郎', email: 'first@example.com' });
     let created: { url: string; body: Record<string, unknown> } | undefined;
@@ -2211,7 +2211,7 @@ describe('the Event Refresh exit', () => {
     });
 
     expect(outcome.created).toEqual(['calendar-event-new']);
-    expect(created?.url).toContain('sendUpdates=all');
+    expect(created?.url).toContain('sendUpdates=none');
     expect(created?.body.attendees).toEqual([{ email: 'first@example.com' }]);
   });
 

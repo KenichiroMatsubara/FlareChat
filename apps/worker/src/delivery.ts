@@ -106,7 +106,7 @@ export const deliverCalendarInvitation = async (input: {
     const attendees = event.attendees ?? [];
     if (!attendees.some((attendee) => attendee.email?.toLowerCase() === input.recipientEmail.toLowerCase())) attendees.push({ email: input.recipientEmail });
     const response = await fetch(
-      `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(input.calendarEventId)}?sendUpdates=all`,
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(input.calendarEventId)}?sendUpdates=none`,
       {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${input.accessToken}`, 'Content-Type': 'application/json' },

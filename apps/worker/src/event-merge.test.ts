@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  isSignificantChange,
   lockedCalendarFields,
   mergedCalendarFields,
   responseSearchWindow,
@@ -60,14 +59,6 @@ describe('Scheduled Event merge', () => {
     expect(merged.startsAt).toBe('2026-08-03T18:30:00+09:00');
     expect(merged.location).toBe('市民ホール');
     expect(merged.title).toBe('例会（会場変更）');
-  });
-
-  it('notifies Members about a moved meeting and stays silent about a rewritten summary', () => {
-    expect(isSignificantChange(['location'])).toBe(true);
-    expect(isSignificantChange(['startsAt', 'description'])).toBe(true);
-    expect(isSignificantChange(['description'])).toBe(false);
-    expect(isSignificantChange(['title', 'description'])).toBe(false);
-    expect(isSignificantChange([])).toBe(false);
   });
 
   it('locates the answered event far beyond the window a merge may write in', () => {
