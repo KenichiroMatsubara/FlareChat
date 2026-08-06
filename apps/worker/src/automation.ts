@@ -28,7 +28,6 @@ import type {
 import {
   lockedCalendarFields,
   mergedCalendarFields,
-  isSignificantChange,
   organizationResponseWindowDays,
   responseSearchWindow,
   withinResponseWindow,
@@ -1220,7 +1219,7 @@ const applyEventRefreshWithGoogle = async (
       if (!entry.googleEventId) {
         const attendees = invitees.map(({ email }) => ({ email }));
         const url = new URL(CALENDAR_EVENTS_URL);
-        url.searchParams.set('sendUpdates', attendees.length ? 'all' : 'none');
+        url.searchParams.set('sendUpdates', 'none');
         if (attachments.calendar.length) url.searchParams.set('supportsAttachments', 'true');
         const created = await dependencies.google.request<CalendarEventResource>(accessToken, url.toString(), {
           method: 'POST',
@@ -1237,9 +1236,9 @@ const applyEventRefreshWithGoogle = async (
         accessToken,
         `${CALENDAR_EVENTS_URL}/${encodeURIComponent(entry.googleEventId)}`,
       );
-      const { attendees, added } = invitedAttendees(existing.attendees ?? [], invitees);
+      const { attendees } = invitedAttendees(existing.attendees ?? [], invitees);
       const url = new URL(`${CALENDAR_EVENTS_URL}/${encodeURIComponent(entry.googleEventId)}`);
-      url.searchParams.set('sendUpdates', added ? 'all' : 'none');
+      url.searchParams.set('sendUpdates', 'none');
       if (attachments.calendar.length) url.searchParams.set('supportsAttachments', 'true');
       await dependencies.google.request<CalendarEventResource>(accessToken, url.toString(), {
         method: 'PATCH',
@@ -1447,11 +1446,10 @@ const patchScheduledEvent = async (input: {
   dependencies: AutomationDependencies;
   accessToken: string;
   googleEventId: string;
-  notify: boolean;
   body: Record<string, unknown>;
 }): Promise<CalendarEventResource> => {
   const url = new URL(`${CALENDAR_EVENTS_URL}/${encodeURIComponent(input.googleEventId)}`);
-  url.searchParams.set('sendUpdates', input.notify ? 'all' : 'none');
+  url.searchParams.set('sendUpdates', 'none');
   return input.dependencies.google.request<CalendarEventResource>(input.accessToken, url.toString(), {
     method: 'PATCH',
     body: JSON.stringify(input.body),
@@ -1504,7 +1502,6 @@ const mergeScheduledEvent = async (input: {
     dependencies: input.dependencies,
     accessToken: input.accessToken,
     googleEventId: input.target.googleEventId,
-    notify: isSignificantChange(changedFields),
     body: {
       summary: merged.title,
       description: merged.description,
@@ -1563,7 +1560,6 @@ const rewriteScheduledEventDescription = async (input: {
     dependencies: input.dependencies,
     accessToken: input.accessToken,
     googleEventId: input.target.googleEventId,
-    notify: false,
     body: { description },
   });
   await db.update(events).set({
@@ -1678,7 +1674,7 @@ const applySchemaExtraction = async (
   const mergeMatches = new Map(input.correlations.map(({ candidateIndex, target }) => [candidateIndex, target]));
   const calendarUrl = new URL(CALENDAR_EVENTS_URL);
   if (calendarAttachments.length) calendarUrl.searchParams.set('supportsAttachments', 'true');
-  if (attendees.length) calendarUrl.searchParams.set('sendUpdates', 'all');
+  calendarUrl.searchParams.set('sendUpdates', 'none');
   for (const [index, candidate] of candidates.entries()) {
     const merged = mergeMatches.get(index);
     if (merged) {

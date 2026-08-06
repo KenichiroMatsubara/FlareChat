@@ -79,7 +79,7 @@ describe('Delivery Records', () => {
     });
     expect(requests.map(({ url }) => url)).toEqual([
       'https://www.googleapis.com/calendar/v3/calendars/primary/events/calendar-event-1',
-      'https://www.googleapis.com/calendar/v3/calendars/primary/events/calendar-event-1?sendUpdates=all',
+      'https://www.googleapis.com/calendar/v3/calendars/primary/events/calendar-event-1?sendUpdates=none',
     ]);
     expect(JSON.parse(requests[1]!.init?.body as string)).toEqual({
       attendees: [{ email: 'existing@example.com' }, { email: 'guest@example.com' }],

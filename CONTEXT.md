@@ -58,13 +58,13 @@ One extraction states the kind of the Source Message it read. An Event Response'
 
 An Event Response may return a completed registration naming people from outside the Organization. Each becomes one Guest Registration on the Scheduled Event that response answers, keyed by the Event Response that declared it so that reprocessing and correction replace those rows rather than accumulate beside them. Guest Registrations are retained with the delivery history and archived with it after twelve months.
 
-A merge notifies Members only when it changes a Scheduled Event's date, time, location, or Registration Deadline. Any other merge, including one that only rewrites the Event Summary and one that adds Guest Registrations, updates the Calendar silently. The Google Calendar update and the Member-facing LINE message are gated by the same judgement, so a Member never receives one without the other.
+Every Calendar write Mail Automation makes, including a merge that moves a Scheduled Event's date, time, or location, is sent with `sendUpdates=none`: Google never mails an invited Member on the automation's behalf. A Member finds a new or moved meeting by opening Google Calendar, where the write already appears, or through a separate LINE message an Automation Rule sends explicitly.
 
 A Scheduled Event's Calendar description states its Event Summary first, then the Guest Registration counts by Affiliation and never the guests' names, then each Public Attachment as a link labelled with its filename, then the sentence naming the Source Message it came from. Google Calendar renders a small HTML subset, so untrusted extracted text, Affiliations, and filenames are escaped and only absolute http(s) links are written.
 
 A Scheduled Event created from a Source Message invites every active Member that carries an address as a Google Calendar attendee of the Automation Inbox's event, so the invitation reaches that Member's own Google account and calendar. The invited Members are frozen as the event's Recipient Snapshot when it is created, and one Delivery Record per Member records the invitation, so a later roster change never rewrites who an already delivered event reached.
 
-If Google Drive policy prevents an attachment from becoming a Public Attachment, the event is retained only on the Automation Inbox's Calendar as an administrative draft. Recipient invitations and Member notifications are withheld until publication succeeds, and an Automation Exception supports retry after policy correction.
+If Google Drive policy prevents an attachment from becoming a Public Attachment, the event is retained only on the Automation Inbox's Calendar as an administrative draft. Recipient invitations are withheld until publication succeeds, and an Automation Exception supports retry after policy correction.
 
 Completed Delivery Records and audit history older than twelve months are moved from Organization D1 into encrypted, compressed monthly R2 archives. Organization D1 retains archive indexes for GUI retrieval; active rules, recipients, credentials, pending Jobs, attendance for active events, and future events are never archived by this process.
 
@@ -281,10 +281,6 @@ _Avoid_: footer, provenance note
 **Event Refresh**:
 An Admin-initiated repair that rewrites an existing Scheduled Event's Calendar fields from a fresh extraction of its Source Message, together with an additive invitation of the active Member roster: a Member the Calendar already lists keeps whatever they answered, and only a Member missing from that list is added. It is separate from Mailbox Test and approval-mode execution because it deliberately overwrites Manual Overrides.
 _Avoid_: resync, regenerate, backfill
-
-**Significant Change**:
-A change to a Scheduled Event's date, time, location, or Registration Deadline that warrants a Member-facing LINE notification.
-_Avoid_: important update, event edit
 
 **Calendar Revision**:
 The last observed Google Calendar representation and ETag used to reconcile external edits without overwriting a newer version.
