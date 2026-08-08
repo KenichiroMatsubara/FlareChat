@@ -3,11 +3,11 @@ import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
 import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, OperationalTaskRole, OrganizationAgentRule, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationMember, OrganizationMemberInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, MemberLineDestinationInput, RuleRun, TaskAssignmentProposal, TaskReassignmentReview, TaskRoleAssignment } from './api';
-import { AutomationPage, ConnectionsPage, EventRefreshPage, MailboxTestPage, MembersPage, RulesPage, TasksPage } from './dashboard-pages';
+import { AutomationPage, ConnectionsPage, EventRefreshPage, MailboxTestPage, MembersPage, RuleRunsPage, RulesPage, TasksPage } from './dashboard-pages';
 import { pendingKey, ROUTE_NAVIGATION_KEY } from './pending';
 import { PendingOverlay } from './progress';
 
-export type Page = 'automation' | 'connections' | 'rules' | 'members' | 'rule-runs' | 'event-refresh' | 'tasks';
+export type Page = 'automation' | 'connections' | 'rules' | 'members' | 'mailbox-test' | 'rule-runs' | 'event-refresh' | 'tasks';
 
 export const needsGoogleReauthentication = (error: string): boolean =>
   /token has been expired or revoked/iu.test(error);
@@ -35,6 +35,7 @@ const navigationItems: readonly NavigationItem[] = [
   { to: '../rules', label: 'ルール', icon: <SlidersHorizontal size={16} /> },
   { to: '../members', label: 'メンバー', icon: <UsersRound size={16} /> },
   { to: '../tasks', label: 'タスク', icon: <CheckSquare size={16} /> },
+  { to: '../mailbox-test', label: 'メールテスト', icon: <Mail size={16} /> },
   { to: '../rule-runs', label: 'Rule Runs', icon: <SlidersHorizontal size={16} /> },
   { to: '../event-refresh', label: '予定の再同期', icon: <RefreshCw size={16} /> },
 ];
@@ -89,6 +90,8 @@ export interface DashboardProps {
   mailTestMatches: MailboxTestMatch[];
   mailTestAiRequest: MailboxTestAiRequest | null;
   mailTestPreview: MailboxTestPreview | null;
+  draftRulePreview: MailboxTestPreview | null;
+  mailTestCreatedEventIds: string[];
   mailTestRuleRunIds: string[];
   mailTestRefreshRequest: MailboxTestRefreshRequest | null;
   mailTestRefreshPlan: MailboxTestRefreshPlan | null;
@@ -96,7 +99,9 @@ export interface DashboardProps {
   onMailTestSubjectChange: (value: string) => void;
   onSearchMailbox: () => void;
   onPrepareMailbox: (messageId: string) => void;
-  onPreviewMailbox: (messageId: string, ruleId: string) => void;
+  onPreviewMailbox: (messageId: string) => void;
+  onPreviewDraftMailbox: (messageId: string, ruleId: string) => void;
+  onCreateMailboxTestEvents: () => void;
   onStartDraftRuleRun: (ruleId: string) => void;
   onPrepareRefresh: () => void;
   onPlanRefresh: () => void;
@@ -162,7 +167,9 @@ export const Dashboard = (props: DashboardProps) => {
           ? <MembersPage {...props} />
           : page === 'tasks'
             ? <TasksPage {...props} />
-            : page === 'event-refresh' ? <EventRefreshPage {...props} /> : <MailboxTestPage {...props} />;
+            : page === 'mailbox-test'
+              ? <MailboxTestPage {...props} />
+              : page === 'event-refresh' ? <EventRefreshPage {...props} /> : <RuleRunsPage {...props} />;
   const requiresGoogleReauthentication = needsGoogleReauthentication(props.error)
     || props.automation?.status === 'reauthentication_required';
   const recoveryMessage = props.error || 'Automation Inbox の認証が失効しています。Google に再接続してください。';

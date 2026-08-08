@@ -27,10 +27,10 @@ const dashboardProps = (): DashboardProps => ({
   onLineChannelAccessTokenChange: vi.fn(), onLineChannelSecretChange: vi.fn(), onAiApiKeyChange: vi.fn(), onAiModelChange: vi.fn(), onAiBaseUrlChange: vi.fn(),
   onSaveLineConnection: vi.fn(), onSaveAiConnection: vi.fn(), aiTestPrompt: '', aiTestResult: '',
   onAiTestPromptChange: vi.fn(), onTestAi: vi.fn(), mailTestSubject: '', mailTestMatches: [], mailTestAiRequest: null,
-  mailTestPreview: null, mailTestRuleRunIds: [],
+  mailTestPreview: null, draftRulePreview: null, mailTestCreatedEventIds: [], mailTestRuleRunIds: [],
   mailTestRefreshRequest: null, mailTestRefreshPlan: null, mailTestRefreshOutcome: null,
   onPrepareRefresh: vi.fn(), onPlanRefresh: vi.fn(), onApplyRefresh: vi.fn(), onMailTestSubjectChange: vi.fn(), onSearchMailbox: vi.fn(),
-  onPrepareMailbox: vi.fn(), onPreviewMailbox: vi.fn(), onStartDraftRuleRun: vi.fn(), organizationRules: [],
+  onPrepareMailbox: vi.fn(), onPreviewMailbox: vi.fn(), onPreviewDraftMailbox: vi.fn(), onCreateMailboxTestEvents: vi.fn(), onStartDraftRuleRun: vi.fn(), organizationRules: [],
   organizationLists: [], onCreateRule: vi.fn(), onUpdateRule: vi.fn(), organizationTasks: [], onUpdateTask: vi.fn(), taskRoles: [], taskRoleAssignments: [], taskMembers: [], onCreateTaskRole: vi.fn(), onUpdateTaskRole: vi.fn(), onDeleteTaskRole: vi.fn(), onAssignTaskRole: vi.fn(),
   taskReassignment: { rolesChangedAt: null, reviewedAt: null, pending: false, openTasks: 0 }, taskReassignmentProposals: [], taskReassignmentSkipped: [],
   onSuggestTaskReassignments: vi.fn(), onApplyTaskReassignments: vi.fn(), onDiscardTaskReassignments: vi.fn(),
@@ -61,7 +61,7 @@ describe('responsive dashboard shell', () => {
   it('keeps every navigation target inside the collapsible panel', () => {
     const panel = /<div id="app-navigation" class="topbar-panel">(.*?)<\/header>/su.exec(markup())?.[1] ?? '';
     expect(panel).toContain('class="organization-picker"');
-    for (const label of ['自動化', '接続設定', 'ルール', 'メンバー', 'タスク', 'Rule Runs', '予定の再同期', 'ログアウト']) expect(panel).toContain(label);
+    for (const label of ['自動化', '接続設定', 'ルール', 'メンバー', 'タスク', 'メールテスト', 'Rule Runs', '予定の再同期', 'ログアウト']) expect(panel).toContain(label);
   });
 
   it('stacks the AI request heading and its copy action on narrow screens', async () => {
@@ -433,6 +433,35 @@ describe('member roster', () => {
 });
 
 describe('mailbox test prerequisites', () => {
+  it('keeps the permanent active-rule Mailbox Test separate from Draft Rule Runs', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/mailbox-test']}>
+        <Dashboard
+          {...dashboardProps()}
+          page="mailbox-test"
+          automation={{
+            email: 'owner@example.com', displayName: 'Owner', enabled: true, status: 'active',
+            lastSyncedAt: null, lastError: null, failingSince: null, created: 0, skipped: 0, exceptions: 0,
+          }}
+          mailTestPreview={{
+            id: 'message-1', subject: '例会のお知らせ', sender: 'sender@example.com',
+            selectedRule: { id: 'active-rule', revision: 3 }, summary: '例会の案内です。',
+            events: [{
+              title: '例会', startsAt: '2026-08-18T14:30:00+09:00', endsAt: '2026-08-18T16:00:00+09:00',
+              timeZone: 'Asia/Tokyo', location: '会館', description: '月例会', summary: '例会です。',
+            }],
+            tasks: [], confirmationToken: 'token', expiresAt: '2026-08-18T00:00:00.000Z',
+          }}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('<h1>メールテスト</h1>');
+    expect(html).toContain('Primary Rule active-rule r3');
+    expect(html).toContain('確認した予定を Calendar に作成');
+    expect(html).not.toContain('Draft Schema Rule');
+  });
+
   it('allows Gmail search before an AI connection is configured', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter initialEntries={['/organizations/org-1/rule-runs']}>
@@ -544,8 +573,9 @@ describe('mailbox test prerequisites', () => {
             email: 'owner@example.com', displayName: 'Owner', enabled: true, status: 'active',
             lastSyncedAt: null, lastError: null, failingSince: null, created: 0, skipped: 0, exceptions: 0,
           }}
-          mailTestPreview={{
+          draftRulePreview={{
             id: 'message-1', subject: '例会のお知らせ', sender: 'sender@example.com',
+            selectedRule: { id: 'rule-1', revision: 1 },
             summary: '8月3日の例会案内です。7月31日までに出席登録が必要です。',
             events: [{
               title: '例会', startsAt: '2026-08-03T19:00:00+09:00', endsAt: '2026-08-03T21:00:00+09:00',
@@ -744,15 +774,48 @@ describe('operation progress', () => {
     const html = dashboard({
       ruleRuns: [{
         id: 'run-1', rule: { type: 'agent', id: 'agent-rule-1', revision: 1 }, sourceMessageId: 'source-1',
+        sourceMessage: { subject: '地区大会のご案内', sender: 'district@example.com', receivedAt: '2026-08-05T01:00:00.000Z' },
         executionMode: 'approval', intent: 'live', status: 'pending_approval', expiresAt: '2026-08-05',
-        effects: [{ id: 'effect-1', key: 'line:0', kind: 'agent.send_line_message', arguments: {}, dependsOn: [], status: 'pending', attempts: 0, result: null, error: null }],
+        effects: [{ id: 'effect-1', key: 'line:0', kind: 'agent.send_line_message', arguments: { destination: '役員LINE', message: '地区大会の申込期限は8月20日です。' }, dependsOn: [], status: 'pending', attempts: 0, result: null, error: null }],
       }],
       isPending: pendingOnly(pendingKey.ruleRunDecision('run-1', 'approve')),
     }, 'rule-runs', 'rule-runs');
 
     expect(html).toContain('aria-busy="true"');
-    expect(html).toContain('一括承認');
-    expect(html).toContain('一括却下');
+    expect(html).toContain('<summary');
+    expect(html).toContain('地区大会のご案内');
+    expect(html).toContain('district@example.com');
+    expect(html).toContain('LINEメッセージを送信');
+    expect(html).toContain('送信先: 役員LINE');
+    expect(html).toContain('地区大会の申込期限は8月20日です。');
+    expect(html).toContain('すべて承認して実行');
+    expect(html).toContain('すべて却下');
+  });
+
+  it('shows the source email and planned event and task details in an expandable Rule Run', () => {
+    const extraction = {
+      summary: '地区大会の開催案内です。',
+      events: [{ title: '地区大会', startsAt: '2026-09-10T10:00:00+09:00' }],
+      tasks: [{ title: '参加登録', deadline: '2026-08-20' }],
+    };
+    const html = dashboard({
+      ruleRuns: [{
+        id: 'run-schema', rule: { type: 'schema', id: 'rule-1', revision: 3 }, sourceMessageId: 'source-schema',
+        sourceMessage: { subject: '地区大会開催のお知らせ', sender: 'office@example.com', receivedAt: '2026-08-05T01:00:00.000Z' },
+        executionMode: 'unattended', intent: 'live', status: 'completed', expiresAt: null,
+        effects: [
+          { id: 'summary', key: 'summary', kind: 'schema.deliver_summary', arguments: { extraction }, dependsOn: [], status: 'succeeded', attempts: 1, result: null, error: null },
+          { id: 'events', key: 'events', kind: 'schema.apply_events', arguments: { extraction }, dependsOn: [], status: 'succeeded', attempts: 1, result: null, error: null },
+          { id: 'tasks', key: 'tasks', kind: 'schema.create_tasks', arguments: { extraction }, dependsOn: [], status: 'succeeded', attempts: 1, result: null, error: null },
+        ],
+      }],
+    }, 'rule-runs', 'rule-runs');
+
+    expect(html).toContain('地区大会開催のお知らせ');
+    expect(html).toContain('要約: 地区大会の開催案内です。');
+    expect(html).toContain('予定: 地区大会');
+    expect(html).toContain('タスク: 参加登録（期限 2026-08-20）');
+    expect(html).toContain('<summary>');
   });
 
   it('reports the one mail whose request is being prepared', () => {

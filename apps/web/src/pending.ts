@@ -21,6 +21,7 @@ export const pendingKey = {
   mailSearch: 'mail-test:search',
   mailPrepare: (messageId: string): string => `mail-test:prepare:${messageId}`,
   mailPreview: 'mail-test:preview',
+  mailCreate: 'mail-test:create-calendar-events',
   mailStartRuleRun: 'mail-test:start-rule-run',
   refreshPrepare: 'mail-test:refresh-prepare',
   refreshPlan: 'mail-test:refresh-plan',

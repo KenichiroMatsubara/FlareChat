@@ -4,7 +4,7 @@ import { and, asc, count, desc, eq, gt, gte, inArray, isNull, max, ne } from 'dr
 
 import { canUpdateAttendance, discoveredLineDestinations, displayLineDestinationId, verifyLineWebhookSignature } from '@mail/domain';
 
-import { agentWritePortForApproval, createAutomation, LEGACY_AI_BASE_URL, previewSchemaDraftRule, schemaRuleEffectPortForApproval, startSchemaDraftRuleRun } from './automation';
+import { agentWritePortForApproval, createAutomation, LEGACY_AI_BASE_URL, schemaRuleEffectPortForApproval } from './automation';
 import { decrypt, encrypt } from './cryptography';
 import { createDatabaseAccess } from './database-access';
 import { randomToken } from './encoding';
@@ -186,8 +186,10 @@ app.post('/api/organizations/:organizationId/presets/:presetId/apply', async (co
 });
 
 interface MailTestConfirmation {
+  purpose: 'mailbox_test' | 'draft_rule_preview';
   messageId: string;
   ruleId: string;
+  ruleRevision: number;
   extraction: MailExtraction;
   expiresAt: string;
 }
@@ -519,7 +521,8 @@ app.post('/api/organizations/:organizationId/mail-tests/:messageId/ai-request', 
   }
 });
 
-app.post('/api/organizations/:organizationId/mail-tests/:messageId/preview', async (context) => {
+/** Draft Rule Preview is a Rule Runs concern, separate from the permanent Mailbox Test. */
+app.post('/api/organizations/:organizationId/mail-tests/:messageId/draft-preview', async (context) => {
   try {
     const organizationId = context.req.param('organizationId');
     const access = await organizationForRequest(context.req.raw, context.env, organizationId);
@@ -528,13 +531,88 @@ app.post('/api/organizations/:organizationId/mail-tests/:messageId/preview', asy
     if (!/^[A-Za-z0-9_-]{1,200}$/u.test(messageId)) return failure(context, 'Gmail メッセージ ID が不正です。');
     const input = await context.req.json<{ ruleId?: string }>().catch((): { ruleId?: string } => ({}));
     if (!input.ruleId) return failure(context, 'Draft Schema Rule を選択してください。');
-    const { source, extraction } = await previewSchemaDraftRule({ env: context.env, organizationId, database: access.database, messageId, ruleId: input.ruleId });
-    const confirmation: MailTestConfirmation = { messageId, ruleId: input.ruleId, extraction, expiresAt: expiresIn(MAIL_TEST_WINDOW_MS) };
+    const { source, rule, extraction } = await createAutomation(context.env).ruleRuns.previewDraft({
+      organizationId,
+      database: access.database,
+      messageId,
+      ruleId: input.ruleId,
+    });
+    const confirmation: MailTestConfirmation = {
+      purpose: 'draft_rule_preview',
+      messageId,
+      ruleId: rule.id,
+      ruleRevision: rule.revision,
+      extraction,
+      expiresAt: expiresIn(MAIL_TEST_WINDOW_MS),
+    };
     const token = JSON.stringify(await encrypt(JSON.stringify(confirmation), await organizationKeyForRequest(context.env, organizationId), mailTestContext(organizationId)));
-    return json(context, { id: source.id, subject: source.subject, sender: source.sender, ...extraction, confirmationToken: token, expiresAt: confirmation.expiresAt });
+    return json(context, {
+      id: source.id,
+      subject: source.subject,
+      sender: source.sender,
+      selectedRule: { id: rule.id, revision: rule.revision },
+      ...extraction,
+      confirmationToken: token,
+      expiresAt: confirmation.expiresAt,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Draft Rule Preview に失敗しました。';
+    return failure(context, message, message === 'Authentication is required.' ? 401 : message.includes('Selection Policy') ? 409 : 500);
+  }
+});
+
+app.post('/api/organizations/:organizationId/mail-tests/:messageId/preview', async (context) => {
+  try {
+    const organizationId = context.req.param('organizationId');
+    const access = await organizationForRequest(context.req.raw, context.env, organizationId);
+    if (!access.database) return failure(context, '組織DBに接続できません。接続設定は保存されていません。', 503);
+    const messageId = context.req.param('messageId');
+    if (!/^[A-Za-z0-9_-]{1,200}$/u.test(messageId)) return failure(context, 'Gmail メッセージ ID が不正です。');
+    const { source, rule, extraction } = await createAutomation(context.env).mailboxTest.preview({ organizationId, database: access.database, messageId });
+    const confirmation: MailTestConfirmation = {
+      purpose: 'mailbox_test',
+      messageId,
+      ruleId: rule.id,
+      ruleRevision: rule.revision,
+      extraction,
+      expiresAt: expiresIn(MAIL_TEST_WINDOW_MS),
+    };
+    const token = JSON.stringify(await encrypt(JSON.stringify(confirmation), await organizationKeyForRequest(context.env, organizationId), mailTestContext(organizationId)));
+    return json(context, {
+      id: source.id,
+      subject: source.subject,
+      sender: source.sender,
+      selectedRule: { id: rule.id, revision: rule.revision },
+      ...extraction,
+      confirmationToken: token,
+      expiresAt: confirmation.expiresAt,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'AI による予定の抽出に失敗しました。';
-    return failure(context, message, message === 'Authentication is required.' ? 401 : message.includes('Selection Policy') ? 409 : 500);
+    return failure(context, message, message === 'Authentication is required.' ? 401 : message.includes('Primary Rule') ? 409 : 500);
+  }
+});
+
+app.post('/api/organizations/:organizationId/mail-tests/calendar', async (context) => {
+  try {
+    const organizationId = context.req.param('organizationId');
+    const access = await organizationForRequest(context.req.raw, context.env, organizationId);
+    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
+    const input = await context.req.json<{ confirmationToken?: string }>();
+    if (!input.confirmationToken || input.confirmationToken.length > MAIL_TEST_TOKEN_LIMIT) {
+      return failure(context, '確認用トークンがありません。先に AI 抽出を実行してください。');
+    }
+    const confirmation = await confirmedExtraction(context.env, organizationId, input.confirmationToken);
+    if (!confirmation) return failure(context, 'プレビューの有効期限が切れました。もう一度 AI 抽出を実行してください。', 409);
+    return json(context, await createAutomation(context.env).mailboxTest.createCalendarEvents({
+      organizationId,
+      database: access.database,
+      messageId: confirmation.messageId,
+      events: confirmation.extraction.events,
+    }), 201);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Google Calendar へのテスト予定作成に失敗しました。';
+    return failure(context, message, message === 'Authentication is required.' ? 401 : 500);
   }
 });
 
@@ -544,18 +622,19 @@ app.post('/api/organizations/:organizationId/mail-tests/rule-run', async (contex
     const access = await organizationForRequest(context.req.raw, context.env, organizationId);
     if (!access.database) return failure(context, '組織DBに接続できません。', 503);
     const input = await context.req.json<{ confirmationToken?: string; ruleId?: string }>();
-    if (!input.confirmationToken || input.confirmationToken.length > 10_000) return failure(context, '確認用トークンがありません。先に AI 抽出を実行してください。');
+    if (!input.confirmationToken || input.confirmationToken.length > MAIL_TEST_TOKEN_LIMIT) return failure(context, '確認用トークンがありません。先に AI 抽出を実行してください。');
     if (!input.ruleId) return failure(context, 'Draft Schema Rule を選択してください。');
     const confirmation = JSON.parse(await decrypt(JSON.parse(input.confirmationToken) as CipherEnvelope, await organizationKeyForRequest(context.env, organizationId), mailTestContext(organizationId))) as Partial<MailTestConfirmation>;
-    if (typeof confirmation.messageId !== 'string' || !isMailExtraction(confirmation.extraction) || typeof confirmation.expiresAt !== 'string' || Date.parse(confirmation.expiresAt) <= Date.now()) {
+    if (confirmation.purpose !== 'draft_rule_preview' || typeof confirmation.messageId !== 'string' || typeof confirmation.ruleRevision !== 'number'
+      || !isMailExtraction(confirmation.extraction) || typeof confirmation.expiresAt !== 'string' || Date.parse(confirmation.expiresAt) <= Date.now()) {
       return failure(context, 'プレビューの有効期限が切れました。もう一度 AI 抽出を実行してください。', 409);
     }
     if (confirmation.ruleId !== input.ruleId) return failure(context, '確認した Rule Revision と異なります。', 409);
-    return json(context, await startSchemaDraftRuleRun({
-      env: context.env,
+    return json(context, await createAutomation(context.env).ruleRuns.startDraft({
       organizationId,
       database: access.database,
       ruleId: input.ruleId,
+      ruleRevision: confirmation.ruleRevision,
       messageId: confirmation.messageId,
       extraction: confirmation.extraction,
     }), 201);
@@ -576,7 +655,9 @@ const confirmedExtraction = async (
     await organizationKeyForRequest(env, organizationId),
     mailTestContext(organizationId),
   )) as Partial<MailTestConfirmation>;
-  if (typeof confirmation.messageId !== 'string' || !isMailExtraction(confirmation.extraction)
+  if (confirmation.purpose !== 'mailbox_test' || typeof confirmation.messageId !== 'string'
+    || typeof confirmation.ruleId !== 'string' || typeof confirmation.ruleRevision !== 'number'
+    || !isMailExtraction(confirmation.extraction)
     || typeof confirmation.expiresAt !== 'string' || Date.parse(confirmation.expiresAt) <= Date.now()) return null;
   return confirmation as MailTestConfirmation;
 };

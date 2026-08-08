@@ -259,6 +259,21 @@ describe('Schema Lifecycle', () => {
     })).resolves.toMatchObject({ currentMigration: '0021_rule_execution.sql' });
   });
 
+  it('accepts the legacy Operational Task Roles checksum recorded by the local schema lifecycle', async () => {
+    const database = databaseAtInitialOrganizationSchema();
+    await schemaLifecycle.ensureCurrent({ kind: 'organization', database: database.binding });
+    database.execute(
+      'UPDATE d1_migrations SET checksum = ? WHERE name = ?',
+      '7c37ad2276cf9819a1e58105345d18816d4e15ea0b850399b11e3fa641c9eb2e',
+      '0006_operational_task_roles.sql',
+    );
+
+    await expect(schemaLifecycle.ensureCurrent({
+      kind: 'organization',
+      database: database.binding,
+    })).resolves.toMatchObject({ currentMigration: '0021_rule_execution.sql' });
+  });
+
   it('migrates existing Tasks into Organization-owned role records and unassigns the Control identities they named', async () => {
     const database = databaseBeforeOperationalTaskRoles();
     database.execute("INSERT INTO source_messages (id, gmail_message_id, gmail_history_id, sender, subject, received_at, state) VALUES ('source-1', 'gmail-1', 'history-1', 'sender@example.com', '年次行事', '2026-08-01', 'processed')");

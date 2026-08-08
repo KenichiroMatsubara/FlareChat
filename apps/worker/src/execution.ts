@@ -1,7 +1,7 @@
 import { and, asc, desc, eq } from 'drizzle-orm';
 
 import { organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
-import { ruleEffects, ruleRuns } from './storage/organization-schema';
+import { ruleEffects, ruleRuns, sourceMessages } from './storage/organization-schema';
 
 export type ExecutionMode = 'read_only' | 'approval' | 'unattended';
 export type RuleReference = { type: 'schema' | 'agent'; id: string; revision: number };
@@ -65,6 +65,11 @@ export interface RuleRunView {
   id: string;
   rule: RuleReference;
   sourceMessageId: string;
+  sourceMessage: {
+    subject: string;
+    sender: string;
+    receivedAt: string;
+  };
   executionMode: ExecutionMode;
   intent: RuleExecutionIntent['kind'];
   status: 'planning' | 'read_only' | 'pending_approval' | 'applying' | 'completed' | 'rejected' | 'expired' | 'failed';
@@ -101,6 +106,12 @@ export const createRuleExecution = (dependencies: RuleExecutionDependencies) => 
   const view = async (runId: string): Promise<RuleRunView> => {
     const run = await database.select().from(ruleRuns).where(eq(ruleRuns.id, runId)).get();
     if (!run) throw new Error('Rule Run was not found.');
+    const sourceMessage = await database.select({
+      subject: sourceMessages.subject,
+      sender: sourceMessages.sender,
+      receivedAt: sourceMessages.receivedAt,
+    }).from(sourceMessages).where(eq(sourceMessages.id, run.sourceMessageId)).get();
+    if (!sourceMessage) throw new Error('Rule Run Source Message was not found.');
     const effects = await database.select().from(ruleEffects).where(eq(ruleEffects.ruleRunId, runId)).orderBy(asc(ruleEffects.createdAt)).all();
     const rule: RuleReference = run.ruleId
       ? { type: 'schema', id: run.ruleId, revision: run.ruleRevision }
@@ -109,6 +120,7 @@ export const createRuleExecution = (dependencies: RuleExecutionDependencies) => 
       id: run.id,
       rule,
       sourceMessageId: run.sourceMessageId,
+      sourceMessage,
       executionMode: run.executionMode,
       intent: run.intent,
       status: run.status,

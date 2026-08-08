@@ -1,5 +1,7 @@
 # Plan every Automation Rule Run before applying its effects
 
+> Mailbox Test paragraphs are superseded by ADR 0136; the Rule Execution decisions remain in force.
+
 Every Automation Rule type has the same three Execution Modes: read-only, approval, and unattended. Unattended execution is the defining capability rather than a shortcut around an approval-based design, so one deep Rule Execution module first plans a Rule Run's complete set of Rule Effects and only then applies that frozen plan according to its mode. The module records a common immutable Rule Run for Schema Rules and Agent Rules; read-only retains the plan, approval holds it, and unattended applies it immediately.
 
 Live orchestration begins with one persisted Source Message, selects the eligible Active Schema and Agent Rules, and hands each selected Rule Revision's complete plan to Rule Execution. A Draft preview names one Rule Revision but still evaluates its Selection Policy before planning. Rule Execution owns the immutable Rule Run and Rule Effects, mode dispatch, approval decisions, and resumption; cron, Mailbox Test, and HTTP callers do not implement those policies independently.
