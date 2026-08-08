@@ -426,12 +426,13 @@ describe('Organization Automation Inbox scheduling', () => {
     }), fixture.environment);
     const agentRuleId = (await agentRule.json() as { data: { id: string } }).data.id;
     let turn = 0;
+    let calendarUrl = '';
     let calendarBody: Record<string, unknown> | undefined;
     const automation = createAutomation(fixture.environment, {
       google: { request: async <T>(_token: string, url: string, init?: RequestInit): Promise<T> => {
         if (url.includes('/history')) return { historyId: 'history-event-write', history: [{ messagesAdded: [{ message: { id: 'gmail-event-write' } }] }] } as T;
         if (url.includes('/messages/gmail-event-write')) return { id: 'gmail-event-write', payload: { headers: [{ name: 'Subject', value: 'Practice' }, { name: 'From', value: 'member@example.com' }], body: { data: gmailBody('Schedule.') } } } as T;
-        if (url.includes('/calendar/')) { calendarBody = JSON.parse(init?.body as string) as Record<string, unknown>; return { id: 'google-agent-event' } as T; }
+        if (url.includes('/calendar/')) { calendarUrl = url; calendarBody = JSON.parse(init?.body as string) as Record<string, unknown>; return { id: 'google-agent-event' } as T; }
         throw new Error(`Unexpected Google request: ${url}`);
       } },
       agent: { complete: async () => turn++ === 0 ? {
@@ -442,6 +443,7 @@ describe('Organization Automation Inbox scheduling', () => {
 
     await expect(automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding }))
       .resolves.toEqual({ scanned: 1, created: 1, skipped: 0, exceptions: 0 });
+    expect(calendarUrl).toContain('sendUpdates=none');
     expect(calendarBody).toMatchObject({ summary: 'Practice', attendees: [{ email: 'guest@example.com' }] });
     expect(fixture.organization.rows<{ agent_rule_id: string; title: string; status: string }>('SELECT agent_rule_id, title, status FROM events')).toEqual([{ agent_rule_id: agentRuleId, title: 'Practice', status: 'scheduled' }]);
     expect(fixture.organization.rows<{ destination: string; outcome: string }>('SELECT destination, outcome FROM deliveries')).toEqual([{ destination: 'guest@example.com', outcome: 'succeeded' }]);

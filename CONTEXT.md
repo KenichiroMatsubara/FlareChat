@@ -62,7 +62,7 @@ Every Calendar write Mail Automation makes, including a merge that moves a Sched
 
 A Scheduled Event's Calendar description states its Event Summary first, then the Guest Registration counts by Affiliation and never the guests' names, then each Public Attachment as a link labelled with its filename, then the sentence naming the Source Message it came from. Google Calendar renders a small HTML subset, so untrusted extracted text, Affiliations, and filenames are escaped and only absolute http(s) links are written.
 
-A Scheduled Event created from a Source Message invites every active Member that carries an address as a Google Calendar attendee of the Automation Inbox's event, so the invitation reaches that Member's own Google account and calendar. The invited Members are frozen as the event's Recipient Snapshot when it is created, and one Delivery Record per Member records the invitation, so a later roster change never rewrites who an already delivered event reached.
+A Scheduled Event created from a Source Message adds every active Member that carries an address as a Google Calendar attendee of the Automation Inbox's event without asking Google to send an invitation notification. The invited Members are frozen as the event's Recipient Snapshot when it is created, and one Delivery Record per Member records the invitation, so a later roster change never rewrites who an already delivered event reached.
 
 If Google Drive policy prevents an attachment from becoming a Public Attachment, the event is retained only on the Automation Inbox's Calendar as an administrative draft. Recipient invitations are withheld until publication succeeds, and an Automation Exception supports retry after policy correction.
 

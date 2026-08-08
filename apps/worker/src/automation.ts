@@ -663,7 +663,7 @@ const createAgentWritePort = (input: {
     let googleEventId: string | null = null;
     let outcome: 'succeeded' | 'failed' = 'failed';
     try {
-      const created = await input.dependencies.google.request<CalendarEvent>(input.googleAccessToken, 'https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+      const created = await input.dependencies.google.request<CalendarEvent>(input.googleAccessToken, 'https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=none', {
         method: 'POST',
         body: JSON.stringify({
           summary: arguments_.title,
