@@ -161,6 +161,7 @@ export interface MailboxTestSource extends MailboxTestMatch {
   source: string;
   attachments: SourceAttachmentContent[];
   receivedAt?: string;
+  labels?: string[];
 }
 
 export interface ActiveRule {
@@ -288,6 +289,40 @@ const ruleMatches = (rule: Pick<ActiveRule, 'selectionPolicy'>, source: RuleSour
 export const selectActiveRule = (rules: ActiveRule[], source: RuleSource): ActiveRule | null => {
   const matching = rules.filter((rule) => ruleMatches(rule, source));
   return matching.sort((left, right) => right.priority - left.priority)[0] ?? null;
+};
+
+/** Loads the production Schema Rule set, including every capability reference needed after selection. */
+const activeSchemaRules = async (database: D1Database): Promise<ActiveRule[]> => {
+  const db = drizzleOrganizationDatabase(database);
+  const rows = await db.select({
+    id: automationRules.id,
+    revision: automationRules.currentRevision,
+    priority: automationRules.priority,
+    executionMode: automationRules.executionMode,
+    selectionPolicy: automationRules.selectionPolicy,
+    taskRoleIds: automationRules.taskRoleIds,
+  }).from(automationRules).where(eq(automationRules.status, 'active')).orderBy(automationRules.priority).all();
+  const ruleIds = rows.map(({ id }) => id);
+  const [recipientReferences, lineReferences] = ruleIds.length ? await Promise.all([
+    db.select().from(rulePermittedRecipientLists).where(inArray(rulePermittedRecipientLists.ruleId, ruleIds)).all(),
+    db.select().from(rulePermittedLineLists).where(inArray(rulePermittedLineLists.ruleId, ruleIds)).all(),
+  ]) : [[], []];
+  return rows.flatMap((row) => {
+    try {
+      return [{
+        id: row.id,
+        revision: row.revision,
+        priority: row.priority,
+        executionMode: row.executionMode,
+        selectionPolicy: JSON.parse(row.selectionPolicy) as Record<string, unknown>,
+        taskRoleIds: JSON.parse(row.taskRoleIds) as string[],
+        permittedRecipientListIds: recipientReferences.flatMap((reference) => reference.ruleId === row.id ? [reference.listId] : []),
+        permittedLineListIds: lineReferences.flatMap((reference) => reference.ruleId === row.id ? [reference.listId] : []),
+      }];
+    } catch {
+      return [];
+    }
+  });
 };
 
 const organizationKeyFor = async (env: Bindings, organizationId: string): Promise<CryptoKey> => {
@@ -548,6 +583,53 @@ const aiExtraction = async (
   }
 };
 
+type PrimarySchemaPreparation =
+  | { kind: 'no_matching_rule' }
+  | { kind: 'ai_connection_missing'; rule: ActiveRule }
+  | { kind: 'invalid_extraction'; rule: ActiveRule }
+  | { kind: 'ready'; rule: ActiveRule; extraction: MailExtraction };
+
+/**
+ * Selects the production Primary Rule and performs its bounded extraction.
+ * Both unattended processing and Mailbox Test enter through this seam; callers
+ * decide only how to report the outcome and whether to execute planned effects.
+ */
+const preparePrimarySchema = async (input: {
+  dependencies: AutomationDependencies;
+  env: Bindings;
+  organizationId: string;
+  database: D1Database;
+  source: RuleSource;
+  extractionSource: string;
+  attachments: SourceAttachmentContent[];
+  convertedAttachments?: ConvertedAttachment[];
+  receivedAt?: string;
+  rules?: ActiveRule[];
+}): Promise<PrimarySchemaPreparation> => {
+  const rule = selectActiveRule(input.rules ?? await activeSchemaRules(input.database), input.source);
+  if (!rule) return { kind: 'no_matching_rule' };
+  const roles = await drizzleOrganizationDatabase(input.database).select({
+    id: operationalTaskRoles.id,
+    displayName: operationalTaskRoles.displayName,
+    description: operationalTaskRoles.description,
+  }).from(operationalTaskRoles).all();
+  const allowedRoleIds = new Set(rule.taskRoleIds ?? []);
+  const extraction = await aiExtraction(
+    input.env,
+    input.organizationId,
+    input.database,
+    input.extractionSource,
+    input.attachments,
+    input.convertedAttachments,
+    roles.filter((role) => allowedRoleIds.has(role.id)),
+    input.receivedAt,
+    input.dependencies,
+  );
+  if (extraction === undefined) return { kind: 'ai_connection_missing', rule };
+  if (extraction === null) return { kind: 'invalid_extraction', rule };
+  return { kind: 'ready', rule, extraction };
+};
+
 const agentConnection = async (
   env: Bindings,
   organizationId: string,
@@ -804,13 +886,13 @@ const extractMailboxTestPackage = async (
 };
 
 /** Evaluates a Draft Schema Rule before making the Mailbox Test's AI request. */
-export const previewSchemaDraftRule = async (input: {
+const previewSchemaDraftRule = async (input: {
   env: Bindings;
   database: D1Database;
   organizationId: string;
   ruleId: string;
   messageId: string;
-}): Promise<{ source: MailboxTestSource; extraction: MailExtraction }> => {
+}): Promise<{ source: MailboxTestSource; rule: ActiveRule; extraction: MailExtraction }> => {
   const db = drizzleOrganizationDatabase(input.database);
   const rule = await db.select().from(automationRules).where(eq(automationRules.id, input.ruleId)).get();
   if (!rule || rule.status !== 'draft') throw new Error('Mailbox Test requires a Draft Schema Rule.');
@@ -827,7 +909,18 @@ export const previewSchemaDraftRule = async (input: {
     source.receivedAt, productionDependencies, new Set(JSON.parse(rule.taskRoleIds) as string[]),
   );
   if (!extraction) throw new Error('メールから安全な予定を抽出できませんでした。日付・開始時刻・終了時刻を確認してください。');
-  return { source, extraction };
+  return {
+    source,
+    rule: {
+      id: rule.id,
+      revision: rule.currentRevision,
+      priority: rule.priority,
+      executionMode: rule.executionMode,
+      selectionPolicy: JSON.parse(rule.selectionPolicy) as Record<string, unknown>,
+      taskRoleIds: JSON.parse(rule.taskRoleIds) as string[],
+    },
+    extraction,
+  };
 };
 
 /** Produces the exact bounded OpenAI-compatible payload for review before sending. */
@@ -925,7 +1018,38 @@ const readMailboxTestSourceWithGoogle = async (
     source: `${subject}\n${body}`,
     attachments: await dependencies.attachments.read({ accessToken, gmailMessageId: message.id, attachments }),
     ...(receivedAt === undefined ? {} : { receivedAt }),
+    ...(message.labelIds === undefined ? {} : { labels: message.labelIds }),
   };
+};
+
+/** Previews the selected Gmail message with the same active Primary Rule and extraction path as live Automation. */
+const previewMailboxTestWithActiveRule = async (
+  env: Bindings,
+  organizationId: string,
+  database: D1Database,
+  messageId: string,
+  dependencies: AutomationDependencies,
+): Promise<{ source: MailboxTestSource; rule: ActiveRule; extraction: MailExtraction }> => {
+  const source = await readMailboxTestSourceWithGoogle(env, organizationId, database, messageId, dependencies);
+  const preparation = await preparePrimarySchema({
+    dependencies,
+    env,
+    organizationId,
+    database,
+    source: {
+      sender: source.sender,
+      subject: source.subject,
+      body: source.source,
+      ...(source.labels === undefined ? {} : { labels: source.labels }),
+    },
+    extractionSource: source.source,
+    attachments: source.attachments,
+    ...(source.receivedAt === undefined ? {} : { receivedAt: source.receivedAt }),
+  });
+  if (preparation.kind === 'no_matching_rule') throw new Error('このメールに一致する有効な Primary Rule がありません。');
+  if (preparation.kind === 'ai_connection_missing') throw new Error('先に OpenAI 互換 API を設定してください。');
+  if (preparation.kind === 'invalid_extraction') throw new Error('メールから安全な予定を抽出できませんでした。日付・開始時刻・終了時刻を確認してください。');
+  return { source, rule: preparation.rule, extraction: preparation.extraction };
 };
 
 export const readMailboxTestSource = async (
@@ -934,6 +1058,66 @@ export const readMailboxTestSource = async (
   database: D1Database,
   messageId: string,
 ): Promise<MailboxTestSource> => readMailboxTestSourceWithGoogle(env, organizationId, database, messageId, productionDependencies);
+
+/** Creates Calendar events only after the caller has separately confirmed an encrypted Mailbox Test preview. */
+const createMailboxTestCalendarEventsWithGoogle = async (
+  env: Bindings,
+  organizationId: string,
+  database: D1Database,
+  input: { messageId: string; events: EventDetails[] },
+  dependencies: AutomationDependencies,
+): Promise<{ eventIds: string[] }> => {
+  const accessToken = await accessTokenForInbox(env, organizationId, database, await activeAutomationInbox(database), dependencies);
+  const message = await mailboxMessage(dependencies.google, accessToken, input.messageId);
+  const attachments = sourceAttachments(message.payload);
+  const intake = validateAttachmentIntake(attachments.map((attachment) => attachment.size));
+  if (!intake.accepted) throw new Error('Source Message attachments exceed the configured intake limit.');
+  const contents = await dependencies.attachments.read({ accessToken, gmailMessageId: input.messageId, attachments });
+  const folderId = contents.length ? await resolveSourceMessageFolder({
+    database: drizzleOrganizationDatabase(database),
+    drive: dependencies.attachments,
+    accessToken,
+    subject: subjectOf(message.payload),
+    receivedAt: receivedAtOf(message.internalDate) ?? new Date().toISOString(),
+  }) : null;
+  const publications = await Promise.all(contents.map(async (attachment) => ({
+    attachment,
+    publication: folderId
+      ? await dependencies.attachments.publish({ accessToken, attachment, parentFolderId: folderId })
+      : unpublishedAttachment,
+  })));
+  if (publications.some(({ publication }) => publication.outcome === 'failed')) {
+    throw new Error('添付ファイルを公開できなかったため、テスト予定を作成しませんでした。');
+  }
+  const attachmentLinks = publications.flatMap(({ attachment, publication }) => publication.publicUrl
+    ? [{ filename: attachment.filename, url: publication.publicUrl }]
+    : []);
+  const calendarAttachments = publications.flatMap(({ attachment, publication }) => publication.publicUrl
+    ? [{ fileUrl: publication.publicUrl, title: attachment.filename, mimeType: attachment.mimeType }]
+    : []);
+  const calendarUrl = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
+  if (calendarAttachments.length) calendarUrl.searchParams.set('supportsAttachments', 'true');
+  const eventIds = await Promise.all(input.events.map(async (details) => {
+    const event = await dependencies.google.request<CalendarEvent>(accessToken, calendarUrl.toString(), {
+      method: 'POST',
+      body: JSON.stringify({
+        summary: details.title,
+        description: calendarEventDescription({
+          summary: details.summary,
+          attachments: attachmentLinks,
+          attribution: sourceMessageAttribution(input.messageId),
+        }),
+        location: details.location,
+        start: { dateTime: details.startsAt, timeZone: details.timeZone },
+        end: { dateTime: details.endsAt, timeZone: details.timeZone },
+        attachments: calendarAttachments,
+      }),
+    });
+    if (!event.id) throw new Error('Google Calendar が予定 ID を返しませんでした。');
+    return event.id;
+  }));
+  return { eventIds };
+};
 
 const CALENDAR_EVENTS_URL = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
 
@@ -1832,17 +2016,19 @@ export const resumeDueRuleRuns = async (input: {
 };
 
 /** Starts a side-effect-free Draft run for one selected Schema Rule revision. */
-export const startSchemaDraftRuleRun = async (input: {
+const startSchemaDraftRuleRun = async (input: {
   env: Bindings;
   database: D1Database;
   organizationId: string;
   ruleId: string;
+  ruleRevision: number;
   messageId: string;
   extraction: MailExtraction;
 }) => {
   const db = drizzleOrganizationDatabase(input.database);
   const row = await db.select().from(automationRules).where(eq(automationRules.id, input.ruleId)).get();
   if (!row || row.status !== 'draft') throw new Error('Mailbox Test requires a Draft Schema Rule.');
+  if (row.currentRevision !== input.ruleRevision) throw new Error('確認した Rule Revision と異なります。');
   const [recipientReferences, lineReferences] = await Promise.all([
     db.select().from(rulePermittedRecipientLists).where(eq(rulePermittedRecipientLists.ruleId, row.id)).all(),
     db.select().from(rulePermittedLineLists).where(eq(rulePermittedLineLists.ruleId, row.id)).all(),
@@ -1863,15 +2049,18 @@ export const startSchemaDraftRuleRun = async (input: {
   if (!ruleMatches(rule, { sender: source.sender, subject: source.subject, body: source.source })) {
     throw new Error('The selected Source Message does not match this Rule Selection Policy.');
   }
+  // Rule Run needs a Source Message foreign key, but a preview must never mark
+  // the real Gmail message as known: doing so would make live Automation skip it.
+  const previewSourceKey = `draft-preview:${input.messageId}:${rule.id}:${rule.revision}`;
   const existing = await db.select({ id: sourceMessages.id, driveFolderId: sourceMessages.driveFolderId })
-    .from(sourceMessages).where(eq(sourceMessages.gmailMessageId, input.messageId)).get();
+    .from(sourceMessages).where(eq(sourceMessages.gmailMessageId, previewSourceKey)).get();
   const sourceMessageId = existing?.id ?? crypto.randomUUID();
   if (!existing) {
     const timestamp = now();
     await db.insert(sourceMessages).values({
       id: sourceMessageId,
-      gmailMessageId: input.messageId,
-      gmailHistoryId: `draft-preview:${input.messageId}`,
+      gmailMessageId: previewSourceKey,
+      gmailHistoryId: previewSourceKey,
       sender: source.sender,
       subject: source.subject,
       receivedAt: source.receivedAt ?? timestamp,
@@ -1966,43 +2155,17 @@ const processOrganizationMessage = async (
   }
   const body = decodedBody(message.payload) || (message.snippet ?? '');
   const [activeRules, activeAgentRuleRows] = await Promise.all([
-    db.select({
-      id: automationRules.id,
-      revision: automationRules.currentRevision,
-      priority: automationRules.priority,
-      executionMode: automationRules.executionMode,
-      selectionPolicy: automationRules.selectionPolicy,
-      taskRoleIds: automationRules.taskRoleIds,
-    }).from(automationRules).where(eq(automationRules.status, 'active')).orderBy(automationRules.priority).all(),
+    activeSchemaRules(database),
     db.select({ id: agentRules.id, priority: agentRules.priority, promptId: agentRules.promptId, revision: agentRules.currentRevision, selectionPolicy: agentRules.selectionPolicy, executionMode: agentRules.executionMode })
       .from(agentRules).where(eq(agentRules.status, 'active')).orderBy(agentRules.priority).all(),
   ]);
-  const activeRuleIds = activeRules.map(({ id }) => id);
-  const [permittedRecipientLists, permittedLineLists] = activeRuleIds.length ? await Promise.all([
-    db.select().from(rulePermittedRecipientLists)
-      .where(inArray(rulePermittedRecipientLists.ruleId, activeRuleIds)).all(),
-    db.select().from(rulePermittedLineLists)
-      .where(inArray(rulePermittedLineLists.ruleId, activeRuleIds)).all(),
-  ]) : [[], []];
   const activeAgentRuleIds = activeAgentRuleRows.map(({ id }) => id);
   const [agentRecipientLists, agentLineLists] = activeAgentRuleIds.length ? await Promise.all([
     db.select().from(agentRulePermittedRecipientLists).where(inArray(agentRulePermittedRecipientLists.agentRuleId, activeAgentRuleIds)).all(),
     db.select().from(agentRulePermittedLineLists).where(inArray(agentRulePermittedLineLists.agentRuleId, activeAgentRuleIds)).all(),
   ]) : [[], []];
   const source = { sender: senderOf(message.payload), subject, body, ...(message.labelIds === undefined ? {} : { labels: message.labelIds }) };
-  const rule = selectActiveRule(activeRules.flatMap((row) => {
-    try { return [{
-      id: row.id,
-      revision: row.revision,
-      priority: row.priority,
-      executionMode: row.executionMode,
-      selectionPolicy: JSON.parse(row.selectionPolicy) as Record<string, unknown>,
-      taskRoleIds: JSON.parse(row.taskRoleIds) as string[],
-      permittedRecipientListIds: permittedRecipientLists.flatMap((reference) => reference.ruleId === row.id ? [reference.listId] : []),
-      permittedLineListIds: permittedLineLists.flatMap((reference) => reference.ruleId === row.id ? [reference.listId] : []),
-    }]; }
-    catch { return []; }
-  }), source);
+  const rule = selectActiveRule(activeRules, source);
   const matchingAgentRules = activeAgentRuleRows.flatMap((row): ActiveAgentRule[] => {
     try {
       const candidate = {
@@ -2114,15 +2277,20 @@ const processOrganizationMessage = async (
       .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
   }
-  const organizationRoles = await db.select({
-    id: operationalTaskRoles.id,
-    displayName: operationalTaskRoles.displayName,
-    description: operationalTaskRoles.description,
-  }).from(operationalTaskRoles).all();
-  const allowedRoleIds = new Set(rule.taskRoleIds ?? []);
-  const allowedTaskRoles = organizationRoles.filter((role) => allowedRoleIds.has(role.id));
-  const extraction = await aiExtraction(env, organizationId, database, `${subject}\n${body}`, attachmentContents, sharedConvertedAttachments, allowedTaskRoles, receivedAtOf(message.internalDate), dependencies);
-  if (extraction === undefined) {
+  const messageReceivedAt = receivedAtOf(message.internalDate);
+  const preparation = await preparePrimarySchema({
+    dependencies,
+    env,
+    organizationId,
+    database,
+    source,
+    extractionSource: `${subject}\n${body}`,
+    attachments: attachmentContents,
+    ...(sharedConvertedAttachments === undefined ? {} : { convertedAttachments: sharedConvertedAttachments }),
+    ...(messageReceivedAt === undefined ? {} : { receivedAt: messageReceivedAt }),
+    rules: activeRules,
+  });
+  if (preparation.kind === 'ai_connection_missing') {
     await db.insert(automationExceptions).values({
       id: crypto.randomUUID(),
       sourceMessageId,
@@ -2135,7 +2303,7 @@ const processOrganizationMessage = async (
       .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
   }
-  if (extraction === null) {
+  if (preparation.kind === 'invalid_extraction') {
     await db.insert(automationExceptions).values({
       id: crypto.randomUUID(),
       sourceMessageId,
@@ -2148,6 +2316,12 @@ const processOrganizationMessage = async (
       .where(eq(sourceMessages.id, sourceMessageId)).run();
     return;
   }
+  if (preparation.kind === 'no_matching_rule') {
+    await db.update(sourceMessages).set({ state: agentFailed ? 'exception' : 'processed', processedAt: now() })
+      .where(eq(sourceMessages.id, sourceMessageId)).run();
+    return;
+  }
+  const extraction = preparation.extraction;
   const schemaArguments: SchemaExtractionEffectArguments = {
     organizationId,
     sourceMessageId,
@@ -2155,7 +2329,7 @@ const processOrganizationMessage = async (
     subject,
     receivedAt: receivedAtOf(message.internalDate) ?? timestamp,
     recordedFolderId: known?.driveFolderId ?? null,
-    rule,
+    rule: preparation.rule,
     extraction,
     correlations: await planSchemaCorrelations({
       env,
@@ -2171,8 +2345,8 @@ const processOrganizationMessage = async (
   const schemaExecution = createRuleExecution({
     database,
     planner: { plan: async () => [{
-      rule: { type: 'schema', id: rule.id, revision: rule.revision },
-      executionMode: rule.executionMode,
+      rule: { type: 'schema', id: preparation.rule.id, revision: preparation.rule.revision },
+      executionMode: preparation.rule.executionMode,
       effects: schemaPlannedEffects(schemaArguments),
     }] },
     effects: schemaRuleEffectPort({
@@ -2184,7 +2358,7 @@ const processOrganizationMessage = async (
     }),
   });
   await schemaExecution.start({ sourceMessageId, intent: { kind: 'live' } });
-  if (rule.executionMode !== 'unattended') {
+  if (preparation.rule.executionMode !== 'unattended') {
     await db.update(sourceMessages).set({ state: agentFailed ? 'exception' : 'processed', processedAt: now() })
       .where(eq(sourceMessages.id, sourceMessageId)).run();
   }
@@ -2383,6 +2557,10 @@ export const createAutomation = (
     mailboxTest: {
       search: (input: { organizationId: string; database: D1Database; subject: string }): Promise<MailboxTestMatch[]> =>
         searchMailboxForTestWithGoogle(env, input.organizationId, input.database, input.subject, dependencies),
+      preview: (input: { organizationId: string; database: D1Database; messageId: string }): Promise<{ source: MailboxTestSource; rule: ActiveRule; extraction: MailExtraction }> =>
+        previewMailboxTestWithActiveRule(env, input.organizationId, input.database, input.messageId, dependencies),
+      createCalendarEvents: (input: { organizationId: string; database: D1Database; messageId: string; events: EventDetails[] }): Promise<{ eventIds: string[] }> =>
+        createMailboxTestCalendarEventsWithGoogle(env, input.organizationId, input.database, { messageId: input.messageId, events: input.events }, dependencies),
       readSource: (input: { organizationId: string; database: D1Database; messageId: string }): Promise<MailboxTestSource> =>
         readMailboxTestSourceWithGoogle(env, input.organizationId, input.database, input.messageId, dependencies),
       extractPackage: (input: { organizationId: string; database: D1Database; source: string; attachments: SourceAttachmentContent[]; receivedAt?: string }): Promise<MailExtraction | null> =>
@@ -2395,6 +2573,12 @@ export const createAutomation = (
         planEventRefreshWithGoogle(env, input.organizationId, input.database, { messageId: input.messageId, events: input.events }, dependencies),
       applyRefresh: (input: { organizationId: string; database: D1Database; messageId: string; entries: EventRefreshEntry[] }): Promise<EventRefreshOutcome> =>
         applyEventRefreshWithGoogle(env, input.organizationId, input.database, { messageId: input.messageId, entries: input.entries }, dependencies),
+    },
+    ruleRuns: {
+      previewDraft: (input: { organizationId: string; database: D1Database; messageId: string; ruleId: string }) =>
+        previewSchemaDraftRule({ env, ...input }),
+      startDraft: (input: { organizationId: string; database: D1Database; messageId: string; ruleId: string; ruleRevision: number; extraction: MailExtraction }) =>
+        startSchemaDraftRuleRun({ env, ...input }),
     },
   };
 };

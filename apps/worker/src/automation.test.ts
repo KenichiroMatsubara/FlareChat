@@ -398,8 +398,9 @@ describe('Organization Automation Inbox scheduling', () => {
     const run = fixture.organization.row<{ id: string }>('SELECT id FROM rule_runs')!;
     expect(fixture.organization.row<{ id: string }>('SELECT id FROM agent_runs')).toEqual(run);
     const runResponse = await app.fetch(fixture.request(`/api/organizations/organization-1/rule-runs/${run.id}`), fixture.environment);
-    const pending = await runResponse.json() as { data: { status: string; effects: Array<{ arguments: { destination: string; message: string }; status: string }> } };
+    const pending = await runResponse.json() as { data: { sourceMessage: { subject: string; sender: string }; status: string; effects: Array<{ arguments: { destination: string; message: string }; status: string }> } };
     expect(pending.data).toMatchObject({
+      sourceMessage: { subject: 'Notice', sender: 'member@example.com' },
       status: 'pending_approval',
       effects: [{ arguments: { destination: 'line-user-1', message: 'Exact approved text' }, status: 'pending' }],
     });
@@ -1701,6 +1702,81 @@ describe('Organization Automation Inbox scheduling', () => {
 });
 
 describe('Manual mailbox test', () => {
+  it('previews a selected Source Message through the active Primary Rule without consuming it', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    let calendarRequest: { summary?: string; description?: string } = {};
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/messages/mailbox-active-preview')) {
+        return Response.json({
+          id: 'mailbox-active-preview',
+          internalDate: '1786000000000',
+          payload: {
+            headers: [
+              { name: 'Subject', value: '常設メールテスト' },
+              { name: 'From', value: 'member@example.com' },
+            ],
+            body: { data: gmailBody('2026年8月18日 14:30から16:00まで例会を開催します。') },
+          },
+        });
+      }
+      if (url.includes('ai.example.com')) {
+        return Response.json({
+          choices: [{
+            message: {
+              content: JSON.stringify({
+                summary: '例会の予定です。',
+                events: [{
+                  title: '例会',
+                  startsAt: '2026-08-18T14:30:00+09:00',
+                  endsAt: '2026-08-18T16:00:00+09:00',
+                  timeZone: 'Asia/Tokyo',
+                  location: '',
+                  description: '常設メールテスト',
+                  summary: '例会の予定です。',
+                }],
+                tasks: [],
+              }),
+            },
+          }],
+        });
+      }
+      if (url.includes('/calendar/v3/calendars/primary/events') && init?.method === 'POST') {
+        calendarRequest = JSON.parse(init.body as string) as typeof calendarRequest;
+        return Response.json({ id: 'mailbox-test-event' });
+      }
+      if (url.includes('/calendar/v3/calendars/primary/events')) {
+        return Response.json({ items: [] });
+      }
+      return Response.json({ error: { message: `unexpected request: ${url}` } }, { status: 500 });
+    }));
+
+    const response = await app.fetch(fixture.request(
+      '/api/organizations/organization-1/mail-tests/mailbox-active-preview/preview',
+      { method: 'POST' },
+    ), fixture.environment);
+
+    expect(response.status).toBe(200);
+    const preview = await response.json() as { data: { confirmationToken: string } };
+    expect(preview).toMatchObject({
+      data: {
+        id: 'mailbox-active-preview',
+        selectedRule: { id: 'rule-1', revision: 1 },
+        events: [{ title: '例会' }],
+      },
+    });
+    const calendarResponse = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/mail-tests/calendar',
+      { confirmationToken: preview.data.confirmationToken },
+    ), fixture.environment);
+
+    expect(calendarResponse.status).toBe(201);
+    await expect(calendarResponse.json()).resolves.toMatchObject({ data: { eventIds: ['mailbox-test-event'] } });
+    expect(calendarRequest).toMatchObject({ summary: '例会' });
+    expect(calendarRequest.description).toContain('mailbox-active-preview');
+    expect(fixture.organization.rows('SELECT * FROM source_messages')).toEqual([]);
+  });
+
   it('searches Gmail and prepares an OpenAI-compatible request without an AI credential', async () => {
     fixture = await createAutomationTestApp();
     const upstreamUrls: string[] = [];
@@ -1950,7 +2026,7 @@ describe('Manual mailbox test', () => {
 
     fixture.organization.execute("UPDATE rules SET selection_policy = ? WHERE id = 'rule-1'", JSON.stringify({ sender: 'other@example.com' }));
     const rejectedBySelection = await app.fetch(fixture.jsonRequest(
-      '/api/organizations/organization-1/mail-tests/gmail-message-attachment/preview',
+      '/api/organizations/organization-1/mail-tests/gmail-message-attachment/draft-preview',
       { ruleId: 'rule-1' },
     ), fixture.environment);
     expect(rejectedBySelection.status).toBe(409);
@@ -1958,18 +2034,23 @@ describe('Manual mailbox test', () => {
     fixture.organization.execute("UPDATE rules SET selection_policy = '{}' WHERE id = 'rule-1'");
 
     const previewResponse = await app.fetch(fixture.jsonRequest(
-      '/api/organizations/organization-1/mail-tests/gmail-message-attachment/preview',
+      '/api/organizations/organization-1/mail-tests/gmail-message-attachment/draft-preview',
       { ruleId: 'rule-1' },
     ), fixture.environment);
     const preview = await previewResponse.json() as {
       data: { summary: string; events: EventDetails[]; tasks: Array<{ assigneeRoleId: string }>; confirmationToken: string };
     };
+    const rejectedCalendarResponse = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/mail-tests/calendar',
+      { confirmationToken: preview.data.confirmationToken },
+    ), fixture.environment);
     const runResponse = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/mail-tests/rule-run',
       { confirmationToken: preview.data.confirmationToken, ruleId: 'rule-1' },
     ), fixture.environment);
 
     expect(previewResponse.status).toBe(200);
+    expect(rejectedCalendarResponse.status).toBe(409);
     expect(preview).toMatchObject({
       data: {
         summary: '8月18日に会議と懇親会を開催します。8月10日までの出席登録と8月12日までの参加費振込が必要です。',
@@ -1999,6 +2080,9 @@ describe('Manual mailbox test', () => {
     expect(driveFolderQueries).toHaveLength(0);
     expect(driveFolders).toHaveLength(0);
     expect(uploadMetadata.parents).toBeUndefined();
+    expect(fixture.organization.rows(
+      "SELECT id FROM source_messages WHERE gmail_message_id = 'gmail-message-attachment'",
+    )).toEqual([]);
   });
 });
 

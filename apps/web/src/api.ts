@@ -244,6 +244,7 @@ export interface RuleRun {
   id: string;
   rule: { type: 'schema' | 'agent'; id: string; revision: number };
   sourceMessageId: string;
+  sourceMessage: { subject: string; sender: string; receivedAt: string };
   executionMode: 'read_only' | 'approval' | 'unattended';
   intent: 'live' | 'draft_preview';
   status: 'planning' | 'read_only' | 'pending_approval' | 'applying' | 'completed' | 'rejected' | 'expired' | 'failed';
@@ -293,6 +294,7 @@ export interface MailboxTestMatch {
 }
 
 export interface MailboxTestPreview extends MailboxTestMatch {
+  selectedRule: { id: string; revision: number };
   summary: string;
   events: Array<{
     title: string;
@@ -622,9 +624,16 @@ export const api = {
   prepareMailboxTestAiRequest: (organizationId: string, messageId: string): Promise<MailboxTestAiRequest> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/${encodeURIComponent(messageId)}/ai-request`, {
     method: 'POST',
   }),
-  previewMailboxTestEvent: (organizationId: string, messageId: string, ruleId: string): Promise<MailboxTestPreview> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/${encodeURIComponent(messageId)}/preview`, {
+  previewMailboxTestEvent: (organizationId: string, messageId: string): Promise<MailboxTestPreview> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/${encodeURIComponent(messageId)}/preview`, {
+    method: 'POST',
+  }),
+  previewDraftRuleEvent: (organizationId: string, messageId: string, ruleId: string): Promise<MailboxTestPreview> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/${encodeURIComponent(messageId)}/draft-preview`, {
     method: 'POST',
     body: JSON.stringify({ ruleId }),
+  }),
+  createMailboxTestCalendarEvents: (organizationId: string, confirmationToken: string): Promise<{ eventIds: string[] }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/calendar`, {
+    method: 'POST',
+    body: JSON.stringify({ confirmationToken }),
   }),
   startMailboxTestRuleRun: (organizationId: string, confirmationToken: string, ruleId: string): Promise<RuleRun> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/rule-run`, {
     method: 'POST',

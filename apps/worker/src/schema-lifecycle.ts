@@ -126,6 +126,10 @@ const ORGANIZATION_MIGRATIONS: readonly SchemaMigration[] = [
 ];
 const LEGACY_MIGRATION_CHECKSUMS = new Map<string, ReadonlySet<string>>([
   ['0001_tasks.sql', new Set(['4b2f3889191d0eafbbe45b78103db7139c7ce2b937c02cbbb6824f5131d7429f'])],
+  [
+    '0006_operational_task_roles.sql',
+    new Set(['7c37ad2276cf9819a1e58105345d18816d4e15ea0b850399b11e3fa641c9eb2e']),
+  ],
 ]);
 export const ORGANIZATION_SCHEMA_TARGET =
   ORGANIZATION_MIGRATIONS.at(-1)?.name ?? '';

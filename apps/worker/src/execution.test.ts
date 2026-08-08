@@ -76,6 +76,11 @@ describe('Rule Execution', () => {
       id: 'run-1',
       rule: { type: 'schema', id: 'rule-1', revision: 1 },
       sourceMessageId: 'source-1',
+      sourceMessage: {
+        subject: '例会',
+        sender: 'sender@example.com',
+        receivedAt: '2026-08-06T01:00:00.000Z',
+      },
       executionMode: 'unattended',
       status: 'completed',
       effects: [{ id: 'effect-1', key: 'calendar:create:0', kind: 'calendar.create', status: 'succeeded', result: { externalId: 'calendar-1' } }],

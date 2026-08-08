@@ -211,8 +211,8 @@ One frozen Rule Effect held without applying it until the Rule Run is approved, 
 _Avoid_: pending delivery, draft action
 
 **Mailbox Test**:
-An Admin-started Draft Rule Run of one specific Rule Revision against a selected Source Message, reviewed from Rule Runs. It follows the same Selection Policy as live execution—an unmatched source stops before extraction—and never applies Rule Effects.
-_Avoid_: manual Calendar creation, standalone extraction test
+An Admin-started check of one selected Automation Inbox message through the same Active Primary Rule selection, task-role boundary, attachment conversion, and AI provider path as live Automation. Preview does not persist or consume the Source Message and has no business effect; a separate short-lived confirmation may create only the reviewed Calendar events and their Public Attachments. Draft Rule Preview remains a distinct Rule Runs operation.
+_Avoid_: Draft Rule Run, production replay
 
 **Run Transcript**:
 The complete encrypted Agent Rule reasoning record attached to a Rule Run—its Prompt revision, model, every tool call with arguments and results, and final output—retained to explain a run that will never be retried.

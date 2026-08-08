@@ -228,7 +228,9 @@ interface OrganizationContextValue extends OrganizationRouteData, PendingOperati
   testAi: () => void;
   searchMailbox: () => void;
   prepareMailbox: (messageId: string) => void;
-  previewMailbox: (messageId: string, ruleId: string) => void;
+  previewMailbox: (messageId: string) => void;
+  previewDraftMailbox: (messageId: string, ruleId: string) => void;
+  createMailboxTestEvents: () => void;
   startDraftRuleRun: (ruleId: string) => void;
   prepareRefresh: () => void;
   planRefresh: () => void;
@@ -272,6 +274,8 @@ interface OrganizationContextValue extends OrganizationRouteData, PendingOperati
   mailTestMatches: MailboxTestMatch[];
   mailTestAiRequest: MailboxTestAiRequest | null;
   mailTestPreview: MailboxTestPreview | null;
+  draftRulePreview: MailboxTestPreview | null;
+  mailTestCreatedEventIds: string[];
   mailTestRuleRunIds: string[];
   mailTestRefreshRequest: MailboxTestRefreshRequest | null;
   mailTestRefreshPlan: MailboxTestRefreshPlan | null;
@@ -319,6 +323,8 @@ export const OrganizationLayout = () => {
   const [mailTestMatches, setMailTestMatches] = useState<MailboxTestMatch[]>([]);
   const [mailTestAiRequest, setMailTestAiRequest] = useState<MailboxTestAiRequest | null>(null);
   const [mailTestPreview, setMailTestPreview] = useState<MailboxTestPreview | null>(null);
+  const [draftRulePreview, setDraftRulePreview] = useState<MailboxTestPreview | null>(null);
+  const [mailTestCreatedEventIds, setMailTestCreatedEventIds] = useState<string[]>([]);
   const [mailTestRuleRunIds, setMailTestRuleRunIds] = useState<string[]>([]);
   const [mailTestRefreshRequest, setMailTestRefreshRequest] = useState<MailboxTestRefreshRequest | null>(null);
   const [mailTestRefreshPlan, setMailTestRefreshPlan] = useState<MailboxTestRefreshPlan | null>(null);
@@ -391,22 +397,38 @@ export const OrganizationLayout = () => {
   const searchMailbox = () => void runOperation(pendingKey.mailSearch, async () => {
     setMailTestAiRequest(null);
     setMailTestPreview(null);
+    setDraftRulePreview(null);
+    setMailTestCreatedEventIds([]);
     setMailTestRuleRunIds([]);
     setMailTestMatches((await api.searchMailboxForTest(organizationId, mailTestSubject.trim())).messages);
   });
   const prepareMailbox = (messageId: string) => void runOperation(pendingKey.mailPrepare(messageId), async () => {
     setMailTestAiRequest(await api.prepareMailboxTestAiRequest(organizationId, messageId));
     setMailTestPreview(null);
+    setDraftRulePreview(null);
+    setMailTestCreatedEventIds([]);
     setMailTestRuleRunIds([]);
   });
-  const previewMailbox = (messageId: string, ruleId: string) => void runOperation(pendingKey.mailPreview, async () => {
+  const previewMailbox = (messageId: string) => void runOperation(pendingKey.mailPreview, async () => {
     if (mailTestAiRequest?.id !== messageId) throw new Error('先に AI への送信内容を確認してください。');
-    setMailTestPreview(await api.previewMailboxTestEvent(organizationId, messageId, ruleId));
+    setMailTestPreview(await api.previewMailboxTestEvent(organizationId, messageId));
+    setMailTestCreatedEventIds([]);
+  });
+  const previewDraftMailbox = (messageId: string, ruleId: string) => void runOperation(pendingKey.mailPreview, async () => {
+    if (mailTestAiRequest?.id !== messageId) throw new Error('先に AI への送信内容を確認してください。');
+    setDraftRulePreview(await api.previewDraftRuleEvent(organizationId, messageId, ruleId));
     setMailTestRuleRunIds([]);
+  });
+  const createMailboxTestEvents = () => void runOperation(pendingKey.mailCreate, async () => {
+    if (!mailTestPreview) throw new Error('先に AI 抽出を実行してください。');
+    setMailTestCreatedEventIds((await api.createMailboxTestCalendarEvents(
+      organizationId,
+      mailTestPreview.confirmationToken,
+    )).eventIds);
   });
   const startDraftRuleRun = (ruleId: string) => void runOperation(pendingKey.mailStartRuleRun, async () => {
-    if (mailTestPreview) {
-      const run = await api.startMailboxTestRuleRun(organizationId, mailTestPreview.confirmationToken, ruleId);
+    if (draftRulePreview) {
+      const run = await api.startMailboxTestRuleRun(organizationId, draftRulePreview.confirmationToken, ruleId);
       setMailTestRuleRunIds([run.id]);
       setData((current) => ({ ...current, ruleRuns: [run, ...current.ruleRuns] }));
     }
@@ -569,11 +591,11 @@ export const OrganizationLayout = () => {
   });
   const logout = () => void runOperation(pendingKey.logout, async () => { await api.logout(); navigate('/', { replace: true }); });
   const reauthenticate = () => void runOperation(pendingKey.reauthenticate, async () => { window.location.assign((await api.reauthorizeAutomationInbox(organizationId)).authorizationUrl); });
-  const value: OrganizationContextValue = { ...data, ...operations, summary, setEnabled, runAutomation, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, startDraftRuleRun, createRule, updateRule, agentTranscript, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, decideRuleRun, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, taskReassignmentProposals, taskReassignmentSkipped, suggestTaskReassignments, applyTaskReassignments, discardTaskReassignments, createMember, updateMember, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshMembers, applyPreset, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, mailTestRuleRunIds, mailTestRefreshRequest, mailTestRefreshPlan, mailTestRefreshOutcome, prepareRefresh, planRefresh, applyRefresh, attachmentFolderPath, setAttachmentFolderPath, saveAttachmentFolderPath, responseWindowDays, setResponseWindowDays, saveResponseWindowDays, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
+  const value: OrganizationContextValue = { ...data, ...operations, summary, setEnabled, runAutomation, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, previewDraftMailbox, createMailboxTestEvents, startDraftRuleRun, createRule, updateRule, agentTranscript, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, decideRuleRun, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, taskReassignmentProposals, taskReassignmentSkipped, suggestTaskReassignments, applyTaskReassignments, discardTaskReassignments, createMember, updateMember, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshMembers, applyPreset, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, draftRulePreview, mailTestCreatedEventIds, mailTestRuleRunIds, mailTestRefreshRequest, mailTestRefreshPlan, mailTestRefreshOutcome, prepareRefresh, planRefresh, applyRefresh, attachmentFolderPath, setAttachmentFolderPath, saveAttachmentFolderPath, responseWindowDays, setResponseWindowDays, saveResponseWindowDays, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
   return <OrganizationContext.Provider value={value}><Outlet /></OrganizationContext.Provider>;
 };
 
-type OrganizationPage = 'automation' | 'connections' | 'rules' | 'members' | 'rule-runs' | 'event-refresh' | 'tasks';
+type OrganizationPage = 'automation' | 'connections' | 'rules' | 'members' | 'mailbox-test' | 'rule-runs' | 'event-refresh' | 'tasks';
 export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
   const value = useOrganization();
   const navigation = useNavigation();
@@ -624,6 +646,8 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     mailTestMatches={value.mailTestMatches}
     mailTestAiRequest={value.mailTestAiRequest}
     mailTestPreview={value.mailTestPreview}
+    draftRulePreview={value.draftRulePreview}
+    mailTestCreatedEventIds={value.mailTestCreatedEventIds}
     mailTestRuleRunIds={value.mailTestRuleRunIds}
     mailTestRefreshRequest={value.mailTestRefreshRequest}
     mailTestRefreshPlan={value.mailTestRefreshPlan}
@@ -635,6 +659,8 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     onSearchMailbox={value.searchMailbox}
     onPrepareMailbox={value.prepareMailbox}
     onPreviewMailbox={value.previewMailbox}
+    onPreviewDraftMailbox={value.previewDraftMailbox}
+    onCreateMailboxTestEvents={value.createMailboxTestEvents}
     onStartDraftRuleRun={value.startDraftRuleRun}
     organizationRules={value.rules}
     organizationLists={value.lists}

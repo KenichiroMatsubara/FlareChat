@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import type { DashboardProps } from './dashboard';
-import type { GuestRegistrationRoster } from './api';
+import type { GuestRegistrationRoster, RuleEffect, RuleRun } from './api';
 import { pendingKey } from './pending';
 
 /**
@@ -20,6 +20,97 @@ export const COPY_NOTICE_MS = 1_800;
 const formatted = (value: string | null): string => value
   ? new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
   : 'まだ実行していません';
+
+const ruleRunStatusLabel = (status: RuleRun['status']): string => ({
+  planning: '計画中',
+  read_only: '確認のみ',
+  pending_approval: '承認待ち',
+  applying: '実行中',
+  completed: '完了',
+  rejected: '却下',
+  expired: '期限切れ',
+  failed: '失敗',
+})[status];
+
+const ruleEffectStatusLabel = (status: RuleEffect['status']): string => ({
+  planned: '実行せず記録',
+  pending: '承認待ち',
+  applying: '実行中',
+  succeeded: '成功',
+  transient_failed: '再試行待ち',
+  permanent_failed: '失敗',
+  blocked: '前の処理を待機',
+  rejected: '却下',
+  expired: '期限切れ',
+})[status];
+
+const ruleEffectKindLabel = (kind: string): string => ({
+  'schema.record_warnings': '抽出時の注意を記録',
+  'schema.deliver_summary': 'メールの要約を配信',
+  'schema.create_tasks': '期限タスクを作成',
+  'schema.apply_events': '予定を作成・更新',
+  'agent.send_line_message': 'LINEメッセージを送信',
+  'agent.create_scheduled_event': '予定を作成',
+  'calendar.create': '予定を作成',
+  'drive.publish': '添付ファイルをDriveへ保存',
+  'task.create': '期限タスクを作成',
+})[kind] ?? kind;
+
+const recordValue = (value: unknown): Record<string, unknown> | null =>
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+
+const textValue = (value: unknown): string | null => typeof value === 'string' && value.trim() ? value : null;
+
+const ruleEffectDetails = (effect: RuleEffect): string[] => {
+  const arguments_ = effect.arguments;
+  if (effect.kind === 'agent.send_line_message') {
+    return [
+      textValue(arguments_.destination) ? `送信先: ${String(arguments_.destination)}` : null,
+      textValue(arguments_.message) ? `内容: ${String(arguments_.message)}` : null,
+    ].filter((value): value is string => Boolean(value));
+  }
+  if (effect.kind === 'agent.create_scheduled_event' || effect.kind === 'calendar.create') {
+    return [
+      textValue(arguments_.title) ? `予定: ${String(arguments_.title)}` : null,
+      textValue(arguments_.startsAt) ? `開始: ${formatted(String(arguments_.startsAt))}` : null,
+      textValue(arguments_.destination) ? `追加先: ${String(arguments_.destination)}` : null,
+    ].filter((value): value is string => Boolean(value));
+  }
+  if (effect.kind === 'task.create') {
+    return [textValue(arguments_.title) ? `タスク: ${String(arguments_.title)}` : null]
+      .filter((value): value is string => Boolean(value));
+  }
+  const extraction = recordValue(arguments_.extraction);
+  if (!extraction) return [];
+  if (effect.kind === 'schema.deliver_summary') {
+    const summary = textValue(extraction.summary);
+    return summary ? [`要約: ${summary}`] : [];
+  }
+  if (effect.kind === 'schema.create_tasks' && Array.isArray(extraction.tasks)) {
+    return extraction.tasks.flatMap((value) => {
+      const task = recordValue(value);
+      if (!task) return [];
+      const title = textValue(task.title) ?? '名称のないタスク';
+      const deadline = textValue(task.deadline);
+      return [`タスク: ${title}${deadline ? `（期限 ${deadline}）` : ''}`];
+    });
+  }
+  if (effect.kind === 'schema.apply_events' && Array.isArray(extraction.events)) {
+    return extraction.events.flatMap((value) => {
+      const event = recordValue(value);
+      if (!event) return [];
+      const title = textValue(event.title) ?? '名称のない予定';
+      const startsAt = textValue(event.startsAt);
+      return [`予定: ${title}${startsAt ? `（${formatted(startsAt)}）` : ''}`];
+    });
+  }
+  if (effect.kind === 'schema.record_warnings' && Array.isArray(extraction.warnings)) {
+    return extraction.warnings.map((warning) => textValue(warning) ?? JSON.stringify(warning));
+  }
+  return [];
+};
 
 const SecretInput = ({ value, onChange, label, placeholder }: { value: string; onChange: (value: string) => void; label: string; placeholder: string }) => {
   const [revealed, setRevealed] = useState(false);
@@ -576,6 +667,34 @@ export const MailboxRefreshSections = (props: DashboardProps) => {
 };
 
 export const MailboxTestPage = (props: DashboardProps) => {
+  const searching = props.isPending(pendingKey.mailSearch);
+  const extracting = props.isPending(pendingKey.mailPreview);
+  const creating = props.isPending(pendingKey.mailCreate);
+  const hasConfiguredAiApi = Boolean(props.connections?.ai.apiKeyConfigured);
+  const [aiRequestCopied, setAiRequestCopied] = useState(false);
+  const copyFeedbackTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const copyPreparedAiRequest = (): void => {
+    if (!props.mailTestAiRequest) return;
+    void navigator.clipboard.writeText(JSON.stringify(props.mailTestAiRequest.request, null, 2)).then(() => {
+      setAiRequestCopied(true);
+      if (copyFeedbackTimer.current) clearTimeout(copyFeedbackTimer.current);
+      copyFeedbackTimer.current = setTimeout(() => setAiRequestCopied(false), COPY_NOTICE_MS);
+    });
+  };
+  return <section className="page-layout mail-test-page">
+    <div className="page-title"><p>MAILBOX TEST</p><h1>メールテスト</h1><span>実際の Automation Inbox のメールを、有効な Primary Rule と本番の抽出経路で安全に確認します。</span></div>
+    {!props.organization || !props.automation
+      ? <section className="empty-page"><Mail size={30} /><h2>メールテストを開始できません</h2><p>Automation Inbox の Google 接続を完了してください。</p></section>
+      : <>
+        <section className="test-card"><div><p>1. FIND MAIL</p><h2>件名からメールを探す</h2><span>検索とプレビューではメールを処理済みにせず、Calendar や Drive にも書き込みません。</span></div><label>メール件名<input value={props.mailTestSubject} onChange={(event) => props.onMailTestSubjectChange(event.target.value)} maxLength={300} /></label><button className="primary" onClick={props.onSearchMailbox} disabled={searching}>{searching ? <><RefreshCw className="spin" size={14} />検索中…</> : 'Gmailを検索'}</button></section>
+        {props.mailTestMatches.length > 0 && <section className="test-card"><div><p>2. PREPARE AI REQUEST</p><h2>AI への送信内容を確認</h2><span>対象メールを選ぶと、本番と同じ本文・添付からリクエスト本文を生成します。この時点では AI に送信しません。</span></div><div className="mail-matches">{props.mailTestMatches.map((message) => <button key={message.id} className="mail-match" onClick={() => props.onPrepareMailbox(message.id)} disabled={props.isPending(pendingKey.mailPrepare(message.id))}><strong>{message.subject}</strong><small>{message.sender || '差出人なし'}</small>{props.isPending(pendingKey.mailPrepare(message.id)) && <small className="field-state saving"><RefreshCw className="spin" size={12} />本文と添付を読み込み中…</small>}</button>)}</div></section>}
+        {props.mailTestAiRequest && <section className="test-card event-preview"><div className="ai-request-heading"><div><p>3. REVIEW OPENAI-COMPATIBLE REQUEST</p><h2>OpenAI 互換リクエスト本文</h2><span>API キーは含まれません。有効な Primary Rule の権限範囲で本番の抽出を実行できます。</span></div><button className={`secondary copy-request-button${aiRequestCopied ? ' copied' : ''}`} onClick={copyPreparedAiRequest}>{aiRequestCopied ? <CheckCircle2 size={16} /> : <Copy size={16} />}{aiRequestCopied ? 'コピーしました' : 'リクエスト全文をコピー'}</button></div><pre className="ai-request">{JSON.stringify(props.mailTestAiRequest.request, null, 2)}</pre><div className="mail-test-actions">{hasConfiguredAiApi ? <button className="primary" onClick={() => props.onPreviewMailbox(props.mailTestAiRequest!.id)} disabled={extracting}>{extracting ? <><RefreshCw className="spin" size={14} />API に送信中…</> : '設定済みの API で予定を抽出'}</button> : <p className="dashboard-warning api-configuration-prompt"><span>OpenAI 互換 API が設定されていません</span><Link to={props.organizationId ? `/organizations/${encodeURIComponent(props.organizationId)}/connections` : '../connections'}>APIを設定する</Link></p>}</div></section>}
+        {props.mailTestPreview && <section className="test-card event-preview"><div><p>4. CONFIRM CALENDAR WRITE</p><h2>要約・予定・タスク候補を確認</h2><span>Primary Rule {props.mailTestPreview.selectedRule.id} r{props.mailTestPreview.selectedRule.revision} で抽出しました。下の確定操作だけが Calendar と添付用 Drive に書き込みます。</span></div><h3>メールの要約</h3><p className="mail-summary">{props.mailTestPreview.summary}</p><h3>予定（{props.mailTestPreview.events.length}件）</h3>{props.mailTestPreview.events.map((event, index) => <dl key={`${event.title}-${event.startsAt}`}><dt>予定 {index + 1}</dt><dd>{event.title}</dd><dt>日時</dt><dd>{formatted(event.startsAt)} 〜 {formatted(event.endsAt)}</dd><dt>場所</dt><dd>{event.location || '指定なし'}</dd><dt>説明</dt><dd>{event.description || '指定なし'}</dd><dt>要約</dt><dd>{event.summary || '指定なし'}</dd></dl>)}<h3>期限タスク候補（{props.mailTestPreview.tasks.length}件）</h3>{props.mailTestPreview.tasks.length ? props.mailTestPreview.tasks.map((task) => <dl key={`${task.assigneeRoleId}-${task.deadline}-${task.title}`}><dt>{props.taskRoles.find((role) => role.id === task.assigneeRoleId)?.displayName ?? '未割り当て'}</dt><dd>{task.title}</dd><dt>期限</dt><dd>{task.deadline}</dd><dt>内容</dt><dd>{task.description}</dd></dl>) : <p>明示された登録・振込期限はありません。</p>}<button className="primary" onClick={props.onCreateMailboxTestEvents} disabled={creating || !props.mailTestPreview.events.length || Boolean(props.mailTestCreatedEventIds.length)}>{creating ? <RefreshCw className="spin" size={14} /> : null}{props.mailTestCreatedEventIds.length ? 'Calendar に作成済み' : creating ? 'Calendar に作成中…' : '確認した予定を Calendar に作成'}</button>{props.mailTestCreatedEventIds.length > 0 && <p className="dashboard-success"><CheckCircle2 size={17} />{props.mailTestCreatedEventIds.length}件の予定を作成しました。</p>}</section>}
+      </>}
+  </section>;
+};
+
+export const RuleRunsPage = (props: DashboardProps) => {
   const settingsReady = Boolean(props.organization);
   const searching = props.isPending(pendingKey.mailSearch);
   const extracting = props.isPending(pendingKey.mailPreview);
@@ -587,7 +706,7 @@ export const MailboxTestPage = (props: DashboardProps) => {
   const [copyFeedbackId, setCopyFeedbackId] = useState(0);
   const copyFeedbackTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const sendPreparedAiRequest = (): void => {
-    if (props.mailTestAiRequest && selectedRuleId) props.onPreviewMailbox(props.mailTestAiRequest.id, selectedRuleId);
+    if (props.mailTestAiRequest && selectedRuleId) props.onPreviewDraftMailbox(props.mailTestAiRequest.id, selectedRuleId);
   };
   const copyPreparedAiRequest = (): void => {
     if (!props.mailTestAiRequest) return;
@@ -607,18 +726,46 @@ export const MailboxTestPage = (props: DashboardProps) => {
           ? props.organizationRules.find((rule) => rule.id === run.rule.id)?.name
           : props.agentRules.find((rule) => rule.id === run.rule.id)?.name;
         const deciding = props.isPending(pendingKey.ruleRunDecision(run.id, 'approve')) || props.isPending(pendingKey.ruleRunDecision(run.id, 'reject'));
-        return <article className="rule-row" key={run.id} aria-busy={deciding}>
-          <div><strong>{ruleName ?? run.rule.id}</strong><small>{run.rule.type} r{run.rule.revision} ・ {run.intent} ・ {run.executionMode} ・ {run.status}</small><p>{run.effects.map((effect) => `${effect.kind}: ${effect.status}`).join(' / ') || '副作用なし'}</p></div>
-          {run.status === 'pending_approval' && <div><button className="primary" disabled={deciding} onClick={() => props.onDecideRuleRun(run.id, 'approve')}>一括承認</button><button className="secondary" disabled={deciding} onClick={() => props.onDecideRuleRun(run.id, 'reject')}>一括却下</button></div>}
-        </article>;
+        return <details className="rule-run-detail" key={run.id} aria-busy={deciding}>
+          <summary>
+            <div className="rule-run-source">
+              <strong>{run.sourceMessage.subject || '件名なし'}</strong>
+              <small>{run.sourceMessage.sender || '差出人なし'} ・ {formatted(run.sourceMessage.receivedAt)}</small>
+              <span>{ruleName ?? run.rule.id} ・ {ruleRunStatusLabel(run.status)}</span>
+            </div>
+            <span className={`rule-run-status ${run.status}`}>{ruleRunStatusLabel(run.status)}</span>
+            <span className="rule-run-disclosure"><span className="when-closed">詳細を見る</span><span className="when-open">詳細を閉じる</span></span>
+          </summary>
+          <div className="rule-run-body">
+            <dl className="rule-run-metadata">
+              <div><dt>処理したメール</dt><dd>{run.sourceMessage.subject || '件名なし'}</dd></div>
+              <div><dt>差出人</dt><dd>{run.sourceMessage.sender || '差出人なし'}</dd></div>
+              <div><dt>受信日時</dt><dd>{formatted(run.sourceMessage.receivedAt)}</dd></div>
+              <div><dt>使用したルール</dt><dd>{ruleName ?? run.rule.id}（第{run.rule.revision}版）</dd></div>
+              <div><dt>処理方法</dt><dd>{run.intent === 'draft_preview' ? 'Draftルールの確認' : '自動メール処理'} ・ {run.executionMode === 'read_only' ? '確認のみ' : run.executionMode === 'approval' ? '承認後に実行' : '自動実行'}</dd></div>
+            </dl>
+            <section className="rule-run-effects">
+              <h3>実行内容</h3>
+              {run.effects.length ? run.effects.map((effect) => {
+                const details = ruleEffectDetails(effect);
+                return <article key={effect.id}>
+                  <div><strong>{ruleEffectKindLabel(effect.kind)}</strong><span>{ruleEffectStatusLabel(effect.status)}</span></div>
+                  {details.map((detail, index) => <p key={`${effect.id}-${index}`}>{detail}</p>)}
+                  {effect.error && <p className="dashboard-error">エラー: {effect.error}</p>}
+                </article>;
+              }) : <p>この処理で作成・送信する内容はありませんでした。</p>}
+            </section>
+            {run.status === 'pending_approval' && <div className="rule-run-actions"><button className="primary" disabled={deciding} onClick={() => props.onDecideRuleRun(run.id, 'approve')}>すべて承認して実行</button><button className="secondary" disabled={deciding} onClick={() => props.onDecideRuleRun(run.id, 'reject')}>すべて却下</button></div>}
+          </div>
+        </details>;
       })}
     </section>
     {!settingsReady || !props.automation ? <section className="empty-page"><SlidersHorizontal size={30} /><h2>メールテストを開始できません</h2><p>Automation Inbox の Google 接続を完了してください。</p></section> : <>
-      <section className="test-card"><div><p>DRAFT RULE REVISION</p><h2>テストする Schema Rule を選択</h2><span>Selection Policy は AI 抽出より前に評価されます。</span></div><label>Draft Schema Rule<select value={selectedRuleId} disabled={Boolean(props.mailTestPreview)} onChange={(event) => setSelectedRuleId(event.target.value)}><option value="">選択してください</option>{draftRules.map((rule) => <option key={rule.id} value={rule.id}>{rule.name} (r{rule.revision})</option>)}</select></label></section>
+      <section className="test-card"><div><p>DRAFT RULE REVISION</p><h2>テストする Schema Rule を選択</h2><span>Selection Policy は AI 抽出より前に評価されます。</span></div><label>Draft Schema Rule<select value={selectedRuleId} disabled={Boolean(props.draftRulePreview)} onChange={(event) => setSelectedRuleId(event.target.value)}><option value="">選択してください</option>{draftRules.map((rule) => <option key={rule.id} value={rule.id}>{rule.name} (r{rule.revision})</option>)}</select></label></section>
       <section className="test-card"><div><p>1. FIND MAIL</p><h2>件名からメールを探す</h2><span>件名を入力してください。前後の空白や全角・半角の違いは無視されます。AI の API キーは不要です。</span></div><label>メール件名<input value={props.mailTestSubject} onChange={(event) => props.onMailTestSubjectChange(event.target.value)} maxLength={300} /></label><button className="primary" onClick={props.onSearchMailbox} disabled={searching}>{searching ? <><RefreshCw className="spin" size={14} />検索中…</> : 'Gmailを検索'}</button></section>
       {props.mailTestMatches.length > 0 && <section className="test-card"><div><p>2. PREPARE AI REQUEST</p><h2>AI への送信内容を確認</h2><span>対象メールを選ぶと、OpenAI 互換形式のリクエスト本文を生成します。この時点では AI に送信しません。</span></div><div className="mail-matches">{props.mailTestMatches.map((message) => <button key={message.id} className="mail-match" onClick={() => props.onPrepareMailbox(message.id)} disabled={props.isPending(pendingKey.mailPrepare(message.id))}><strong>{message.subject}</strong><small>{message.sender || '差出人なし'}</small>{props.isPending(pendingKey.mailPrepare(message.id)) && <small className="field-state saving"><RefreshCw className="spin" size={12} />本文と添付を読み込み中…</small>}</button>)}</div></section>}
       {props.mailTestAiRequest && <section className="test-card event-preview"><div className="ai-request-heading"><div><p>3. REVIEW OPENAI-COMPATIBLE REQUEST</p><h2>OpenAI 互換リクエスト本文</h2><span>API キーは含まれません。送信先の model を指定すれば、任意の OpenAI 互換 API で利用できます。</span></div><button className={`secondary copy-request-button${aiRequestCopied ? ' copied' : ''}`} onClick={copyPreparedAiRequest} aria-live="polite">{aiRequestCopied ? <CheckCircle2 size={16} /> : <Copy size={16} />}{aiRequestCopied ? <span key={copyFeedbackId} className="copy-feedback">コピーしました</span> : 'リクエスト全文をコピー'}</button></div><pre className="ai-request">{JSON.stringify(props.mailTestAiRequest.request, null, 2)}</pre><div className="mail-test-actions">{hasConfiguredAiApi ? <button className="primary" onClick={sendPreparedAiRequest} disabled={extracting || !selectedRuleId}>{extracting ? <><RefreshCw className="spin" size={14} />API に送信中…</> : '設定済みの API で予定を抽出'}</button> : <p className="dashboard-warning api-configuration-prompt"><span>OpenAI 互換 API が設定されていません</span><Link to={props.organizationId ? `/organizations/${encodeURIComponent(props.organizationId)}/connections` : '../connections'}>APIを設定する</Link></p>}</div></section>}
-      {props.mailTestPreview && <section className="test-card event-preview"><div><p>4. START DRAFT RULE RUN</p><h2>要約・予定・タスク候補を確認</h2><span>Draft Rule の Selection Policy を検証し、副作用なしの read-only Rule Run として保存します。</span></div><h3>メールの要約</h3><p className="mail-summary">{props.mailTestPreview.summary}</p><h3>予定（{props.mailTestPreview.events.length}件）</h3>{props.mailTestPreview.events.map((event, index) => <dl key={`${event.title}-${event.startsAt}`}><dt>予定 {index + 1}</dt><dd>{event.title}</dd><dt>日時</dt><dd>{formatted(event.startsAt)} 〜 {formatted(event.endsAt)}</dd><dt>場所</dt><dd>{event.location || '指定なし'}</dd><dt>説明</dt><dd>{event.description || '指定なし'}</dd><dt>要約</dt><dd>{event.summary || '指定なし'}</dd></dl>)}<h3>期限タスク候補（{props.mailTestPreview.tasks.length}件）</h3>{props.mailTestPreview.tasks.length ? props.mailTestPreview.tasks.map((task) => <dl key={`${task.assigneeRoleId}-${task.deadline}-${task.title}`}><dt>{props.taskRoles.find((role) => role.id === task.assigneeRoleId)?.displayName ?? '未割り当て'}</dt><dd>{task.title}</dd><dt>期限</dt><dd>{task.deadline}</dd><dt>内容</dt><dd>{task.description}</dd></dl>) : <p>明示された登録・振込期限はありません。</p>}<button className="primary" onClick={() => props.onStartDraftRuleRun(selectedRuleId)} disabled={startingRuleRun || !selectedRuleId || Boolean(props.mailTestRuleRunIds.length)}>{startingRuleRun ? <RefreshCw className="spin" size={14} /> : null}{props.mailTestRuleRunIds.length ? 'Draft Rule Run 作成済み' : startingRuleRun ? 'Rule Run を作成中…' : 'Draft Rule Run を開始'}</button>{props.mailTestRuleRunIds.length > 0 && <p className="dashboard-success"><CheckCircle2 size={17} />副作用なしの Rule Run を保存しました。</p>}</section>}
+      {props.draftRulePreview && <section className="test-card event-preview"><div><p>4. START DRAFT RULE RUN</p><h2>要約・予定・タスク候補を確認</h2><span>Draft Rule の Selection Policy を検証し、副作用なしの read-only Rule Run として保存します。</span></div><h3>メールの要約</h3><p className="mail-summary">{props.draftRulePreview.summary}</p><h3>予定（{props.draftRulePreview.events.length}件）</h3>{props.draftRulePreview.events.map((event, index) => <dl key={`${event.title}-${event.startsAt}`}><dt>予定 {index + 1}</dt><dd>{event.title}</dd><dt>日時</dt><dd>{formatted(event.startsAt)} 〜 {formatted(event.endsAt)}</dd><dt>場所</dt><dd>{event.location || '指定なし'}</dd><dt>説明</dt><dd>{event.description || '指定なし'}</dd><dt>要約</dt><dd>{event.summary || '指定なし'}</dd></dl>)}<h3>期限タスク候補（{props.draftRulePreview.tasks.length}件）</h3>{props.draftRulePreview.tasks.length ? props.draftRulePreview.tasks.map((task) => <dl key={`${task.assigneeRoleId}-${task.deadline}-${task.title}`}><dt>{props.taskRoles.find((role) => role.id === task.assigneeRoleId)?.displayName ?? '未割り当て'}</dt><dd>{task.title}</dd><dt>期限</dt><dd>{task.deadline}</dd><dt>内容</dt><dd>{task.description}</dd></dl>) : <p>明示された登録・振込期限はありません。</p>}<button className="primary" onClick={() => props.onStartDraftRuleRun(selectedRuleId)} disabled={startingRuleRun || !selectedRuleId || Boolean(props.mailTestRuleRunIds.length)}>{startingRuleRun ? <RefreshCw className="spin" size={14} /> : null}{props.mailTestRuleRunIds.length ? 'Draft Rule Run 作成済み' : startingRuleRun ? 'Rule Run を作成中…' : 'Draft Rule Run を開始'}</button>{props.mailTestRuleRunIds.length > 0 && <p className="dashboard-success"><CheckCircle2 size={17} />副作用なしの Rule Run を保存しました。</p>}</section>}
     </>}
   </section>;
 };
@@ -627,7 +774,7 @@ export const EventRefreshPage = (props: DashboardProps) => <section className="p
   <div className="page-title"><p>MANUAL OVERRIDE</p><h1>予定の再同期</h1><span>Calendar の手動変更を上書きし得るため、通常の Rule Run と分離した管理操作です。</span></div>
   {props.mailTestPreview
     ? <MailboxRefreshSections {...props} />
-    : <section className="empty-page"><SlidersHorizontal size={30} /><h2>抽出結果がありません</h2><p>Rule Runs で Mailbox Test の抽出を行ってから、この画面で既存予定との差分を確認してください。</p><Link className="secondary" to="../rule-runs">Rule Runsへ</Link></section>}
+    : <section className="empty-page"><SlidersHorizontal size={30} /><h2>抽出結果がありません</h2><p>メールテストで本番経路の抽出を行ってから、この画面で既存予定との差分を確認してください。</p><Link className="secondary" to="../mailbox-test">メールテストへ</Link></section>}
 </section>;
 
 const toggledIds = (current: string[], id: string, checked: boolean): string[] =>
