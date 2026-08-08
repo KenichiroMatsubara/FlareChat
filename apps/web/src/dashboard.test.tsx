@@ -73,7 +73,7 @@ describe('responsive dashboard shell', () => {
 });
 
 describe('Automation Inbox processing guidance', () => {
-  it('states that every new message is analyzed by AI without requiring a literal date format', () => {
+  it('states that transport mail is not sent to BYOK AI and Gmail state stays unchanged', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter initialEntries={['/organizations/org-1/automation']}>
         <Dashboard
@@ -86,7 +86,9 @@ describe('Automation Inbox processing guidance', () => {
       </MemoryRouter>,
     );
 
-    expect(html).toContain('すべての新着メールを確認');
+    expect(html).toContain('カレンダー通知は BYOK AI へ送らず');
+    expect(html).toContain('残りの新着メールだけを AI が判定');
+    expect(html).toContain('Gmail の状態は変更しません');
     expect(html).toContain('固定の日付書式は不要です');
     expect(html).not.toContain('2026/08/03 19:00-21:00');
     expect(html).not.toContain('書式不足');

@@ -157,6 +157,51 @@ describe('Organization Automation Inbox scheduling', () => {
     )).toEqual({ gmail_history_id: 'history-after-sent-reply' });
   });
 
+  it('ignores promotions and calendar transport before Source Message or AI work', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    const requests: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      requests.push(url);
+      if (url.includes('/history')) return Response.json({
+        historyId: 'history-after-ignored-mail',
+        history: [{ messagesAdded: [
+          { message: { id: 'promotion-message' } },
+          { message: { id: 'calendar-message' } },
+        ] }],
+      });
+      if (url.includes('/messages/promotion-message')) return sourceMessageResponse({
+        subject: '7月29日開催 特別ご招待',
+        body: '期間限定キャンペーンです。',
+        labelIds: ['CATEGORY_PROMOTIONS', 'INBOX'],
+      });
+      if (url.includes('/messages/calendar-message')) return Response.json({
+        labelIds: ['CATEGORY_PERSONAL', 'INBOX'],
+        payload: {
+          mimeType: 'multipart/mixed',
+          headers: [
+            { name: 'Subject', value: '招待: 地区大会' },
+            { name: 'From', value: 'organizer@example.com' },
+          ],
+          parts: [{ filename: 'invite.ics', mimeType: 'text/calendar', body: { data: gmailBody('BEGIN:VCALENDAR') } }],
+        },
+      });
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    await expect(runOrganizationAutomation(
+      fixture.environment,
+      'organization-1',
+      fixture.organization.binding,
+    )).resolves.toEqual({ scanned: 0, created: 0, skipped: 0, exceptions: 0 });
+
+    expect(requests.some((url) => url.includes('ai.example.com'))).toBe(false);
+    expect(requests.some((url) => url.includes('/labels') || url.includes('/modify'))).toBe(false);
+    expect(fixture.organization.rows('SELECT * FROM source_messages')).toEqual([]);
+    expect(fixture.organization.row<{ gmail_history_id: string }>(
+      "SELECT gmail_history_id FROM google_connections WHERE kind = 'automation_inbox'",
+    )).toEqual({ gmail_history_id: 'history-after-ignored-mail' });
+  });
+
   it('repairs a rule-less Organization with a catch-all Schema Rule and sends ordinary mail through AI', async () => {
     fixture = await createAutomationTestApp({ ai: true });
     fixture.organization.execute('DELETE FROM rules');
