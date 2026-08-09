@@ -60,6 +60,7 @@ import { createDatabaseAccess } from './database-access';
 import type { Bindings } from './types';
 import { validateAttachmentIntake } from '@mail/domain';
 import { convertAttachmentsForEventExtraction, type ConvertedAttachment } from './attachment-conversion';
+import { decideSourceMessageAdmission } from './source-message-admission';
 import { controlDatabase as drizzleControlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
 import { organizationKeys, organizations } from './storage/control-schema';
 import {
@@ -2122,10 +2123,11 @@ const processOrganizationMessage = async (
     .where(eq(sourceMessages.gmailMessageId, gmailMessageId)).get();
   if (known && !(reprocessSkipped && known.state === 'skipped')) return;
   const message = await dependencies.google.request<GmailMessage>(accessToken, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(gmailMessageId)}?format=full`);
-  // Gmail history reports messages added to Sent as well as received mail. An
-  // outbound reply is not a Source Message and must be rejected before any D1,
-  // AI, Calendar, Drive, or recipient-delivery side effect can occur.
-  if (message.labelIds?.includes('SENT')) return;
+  // Gmail history reports transport and mailbox traffic alongside Source
+  // Messages. Skip it before BYOK AI or other processing without changing the
+  // message's labels, inbox membership, or read state in Gmail.
+  const admission = decideSourceMessageAdmission(message);
+  if (admission.kind === 'ignore') return;
   const subject = subjectOf(message.payload);
   const sourceMessageId = known?.id ?? crypto.randomUUID();
   const timestamp = now();

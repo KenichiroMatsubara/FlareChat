@@ -90,6 +90,10 @@ _Avoid_: owner, operator, viewer, administrator, super admin
 A Gmail message selected for automation, including its body and attachments.
 _Avoid_: email, mail
 
+**Calendar Transport Message**:
+A Gmail message identified from iCalendar MIME metadata or Google Calendar transport identity as carrying Calendar invitation or response transport rather than new Organization content. It is not a Source Message or Event Response; Mail Automation does not send it to BYOK AI and leaves its Gmail labels, inbox state, and read state unchanged.
+_Avoid_: Event Response, calendar reply, reaction mail
+
 **Source Snapshot**:
 An encrypted, time-limited copy of a Source Message's raw content and original attachments retained for investigation and extraction reproducibility.
 _Avoid_: email archive, backup
