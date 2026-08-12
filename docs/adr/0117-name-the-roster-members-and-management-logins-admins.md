@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0138
+---
+
 # Name the roster Members and management logins Admins
 
 The people an Organization schedules, notifies, and assigns work to are Members, stored in Organization D1; the accounts that sign into the management GUI are Admins, stored in Control D1. Previously the GUI called the roster "メンバー" while the schema reserved `members` for management logins, so the Task assignee list offered the Organization's shared Google account in the place where a person's name belonged, and no name in the product meant one thing.

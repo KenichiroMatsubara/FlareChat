@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0138
+---
+
 # Use a single administrator role
 
 An Organization has one authorization role, Admin, instead of Owner, Admin, Operator, and Viewer. The four-role split assumed administration divided among several people, but ADR 0095 made the Automation Inbox and the sole administrator the same shared Organization account, so every role check resolved to the same identity while the codebase carried forty-two authorization branches to distinguish them. This supersedes ADR 0015 and narrows ADR 0046 to Admins.
