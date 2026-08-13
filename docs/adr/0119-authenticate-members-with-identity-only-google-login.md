@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0139
+---
+
 # Authenticate Members with identity-only Google login
 
 A Member signs in through the identity-only Google grant of ADR 0095 and reaches one Member Portal carrying both attendance registration and their Tasks. A Member is bound to a Google account once, by opening a single-use link delivered to their linked LINE Destination, after which that account's stable `sub` identifies them; the roster address is not used for this, because it need not be a Google account. This supersedes ADR 0038 and revises the "neither application credentials nor Google OAuth" clause of ADRs 0024 and 0025.
