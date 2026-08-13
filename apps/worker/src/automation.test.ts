@@ -1147,6 +1147,30 @@ describe('Organization Automation Inbox scheduling', () => {
     });
   });
 
+  it('re-anchors a Gmail cursor Gmail no longer recognises instead of failing every later run', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    const boundaries: Array<string | null> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const parsed = new URL(url);
+      if (parsed.pathname.endsWith('/profile')) return Response.json({ historyId: 'history-current' });
+      boundaries.push(parsed.searchParams.get('startHistoryId'));
+      if (boundaries.length === 1) return Response.json({ error: { message: 'Requested entity was not found.' } }, { status: 404 });
+      return Response.json({ historyId: 'history-after-recovery' });
+    }));
+
+    await runEnabledAutomations(fixture.environment);
+    await runEnabledAutomations(fixture.environment);
+
+    expect(boundaries).toEqual(['history-before-connection', 'history-current']);
+    const status = await app.fetch(
+      fixture.request('/api/organizations/organization-1/automation'),
+      fixture.environment,
+    );
+    await expect(status.json()).resolves.toMatchObject({
+      data: { email: 'automation@example.com', lastError: null },
+    });
+  });
+
   it('turns one newly discovered dated Source Message into one upcoming Scheduled Event', async () => {
     fixture = await createAutomationTestApp({ ai: true });
     const requests: string[] = [];
