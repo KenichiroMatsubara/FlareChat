@@ -8,7 +8,7 @@ An Account is a login and an ownership scope at once. It owns one database holdi
 
 A Contact is an addressable entity and nothing more — a name, tags, and one or more Channel Handles. It may be a person, a group, a room, or a channel, and it never signs in. The pages a Contact reaches are entered through a revocable, single-use, time-limited link.
 
-One engine serves two entrances. Operator Chat runs it interactively with the Account's whole tool set, one exchange to one Rule Run; a Trigger runs it unattended with only the tools that Automation was granted. A conversation that works becomes an Automation by naming its Prompt and tool set and attaching a Trigger, so nothing is designed twice.
+One engine serves three entrances. Operator Chat runs it interactively with the Account's whole tool set, one exchange to one Rule Run; a Trigger runs it unattended with only the tools that Automation was granted; and an outside agent reaches it over MCP with an Access Token, holding one Tool Grant and bounded to one Contact List. A conversation that works becomes an Automation by naming its Prompt and tool set and attaching a Trigger, so nothing is designed twice.
 
 Two rule types coexist during a migration that ends by deleting one. A Schema Rule extracts Event Details, Tasks, and a Message Summary against one product-defined schema, so the external effects it can cause are known before it runs. An Agent Rule runs an Account-authored Prompt with a granted tool set and decides for itself whether and how to act. Agent Rules are strengthened until Schema Rules are redundant rather than rewritten into their equivalents, so both types are correct until the day the first is removed.
 
@@ -163,12 +163,20 @@ A remote HTTP or SSE server an Account connects to lend its tools to Automations
 _Avoid_: plugin, extension, integration, tool provider
 
 **Tool Grant**:
-The explicit set of tools one Automation may call, default deny, naming each tool rather than a whole MCP Server. It is the boundary that makes an unattended run safe, in place of predicting what the model will do.
-_Avoid_: permission, scope, capability, allowlist
+The explicit set of tools one Automation or Access Token may call, default deny, naming each tool rather than a whole MCP Server. It is the boundary that makes an unattended run safe, in place of predicting what the model will do, and it is the only authorization concept in the product.
+_Avoid_: permission, scope, capability, allowlist, role
+
+**Access Token**:
+The credential an outside agent presents to reach an Account over MCP, carrying one Tool Grant and one Contact List that bounds who it may reach. It needs rate and write limits of its own, because the run ceilings that bound an Automation bound this engine's loop rather than the caller's.
+_Avoid_: API key, secret, integration, session
 
 **Trigger**:
 What starts one run of an Automation. It either carries a payload, as an inbound Channel message or a Source Message does, or carries none, as a schedule does; a run with no payload finds its own work through its Tool Grant.
 _Avoid_: cron, event, hook, schedule
+
+**Contact List**:
+A named set of Contacts that an Automation delivers to or an Access Token is bounded by. Delivery resolves each Contact's handle from the Channel being sent on, so a Contact who gains a Channel is reachable on it everywhere the list is used. People edit it; an agent never does.
+_Avoid_: recipient list, distribution list, group, segment
 
 **Operator Chat**:
 The Account's interactive entrance to the same engine an Automation runs on, holding the Account's whole tool set and recording one exchange as one Rule Run. Naming a conversation's Prompt and tool set and attaching a Trigger turns it into an Automation.
