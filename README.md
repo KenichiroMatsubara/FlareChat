@@ -1,6 +1,6 @@
-# Mail Automation
+# FlareChat
 
-Gmailで受信した案内を自動で予定へ変換し、Google Calendar、メール、LINEへ配信するCloudflareネイティブの管理サービスです。
+スケジュールと連絡先のためのCloudflareネイティブな自動化プラットフォームです。Automationはトリガーで起動し、Promptで判断し、Accountが許可したツールで動き、組み込みChannel経由でContactに届きます。Gmailの案内を予定へ変換してCalendar・メール・LINEへ配信する従来の動作は、その一構成になりました。
 
 ## 構成
 
