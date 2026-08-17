@@ -1,3 +1,7 @@
+---
+status: revised by ADR-0153
+---
+
 # Sequence the rebuild rename first
 
 The rebuild ships in four releases: the rename, then Operator Chat, then scheduled Triggers with Tool Grants and Suppression Windows, then Discord.
