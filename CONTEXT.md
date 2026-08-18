@@ -34,7 +34,7 @@ The browser carries only the application session cookie. A bootstrap interface d
 
 The Automation Inbox remains an Account-owned Google Connection rather than a person, even when its Google identity is also the identity the Account signs in with. Setup requires neither a second email address nor passkey registration.
 
-A Contact registers attendance, writes comments, and completes the Tasks assigned to it through a Contact Page, which it enters only by a revocable, single-use, time-limited link delivered to one of its Channel Handles. A Contact may read every Task in the Account but may complete only its own. It holds no credential of any kind, so anyone holding an unexpired link acts as that Contact, and revocation, single use, and expiry are the whole mitigation. A Contact with no Channel Handle has no page and is administered entirely by the Account.
+A Contact registers attendance, writes comments, and completes the Tasks assigned to it through a Contact Page, which it enters by a short-lived single-use link exchanged for a time-bounded session, delivered only to a Channel Handle that addresses that Contact alone. A Contact may read every Task in the Account but may complete only its own. It holds no credential of any kind, so anyone holding an unexpired link acts as that Contact, and revocation, single use, and expiry are the whole mitigation. A Contact reachable only through a shared group or room has no page and is administered entirely by the Account, because a link sent into a group lets every member of it act as that Contact.
 
 An unfinished Task notifies its assignee alone at the same seven, three, and one day milestones the attendance reminders use.
 
@@ -131,7 +131,7 @@ A single Google Connection authorized by an Account to read Source Messages, sen
 _Avoid_: shared Gmail, monitored account
 
 **Channel Handle**:
-One address at which a Contact is reachable on one Channel through one Connection — an email address, or a LINE or Discord user, group, room, or channel — discovered from a verified inbound message or entered by the Account, with its origin recorded. A Contact reachable on several Channels holds several.
+One address at which a Contact is reachable on one Channel through one Connection — an email address, or a LINE or Discord user, group, room, or channel — discovered from a verified inbound message or entered by the Account, with its origin recorded. It records whether it addresses its Contact alone or a shared group or room, as the Channel states rather than as anyone infers. A Contact reachable on several Channels holds several.
 _Avoid_: member address, LINE destination, recipient, webhook source
 
 **Contact**:
@@ -143,7 +143,7 @@ A short-lived, single-use association that proves a Channel Handle belongs to on
 _Avoid_: recipient link, invite, account link
 
 **Contact Page**:
-The page where a Contact registers attendance, writes comments, and completes its own Tasks, reached only through a revocable, single-use, time-limited link delivered to one of its Channel Handles. It carries no sign-in, so possession of an unexpired link is the whole of its authority.
+The page where a Contact registers attendance, writes comments, and completes its own Tasks, opened by a short-lived single-use link that is exchanged for a time-bounded session. It carries no sign-in, so the link is the whole of its authority, and single use is what survives the link being forwarded.
 _Avoid_: member portal, registration link, login page, public form
 
 **LINE Connection**:
