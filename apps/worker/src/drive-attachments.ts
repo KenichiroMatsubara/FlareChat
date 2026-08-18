@@ -65,7 +65,7 @@ const createDriveFolder = async (input: {
 /**
  * Resolves one level of the Attachment Folder Path, reusing the folder this
  * application created there before. The `drive.file` grant sees only what this
- * application created, so a folder the Organization made by hand is invisible
+ * application created, so a folder the Account made by hand is invisible
  * here and a same-named folder is created beside it.
  */
 const ensureDriveFolder = async (input: {
@@ -89,7 +89,7 @@ const ensureDriveFolder = async (input: {
   return createDriveFolder(input);
 };
 
-/** Creates the Organization's Attachment Folder Path and returns its leaf folder ID. */
+/** Creates the Account's Attachment Folder Path and returns its leaf folder ID. */
 export const ensureAttachmentFolderPath = async (input: {
   accessToken: string;
   segments: readonly string[];

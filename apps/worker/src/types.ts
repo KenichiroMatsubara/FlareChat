@@ -24,7 +24,7 @@ export interface SessionRow {
   display_name: string;
 }
 
-export interface OrganizationRow {
+export interface AccountRow {
   id: string;
   name: string;
   status: 'provisioning' | 'active' | 'suspended' | 'failed';

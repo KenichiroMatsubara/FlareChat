@@ -4,7 +4,7 @@ import { cloudflareControlPlane } from './cloudflare';
 import { createDatabaseAccess } from './database-access';
 import { ORGANIZATION_SCHEMA_TARGET, schemaLifecycle } from './schema-lifecycle';
 import { controlDatabase } from './storage/database';
-import { organizationProvisionings, organizations, schemaReleases } from './storage/control-schema';
+import { accountProvisionings, accounts, schemaReleases } from './storage/control-schema';
 import type { Bindings } from './types';
 
 export interface FleetMigrationReceipt {
@@ -16,14 +16,14 @@ const migrateFleet = async (env: Bindings): Promise<FleetMigrationReceipt> => {
   const control = controlDatabase(env.CONTROL_DB);
   const [activeOrSuspended, provisioning] = await Promise.all([
     control.select({
-      bindingName: organizations.bindingName,
-      databaseId: organizations.databaseId,
-    }).from(organizations).where(isNotNull(organizations.databaseId)).all(),
+      bindingName: accounts.bindingName,
+      databaseId: accounts.databaseId,
+    }).from(accounts).where(isNotNull(accounts.databaseId)).all(),
     control.select({
-      bindingName: organizationProvisionings.bindingName,
-      databaseId: organizationProvisionings.databaseId,
-    }).from(organizationProvisionings)
-      .where(isNotNull(organizationProvisionings.databaseId)).all(),
+      bindingName: accountProvisionings.bindingName,
+      databaseId: accountProvisionings.databaseId,
+    }).from(accountProvisionings)
+      .where(isNotNull(accountProvisionings.databaseId)).all(),
   ]);
   const fleet = [...new Map(
     [...activeOrSuspended, ...provisioning]
@@ -36,18 +36,18 @@ const migrateFleet = async (env: Bindings): Promise<FleetMigrationReceipt> => {
     ? cloudflareControlPlane(env)
     : null;
   let targetMigration = ORGANIZATION_SCHEMA_TARGET;
-  for (const organization of fleet) {
-    if (organization.databaseId.startsWith('local:')) {
+  for (const account of fleet) {
+    if (account.databaseId.startsWith('local:')) {
       const ready = await databases.open({
         kind: 'organization',
-        bindingName: organization.bindingName,
-        databaseId: organization.databaseId,
+        bindingName: account.bindingName,
+        databaseId: account.databaseId,
       });
       targetMigration = ready.schema.currentMigration;
     } else {
       const receipt = await schemaLifecycle.ensureCurrent({
         kind: 'organization',
-        database: remote!.openDatabase(organization.databaseId),
+        database: remote!.openDatabase(account.databaseId),
       });
       targetMigration = receipt.currentMigration;
     }

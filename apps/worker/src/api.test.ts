@@ -9,7 +9,7 @@ import {
   seedAutomationException,
   seedAutomationRule,
   seedDeliveryRecord,
-  seedOrganizationMember,
+  seedAccountContact,
   seedScheduledEvent,
 } from '../test/seed';
 
@@ -32,8 +32,8 @@ afterEach(() => {
   fixture = undefined;
 });
 
-describe('Organization access', () => {
-  it('returns Automation Inbox behavior from the selected Organization', async () => {
+describe('Account access', () => {
+  it('returns Automation Inbox behavior from the selected Account', async () => {
     fixture = createTestApp();
 
     const response = await app.fetch(
@@ -47,7 +47,7 @@ describe('Organization access', () => {
     });
   });
 
-  it('never falls back to another database when an Organization binding is unavailable', async () => {
+  it('never falls back to another database when an Account binding is unavailable', async () => {
     fixture = createTestApp();
     delete (fixture.environment as unknown as Record<string, unknown>).ORG_ORGANIZATION1;
 
@@ -59,12 +59,12 @@ describe('Organization access', () => {
     expect(response.status).toBe(503);
   });
 
-  it('keeps management data isolated between two Organizations', async () => {
+  it('keeps management data isolated between two Accounts', async () => {
     fixture = createTestApp();
-    fixture.addOrganization({ id: 'organization-2', bindingName: 'ORG_ORGANIZATION2' });
+    fixture.addAccount({ id: 'organization-2', bindingName: 'ORG_ORGANIZATION2' });
     const created = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-2/lists',
-      { kind: 'source', name: 'Organization Two Sources' },
+      { kind: 'source', name: 'Account Two Sources' },
     ), fixture.environment);
 
     const first = await app.fetch(
@@ -79,11 +79,11 @@ describe('Organization access', () => {
     expect(created.status).toBe(201);
     await expect(first.json()).resolves.toMatchObject({ data: [] });
     await expect(second.json()).resolves.toMatchObject({
-      data: [{ name: 'Organization Two Sources' }],
+      data: [{ name: 'Account Two Sources' }],
     });
   });
 
-  it('lets the one Admin of an Organization read outcomes and make management changes', async () => {
+  it('lets the one Account of an Account read outcomes and make management changes', async () => {
     fixture = createTestApp();
 
     const dashboard = await app.fetch(
@@ -94,18 +94,18 @@ describe('Organization access', () => {
       '/api/organizations/organization-1/lists',
       { kind: 'source', name: 'Allowed' },
     ), fixture.environment);
-    const memberChange = await app.fetch(fixture.jsonRequest(
+    const contactChange = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/members',
       { name: 'Allowed', email: 'allowed@example.com' },
     ), fixture.environment);
 
     expect(dashboard.status).toBe(200);
     expect(listChange.status).toBe(201);
-    expect(memberChange.status).toBe(201);
+    expect(contactChange.status).toBe(201);
   });
 });
 
-describe('Organization connections', () => {
+describe('Account connections', () => {
   it('stores a LINE Connection without requiring an AI Connection', async () => {
     fixture = await createAutomationTestApp();
     const saved = await app.fetch(fixture.jsonRequest(
@@ -202,12 +202,12 @@ describe('OpenAI-compatible connection', () => {
   });
 });
 
-describe('Organization management', () => {
+describe('Account management', () => {
   it('creates and reads canonical Typed Lists and List Items', async () => {
     fixture = createTestApp();
     const created = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/lists',
-      { kind: 'source', name: 'Members', description: 'Verified senders' },
+      { kind: 'source', name: 'Contacts', description: 'Verified senders' },
     ), fixture.environment);
     const createdBody = await created.json() as { data: { id: string } };
     const item = await app.fetch(fixture.jsonRequest(
@@ -222,7 +222,7 @@ describe('Organization management', () => {
     expect(created.status).toBe(201);
     expect(item.status).toBe(201);
     await expect(listed.json()).resolves.toMatchObject({
-      data: [{ kind: 'source', name: 'Members' }],
+      data: [{ kind: 'source', name: 'Contacts' }],
     });
   });
 
@@ -276,20 +276,20 @@ describe('Organization management', () => {
     });
   });
 
-  it('offers Members rather than the shared Google account of an Organization as Task assignees', async () => {
+  it('offers Contacts rather than the shared Google account of an Account as Task assignees', async () => {
     fixture = createTestApp();
     const role = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/task-roles', {
       displayName: '会計', description: '支払期限を扱う',
     }), fixture.environment);
     const roleId = (await role.json() as { data: { id: string } }).data.id;
-    const member = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/members', {
+    const contact = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/members', {
       name: '山田花子', email: 'hanako@example.com',
     }), fixture.environment);
-    const memberId = (await member.json() as { data: { id: string } }).data.id;
+    const contactId = (await contact.json() as { data: { id: string } }).data.id;
 
     const assigned = await app.fetch(fixture.jsonRequest(
       `/api/organizations/organization-1/task-roles/${roleId}/assignment`,
-      { memberId },
+      { contactId },
       'PUT',
     ), fixture.environment);
     const configuration = await app.fetch(
@@ -300,13 +300,13 @@ describe('Organization management', () => {
     expect(assigned.status).toBe(200);
     await expect(configuration.json()).resolves.toMatchObject({
       data: {
-        members: [{ memberId, displayName: '山田花子' }],
-        assignments: [{ roleId, memberId, displayName: '山田花子' }],
+        contacts: [{ contactId, displayName: '山田花子' }],
+        assignments: [{ roleId, contactId, displayName: '山田花子' }],
       },
     });
   });
 
-  it('refuses a Task assignee that is not an active Member of the Organization', async () => {
+  it('refuses a Task assignee that is not an active Contact of the Account', async () => {
     fixture = createTestApp();
     const role = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/task-roles', {
       displayName: '会計', description: '支払期限を扱う',
@@ -315,14 +315,14 @@ describe('Organization management', () => {
 
     const assigned = await app.fetch(fixture.jsonRequest(
       `/api/organizations/organization-1/task-roles/${roleId}/assignment`,
-      { memberId: 'identity-1' },
+      { contactId: 'identity-1' },
       'PUT',
     ), fixture.environment);
 
     expect(assigned.status).toBe(409);
   });
 
-  it('stores the Organization role subset an Automation Rule may assign', async () => {
+  it('stores the Account role subset an Automation Rule may assign', async () => {
     fixture = createTestApp();
     const first = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/task-roles', {
       displayName: '参加登録担当', description: '申込期限を扱う',
@@ -349,13 +349,13 @@ describe('Organization management', () => {
   it('creates an Automation Rule with permitted Calendar Recipient and LINE Destination List sets', async () => {
     fixture = createTestApp();
     const recipientOne = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', {
-      kind: 'recipient', name: 'Members',
+      kind: 'recipient', name: 'Contacts',
     }), fixture.environment);
     const recipientTwo = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', {
       kind: 'recipient', name: 'Guests',
     }), fixture.environment);
     const lineOne = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', {
-      kind: 'line', name: 'Member LINE',
+      kind: 'line', name: 'Contact LINE',
     }), fixture.environment);
     const lineTwo = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', {
       kind: 'line', name: 'Guest LINE',
@@ -423,7 +423,7 @@ describe('Organization management', () => {
     }] });
   });
 
-  it('creates, revises, lists, and deletes an Organization Prompt', async () => {
+  it('creates, revises, lists, and deletes an Account Prompt', async () => {
     fixture = createTestApp();
     const created = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/prompts',
@@ -525,17 +525,17 @@ describe('Organization management', () => {
 
   it('shows the guests of an upcoming Scheduled Event and leaves a finished one out', async () => {
     fixture = createTestApp();
-    seedScheduledEvent(fixture.organization, {
+    seedScheduledEvent(fixture.account, {
       id: 'event-upcoming', title: '例会', startsAt: '2999-08-03T19:00:00+09:00', endsAt: '2999-08-03T21:00:00+09:00',
     });
-    seedScheduledEvent(fixture.organization, {
+    seedScheduledEvent(fixture.account, {
       id: 'event-past', title: '前回の例会', startsAt: '2020-08-03T19:00:00+09:00', endsAt: '2020-08-03T21:00:00+09:00',
     });
-    fixture.organization.execute(
+    fixture.account.execute(
       "INSERT INTO source_messages (id, gmail_message_id, gmail_history_id, sender, subject, received_at, state) VALUES ('response-1', 'gmail-1', 'history-1', 'chair@example.com', 'Re: 例会', '2026-08-01', 'processed')",
     );
     const guest = (id: string, eventId: string, name: string, affiliation: string, attending: number): void =>
-      fixture!.organization.execute(
+      fixture!.account.execute(
         'INSERT INTO guest_registrations (id, event_id, source_message_id, name, affiliation, attending, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
         id, eventId, 'response-1', name, affiliation, attending, '2026-08-01',
       );
@@ -566,9 +566,9 @@ describe('Organization management', () => {
     });
   });
 
-  it('creates, changes, imports, reads, and snapshots Members', async () => {
+  it('creates, changes, imports, reads, and snapshots Contacts', async () => {
     fixture = createTestApp();
-    seedScheduledEvent(fixture.organization, { id: 'event-1' });
+    seedScheduledEvent(fixture.account, { id: 'event-1' });
     const created = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/members',
       { name: 'Guest', email: 'guest@example.com' },
@@ -585,7 +585,7 @@ describe('Organization management', () => {
     ), fixture.environment);
     const snapshotted = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/events/event-1/recipient-snapshots',
-      { memberIds: [body.data.id] },
+      { contactIds: [body.data.id] },
     ), fixture.environment);
     const listed = await app.fetch(
       fixture.request('/api/organizations/organization-1/members'),
@@ -602,7 +602,7 @@ describe('Organization management', () => {
     });
   });
 
-  it('creates multiple Members without email and allows email to be edited later', async () => {
+  it('creates multiple Contacts without email and allows email to be edited later', async () => {
     fixture = createTestApp();
     const first = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/members',
@@ -638,12 +638,12 @@ describe('Organization management', () => {
     });
   });
 
-  it('builds dashboard counts from durable Organization behavior', async () => {
+  it('builds dashboard counts from durable Account behavior', async () => {
     fixture = createTestApp();
-    seedAutomationRule(fixture.organization, { id: 'rule-1' });
-    seedScheduledEvent(fixture.organization, { id: 'event-1' });
-    seedAutomationException(fixture.organization, { id: 'exception-1' });
-    await enqueueJob(fixture.organization.binding, {
+    seedAutomationRule(fixture.account, { id: 'rule-1' });
+    seedScheduledEvent(fixture.account, { id: 'event-1' });
+    seedAutomationException(fixture.account, { id: 'exception-1' });
+    await enqueueJob(fixture.account.binding, {
       kind: 'sync',
       payload: {},
       idempotencyKey: 'job-key-1',
@@ -675,7 +675,7 @@ describe('Control-plane administration', () => {
 
     expect(first.status).toBe(201);
     await expect(first.json()).resolves.toMatchObject({
-      data: { organizationId: 'organization-1', idempotencyKey: 'receipt-1', state: 'requested' },
+      data: { accountId: 'organization-1', idempotencyKey: 'receipt-1', state: 'requested' },
     });
     expect(duplicate.status).toBe(409);
   });
@@ -684,21 +684,21 @@ describe('Control-plane administration', () => {
 describe('Operational outcomes', () => {
   it('exposes Event changes, Delivery Records, and Exception transitions through operations interfaces', async () => {
     fixture = createTestApp();
-    seedScheduledEvent(fixture.organization, { id: 'event-1', status: 'draft' });
-    seedDeliveryRecord(fixture.organization, {
+    seedScheduledEvent(fixture.account, { id: 'event-1', status: 'draft' });
+    seedDeliveryRecord(fixture.account, {
       id: 'delivery-1',
       eventId: 'event-1',
       destination: 'guest@example.com',
       createdAt: '2026-07-25T00:00:00.000Z',
     });
-    seedDeliveryRecord(fixture.organization, {
+    seedDeliveryRecord(fixture.account, {
       id: 'delivery-line',
       eventId: 'event-1',
       destination: 'Udelivery0000000000000000000000000',
       channel: 'line',
       createdAt: '2026-07-26T00:00:00.000Z',
     });
-    seedAutomationException(fixture.organization, { id: 'exception-1' });
+    seedAutomationException(fixture.account, { id: 'exception-1' });
 
     const event = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/events/event-1',
@@ -775,7 +775,7 @@ describe('LINE destinations', () => {
     expect(response.status).toBe(200);
   });
 
-  it('captures a LINE display name and assigns the discovered ID to a Member', async () => {
+  it('captures a LINE display name and assigns the discovered ID to a Contact', async () => {
     fixture = await createAutomationTestApp({ lineSecret: 'line-secret' });
     const profileFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       displayName: '山田 太郎',
@@ -807,12 +807,12 @@ describe('LINE destinations', () => {
       id: string;
       destinationId: string;
       source: string;
-      memberId: string | null;
+      contactId: string | null;
     }> };
     expect(destinationsBody.data[0]).toMatchObject({
       destinationId: 'U1234…',
       source: 'webhook',
-      memberId: null,
+      contactId: null,
     });
     const recipient = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/members',
@@ -848,7 +848,7 @@ describe('LINE destinations', () => {
     });
   });
 
-  it('verifies a webhook, discovers a destination, and consumes its Member Link once', async () => {
+  it('verifies a webhook, discovers a destination, and consumes its Contact Link once', async () => {
     fixture = await createAutomationTestApp({ lineSecret: 'line-secret' });
     const payload = JSON.stringify({ events: [{ source: { type: 'group', groupId: 'group-1' } }] });
     const hmacKey = await crypto.subtle.importKey(
@@ -885,7 +885,7 @@ describe('LINE destinations', () => {
     expect(recipient.status).toBe(201);
     expect(issued.status).toBe(201);
     await expect(consumed.json()).resolves.toMatchObject({
-      data: { memberId: recipientBody.data.id, destinationId: 'group…' },
+      data: { contactId: recipientBody.data.id, destinationId: 'group…' },
     });
     expect(duplicate.status).toBe(410);
   });
@@ -957,12 +957,12 @@ describe('LINE destinations', () => {
     fixture = await createAutomationTestApp({ lineSecret: 'line-secret' });
     const first = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/members',
-      { name: 'Member One', email: 'one@example.com' },
+      { name: 'Contact One', email: 'one@example.com' },
     ), fixture.environment);
     const firstBody = await first.json() as { data: { id: string } };
     const second = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/members',
-      { name: 'Member Two', email: 'two@example.com' },
+      { name: 'Contact Two', email: 'two@example.com' },
     ), fixture.environment);
     const secondBody = await second.json() as { data: { id: string } };
     await app.fetch(fixture.jsonRequest(
@@ -1022,7 +1022,7 @@ describe('LINE destinations', () => {
 
     expect(unlinked.status).toBe(200);
     await expect(stillDiscovered.json()).resolves.toMatchObject({
-      data: [{ id: destinationsBody.data[0]?.id, memberId: null, source: 'webhook' }],
+      data: [{ id: destinationsBody.data[0]?.id, contactId: null, source: 'webhook' }],
     });
   });
 
@@ -1048,7 +1048,7 @@ describe('LINE destinations', () => {
         displayName: '保留 太郎',
         source: 'manual',
         status: 'discovered',
-        memberId: null,
+        contactId: null,
       }],
     });
 
@@ -1066,7 +1066,7 @@ describe('LINE destinations', () => {
     await expect(afterRemoval.json()).resolves.toMatchObject({ data: [] });
   });
 
-  it('promotes a pending LINE contact to a full Member and blocks removing a linked one', async () => {
+  it('promotes a pending LINE contact to a full Contact and blocks removing a linked one', async () => {
     fixture = await createAutomationTestApp({ lineSecret: 'line-secret' });
     const registered = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/line-destinations',
@@ -1097,12 +1097,12 @@ describe('LINE destinations', () => {
 });
 
 describe('AI Task reassignment', () => {
-  const seedOpenTask = (organization: TestApp['organization'], input: { id: string; title: string; roleId: string; roleName: string }): void => {
-    organization.execute(
+  const seedOpenTask = (account: TestApp['account'], input: { id: string; title: string; roleId: string; roleName: string }): void => {
+    account.execute(
       `INSERT OR IGNORE INTO source_messages (id, gmail_message_id, gmail_history_id, sender, subject, received_at, state)
        VALUES ('source-1', 'gmail-1', 'history-1', 'sender@example.com', '総会案内', '2026-08-02T00:00:00.000Z', 'processing')`,
     );
-    organization.execute(
+    account.execute(
       `INSERT INTO tasks (id, organization_id, source_message_id, source_message_subject, title, deadline, assignee_role_id, assignee_role_name, assignee_member_id, assignee_name, description, remarks, completed, created_at, updated_at)
        VALUES (?, 'organization-1', 'source-1', '総会案内', ?, '2026-08-25', ?, ?, NULL, '未割り当て', '指定口座へ送金する', '', 0, '2026-08-02', '2026-08-02')`,
       input.id,
@@ -1126,23 +1126,23 @@ describe('AI Task reassignment', () => {
     await expect(after.json()).resolves.toMatchObject({ data: { pending: true, rolesChangedAt: expect.any(String) } });
   });
 
-  it('proposes a role for every open Task without writing one, then applies only what an Admin accepted', async () => {
+  it('proposes a role for every open Task without writing one, then applies only what an Account accepted', async () => {
     const automation = await createAutomationTestApp({ ai: true });
     fixture = automation;
     const role = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/task-roles', {
       displayName: '会計担当', description: '支払期限を扱う',
     }), fixture.environment);
     const roleId = (await role.json() as { data: { id: string } }).data.id;
-    const member = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/members', {
+    const contact = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/members', {
       name: '山田花子', email: 'hanako@example.com',
     }), fixture.environment);
-    const memberId = (await member.json() as { data: { id: string } }).data.id;
+    const contactId = (await contact.json() as { data: { id: string } }).data.id;
     await app.fetch(fixture.jsonRequest(
       `/api/organizations/organization-1/task-roles/${roleId}/assignment`,
-      { memberId },
+      { contactId },
       'PUT',
     ), fixture.environment);
-    seedOpenTask(automation.organization, { id: 'task-1', title: '参加費を支払う', roleId: 'unassigned', roleName: '未割り当て' });
+    seedOpenTask(automation.account, { id: 'task-1', title: '参加費を支払う', roleId: 'unassigned', roleName: '未割り当て' });
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       choices: [{ message: { content: JSON.stringify({ assignments: [{ taskId: 'task-1', assigneeRoleId: roleId, reason: '送金の期限だから' }] }) } }],
     }), { status: 200 }));
@@ -1167,14 +1167,14 @@ describe('AI Task reassignment', () => {
     expect(applied.status).toBe(200);
     await expect(applied.json()).resolves.toMatchObject({
       data: {
-        tasks: [{ id: 'task-1', assigneeRoleId: roleId, assigneeRoleName: '会計担当', assigneeMemberId: memberId, assigneeName: '山田花子' }],
+        tasks: [{ id: 'task-1', assigneeRoleId: roleId, assigneeRoleName: '会計担当', assigneeContactId: contactId, assigneeName: '山田花子' }],
         skipped: [],
         review: { pending: false },
       },
     });
   });
 
-  it('closes the review when an Admin accepts none of the proposals', async () => {
+  it('closes the review when an Account accepts none of the proposals', async () => {
     fixture = createTestApp();
     await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/task-roles', {
       displayName: '会計担当', description: '支払期限を扱う',
@@ -1190,14 +1190,14 @@ describe('AI Task reassignment', () => {
 
   it('asks for an AI connection before proposing anything, and never asks the AI without an open Task', async () => {
     fixture = createTestApp();
-    fixture.organization.execute(
+    fixture.account.execute(
       `INSERT INTO source_messages (id, gmail_message_id, gmail_history_id, sender, subject, received_at, state)
        VALUES ('source-1', 'gmail-1', 'history-1', 'sender@example.com', '総会案内', '2026-08-02T00:00:00.000Z', 'processing')`,
     );
     const empty = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/task-reassignments/suggestions', {},
     ), fixture.environment);
-    seedOpenTask(fixture.organization, { id: 'task-1', title: '参加費を支払う', roleId: 'unassigned', roleName: '未割り当て' });
+    seedOpenTask(fixture.account, { id: 'task-1', title: '参加費を支払う', roleId: 'unassigned', roleName: '未割り当て' });
     const withoutAi = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/task-reassignments/suggestions', {},
     ), fixture.environment);

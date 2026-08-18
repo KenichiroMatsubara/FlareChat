@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import controlInitialMigration from '../migrations/control/0000_initial.sql';
-import organizationInitialMigration from '../migrations/organization/0000_initial.sql';
+import accountInitialMigration from '../migrations/organization/0000_initial.sql';
 import { createTestD1Database, type TestD1Database } from '../test/d1';
 import { schemaLifecycle } from './schema-lifecycle';
 
@@ -13,10 +13,10 @@ afterEach(() => {
   for (const database of openDatabases.splice(0)) database.close();
 });
 
-const databaseAtInitialOrganizationSchema = (): TestD1Database => {
+const databaseAtInitialAccountSchema = (): TestD1Database => {
   const database = createTestD1Database();
   openDatabases.push(database);
-  for (const statement of organizationInitialMigration
+  for (const statement of accountInitialMigration
     .split('--> statement-breakpoint')
     .map((value) => value.trim())
     .filter(Boolean)) {
@@ -145,8 +145,8 @@ describe('Schema Lifecycle', () => {
     });
   });
 
-  it('makes a partially migrated Organization database ready for current code', async () => {
-    const database = databaseAtInitialOrganizationSchema();
+  it('makes a partially migrated Account database ready for current code', async () => {
+    const database = databaseAtInitialAccountSchema();
 
     const receipt = await schemaLifecycle.ensureCurrent({
       kind: 'organization',
@@ -197,7 +197,7 @@ describe('Schema Lifecycle', () => {
   });
 
   it('can retry a migration after a failed batch leaves the database unchanged', async () => {
-    const database = databaseAtInitialOrganizationSchema();
+    const database = databaseAtInitialAccountSchema();
     database.execute(
       'CREATE INDEX tasks_source_role_deadline_title_idx ON source_messages(id)',
     );
@@ -224,7 +224,7 @@ describe('Schema Lifecycle', () => {
   });
 
   it('rejects an applied migration whose recorded checksum no longer matches', async () => {
-    const database = databaseAtInitialOrganizationSchema();
+    const database = databaseAtInitialAccountSchema();
     database.execute('ALTER TABLE d1_migrations ADD COLUMN checksum TEXT');
     database.execute(
       'UPDATE d1_migrations SET checksum = ? WHERE name = ?',
@@ -245,7 +245,7 @@ describe('Schema Lifecycle', () => {
   });
 
   it('accepts the recorded checksum from the constrained Task schema and migrates it forward', async () => {
-    const database = databaseAtInitialOrganizationSchema();
+    const database = databaseAtInitialAccountSchema();
     await schemaLifecycle.ensureCurrent({ kind: 'organization', database: database.binding });
     database.execute(
       'UPDATE d1_migrations SET checksum = ? WHERE name = ?',
@@ -260,7 +260,7 @@ describe('Schema Lifecycle', () => {
   });
 
   it('accepts the legacy Operational Task Roles checksum recorded by the local schema lifecycle', async () => {
-    const database = databaseAtInitialOrganizationSchema();
+    const database = databaseAtInitialAccountSchema();
     await schemaLifecycle.ensureCurrent({ kind: 'organization', database: database.binding });
     database.execute(
       'UPDATE d1_migrations SET checksum = ? WHERE name = ?',
@@ -274,7 +274,7 @@ describe('Schema Lifecycle', () => {
     })).resolves.toMatchObject({ currentMigration: '0021_rule_execution.sql' });
   });
 
-  it('migrates existing Tasks into Organization-owned role records and unassigns the Control identities they named', async () => {
+  it('migrates existing Tasks into Account-owned role records and unassigns the Control identities they named', async () => {
     const database = databaseBeforeOperationalTaskRoles();
     database.execute("INSERT INTO source_messages (id, gmail_message_id, gmail_history_id, sender, subject, received_at, state) VALUES ('source-1', 'gmail-1', 'history-1', 'sender@example.com', '年次行事', '2026-08-01', 'processed')");
     database.execute("INSERT INTO task_role_assignments (role, identity_id, display_name, assigned_at, updated_at) VALUES ('legacy-registration', 'identity-1', 'Owner', '2026-08-01', '2026-08-01')");
@@ -311,8 +311,8 @@ describe('Schema Lifecycle', () => {
     expect(database.rows('PRAGMA foreign_key_check')).toEqual([]);
   });
 
-  it('renames the roster to Members and carries its links, tokens, and Event Recipients across', async () => {
-    const database = databaseAtInitialOrganizationSchema();
+  it('renames the roster to Contacts and carries its links, tokens, and Event Recipients across', async () => {
+    const database = databaseAtInitialAccountSchema();
     database.execute("INSERT INTO recipient_profiles (id, organization_id, name, email, state, tags, created_at, updated_at) VALUES ('member-1', 'organization-1', 'First', 'first@example.com', 'active', '[]', '2026-01-01', '2026-01-01')");
     database.execute("INSERT INTO events (id, organization_id, title, starts_at, ends_at, status, created_at, updated_at) VALUES ('event-1', 'organization-1', '年次行事', '2026-09-01T10:00:00+09:00', '2026-09-01T12:00:00+09:00', 'scheduled', '2026-08-01', '2026-08-01')");
     database.execute("INSERT INTO event_recipients (event_id, recipient_profile_id, name_snapshot, email_snapshot, created_at) VALUES ('event-1', 'member-1', 'First', 'first@example.com', '2026-08-01')");
@@ -350,8 +350,8 @@ describe('Schema Lifecycle', () => {
 
   it('migrates each existing Rule destination reference into a one-element permitted set', async () => {
     const database = databaseBeforeOperationalTaskRoles();
-    database.execute("INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('recipient-list-1', 'organization-1', 'recipient', 'Members', '2026-08-01', '2026-08-01')");
-    database.execute("INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('line-list-1', 'organization-1', 'line', 'Member LINE', '2026-08-01', '2026-08-01')");
+    database.execute("INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('recipient-list-1', 'organization-1', 'recipient', 'Contacts', '2026-08-01', '2026-08-01')");
+    database.execute("INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('line-list-1', 'organization-1', 'line', 'Contact LINE', '2026-08-01', '2026-08-01')");
     database.execute("INSERT INTO rules (id, organization_id, name, status, recipient_list_id, line_list_id, created_at, updated_at) VALUES ('rule-1', 'organization-1', 'Announcements', 'active', 'recipient-list-1', 'line-list-1', '2026-08-01', '2026-08-01')");
 
     await schemaLifecycle.ensureCurrent({ kind: 'organization', database: database.binding });
@@ -365,7 +365,7 @@ describe('Schema Lifecycle', () => {
     expect(database.rows('PRAGMA foreign_key_check')).toEqual([]);
   });
 
-  it('includes every checked-in Organization migration in the current schema', async () => {
+  it('includes every checked-in Account migration in the current schema', async () => {
     const database = createTestD1Database();
     openDatabases.push(database);
     const checkedInMigrations = readdirSync(resolve(
@@ -397,8 +397,8 @@ describe('Schema Lifecycle', () => {
     expect(receipt.appliedMigrations).toEqual(checkedInMigrations);
   });
 
-  it('converges when two callers migrate the same Organization database concurrently', async () => {
-    const database = databaseAtInitialOrganizationSchema();
+  it('converges when two callers migrate the same Account database concurrently', async () => {
+    const database = databaseAtInitialAccountSchema();
 
     const receipts = await Promise.all([
       schemaLifecycle.ensureCurrent({ kind: 'organization', database: database.binding }),

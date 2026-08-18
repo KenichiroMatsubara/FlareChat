@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { buildAiEventDetailsRequest, extractAiEventDetails, validatedEventDetails, validatedMailExtraction } from './event-details';
 
 describe('OpenAI-compatible Event Details validation', () => {
-  it('builds the task role enum and semantic guidance from the roles allowed by the Organization Rule', async () => {
+  it('builds the task role enum and semantic guidance from the roles allowed by the Account Rule', async () => {
     const request = await buildAiEventDetailsRequest({
       source: '案内',
       taskRoles: [

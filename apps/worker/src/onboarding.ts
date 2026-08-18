@@ -6,24 +6,24 @@ import { createAutomation } from './automation';
 import { decrypt, masterKey } from './cryptography';
 import { createDatabaseAccess } from './database-access';
 import { revokeGoogleToken } from './google';
-import { organizationDatabaseIdentity } from './organization-db';
+import { accountDatabaseIdentity } from './account-db';
 import {
-  createProvisioningOrganizationKey,
-  provisionOrganization,
+  createProvisioningAccountKey,
+  provisionAccount,
   SchemaReleaseInProgressError,
 } from './provisioning';
 import { availablePresets } from './presets';
 import { controlDatabase } from './storage/database';
 import {
-  admins,
+  accountIdentities,
   automationInboxClaims,
   identities,
-  memberLogins,
-  organizationProvisionings,
-  organizations,
-  organizationSetups,
+  contactLogins,
+  accountProvisionings,
+  accounts,
+  accountSetups,
 } from './storage/control-schema';
-import type { OrganizationProvisioningRecord, OrganizationSetupRecord } from './storage/control-schema';
+import type { AccountProvisioningRecord, AccountSetupRecord } from './storage/control-schema';
 import type { Bindings, SessionRow } from './types';
 
 const PROVISIONING_WINDOW_MS = 24 * 60 * 60 * 1_000;
@@ -31,12 +31,12 @@ const PROVISIONING_WINDOW_MS = 24 * 60 * 60 * 1_000;
 const now = (): string => new Date().toISOString();
 const expiresIn = (milliseconds: number): string => new Date(Date.now() + milliseconds).toISOString();
 
-const provisioningByOrganizationId = (
+const provisioningByAccountId = (
   env: Bindings,
-  organizationId: string,
-): Promise<OrganizationProvisioningRecord | undefined> =>
-  controlDatabase(env.CONTROL_DB).select().from(organizationProvisionings)
-    .where(eq(organizationProvisionings.organizationId, organizationId)).get();
+  accountId: string,
+): Promise<AccountProvisioningRecord | undefined> =>
+  controlDatabase(env.CONTROL_DB).select().from(accountProvisionings)
+    .where(eq(accountProvisionings.accountId, accountId)).get();
 
 const revokeCredential = async (
   env: Bindings,
@@ -56,69 +56,69 @@ const revokeCredential = async (
   }
 };
 
-const discardSetup = async (env: Bindings, setup: OrganizationSetupRecord): Promise<void> => {
+const discardSetup = async (env: Bindings, setup: AccountSetupRecord): Promise<void> => {
   await revokeCredential(env, setup.credentialEnvelope, setup.googleSubject);
   const control = controlDatabase(env.CONTROL_DB);
   await control.batch([
     control.delete(automationInboxClaims).where(eq(automationInboxClaims.setupId, setup.id)),
-    control.delete(organizationSetups).where(eq(organizationSetups.id, setup.id)),
+    control.delete(accountSetups).where(eq(accountSetups.id, setup.id)),
   ]);
 };
 
 const discardProvisioning = async (
   env: Bindings,
-  provisioning: OrganizationProvisioningRecord,
+  provisioning: AccountProvisioningRecord,
 ): Promise<void> => {
   await revokeCredential(env, provisioning.credentialEnvelope, provisioning.googleSubject);
   const control = controlDatabase(env.CONTROL_DB);
   await control.batch([
-    control.delete(automationInboxClaims).where(eq(automationInboxClaims.organizationId, provisioning.organizationId)),
-    control.delete(organizations).where(eq(organizations.id, provisioning.organizationId)),
+    control.delete(automationInboxClaims).where(eq(automationInboxClaims.accountId, provisioning.accountId)),
+    control.delete(accounts).where(eq(accounts.id, provisioning.accountId)),
   ]);
 };
 
-const attemptProvision = async (env: Bindings, provisioning: OrganizationProvisioningRecord): Promise<void> => {
+const attemptProvision = async (env: Bindings, provisioning: AccountProvisioningRecord): Promise<void> => {
   try {
-    await createProvisioningOrganizationKey(env, provisioning.organizationId);
-    await provisionOrganization(env, provisioning);
+    await createProvisioningAccountKey(env, provisioning.accountId);
+    await provisionAccount(env, provisioning);
   } catch (error) {
     if (error instanceof SchemaReleaseInProgressError) return;
-    await controlDatabase(env.CONTROL_DB).update(organizationProvisionings).set({
+    await controlDatabase(env.CONTROL_DB).update(accountProvisionings).set({
       state: 'failed',
       errorMessage: error instanceof Error ? error.message : 'Provisioning failed.',
       updatedAt: now(),
-    }).where(eq(organizationProvisionings.organizationId, provisioning.organizationId)).run();
+    }).where(eq(accountProvisionings.accountId, provisioning.accountId)).run();
   }
 };
 
 const beginProvisioning = async (
   env: Bindings,
-  setup: OrganizationSetupRecord,
+  setup: AccountSetupRecord,
   name: string,
   presetId?: string,
 ): Promise<void> => {
-  const organizationId = crypto.randomUUID();
-  const { bindingName } = await organizationDatabaseIdentity(setup.inboxAddress);
+  const accountId = crypto.randomUUID();
+  const { bindingName } = await accountDatabaseIdentity(setup.inboxAddress);
   const createdAt = now();
   const control = controlDatabase(env.CONTROL_DB);
   await control.batch([
-    control.insert(organizations).values({
-      id: organizationId,
+    control.insert(accounts).values({
+      id: accountId,
       name,
       status: 'provisioning',
       bindingName,
       createdAt,
       updatedAt: createdAt,
     }),
-    control.insert(admins).values({
-      organizationId,
+    control.insert(accountIdentities).values({
+      accountId,
       identityId: setup.ownerIdentityId,
       state: 'active',
       createdAt,
       updatedAt: createdAt,
     }),
-    control.insert(organizationProvisionings).values({
-      organizationId,
+    control.insert(accountProvisionings).values({
+      accountId,
       ownerIdentityId: setup.ownerIdentityId,
       state: 'provisioning',
       inboxAddress: setup.inboxAddress,
@@ -135,67 +135,67 @@ const beginProvisioning = async (
     }),
     control.update(automationInboxClaims).set({
       setupId: null,
-      organizationId,
+      accountId,
       updatedAt: createdAt,
     }).where(eq(automationInboxClaims.setupId, setup.id)),
-    control.delete(organizationSetups).where(eq(organizationSetups.id, setup.id)),
+    control.delete(accountSetups).where(eq(accountSetups.id, setup.id)),
   ]);
-  await createProvisioningOrganizationKey(env, organizationId);
-  const current = await provisioningByOrganizationId(env, organizationId);
+  await createProvisioningAccountKey(env, accountId);
+  const current = await provisioningByAccountId(env, accountId);
   if (current) await attemptProvision(env, current);
 };
 
-export const confirmOrganization = async (
+export const confirmAccount = async (
   env: Bindings,
   ownerIdentityId: string,
   requestedName: string,
   presetId?: string,
 ): Promise<void> => {
-  const setup = await controlDatabase(env.CONTROL_DB).select().from(organizationSetups)
-    .where(eq(organizationSetups.ownerIdentityId, ownerIdentityId)).get();
-  if (!setup) throw new Error('Organization setup is not waiting for name confirmation.');
+  const setup = await controlDatabase(env.CONTROL_DB).select().from(accountSetups)
+    .where(eq(accountSetups.ownerIdentityId, ownerIdentityId)).get();
+  if (!setup) throw new Error('Account setup is not waiting for name confirmation.');
   if (Date.parse(setup.expiresAt) <= Date.now()) {
     await discardSetup(env, setup);
-    throw new Error('Organization setup expired. Start over with Google authorization.');
+    throw new Error('Account setup expired. Start over with Google authorization.');
   }
   const name = requestedName.trim() || setup.name;
-  if (!name) throw new Error('Organization name is required.');
+  if (!name) throw new Error('Account name is required.');
   if (presetId && !availablePresets().some((preset) => preset.id === presetId)) throw new Error('Preset was not found.');
   await beginProvisioning(env, setup, name, presetId);
 };
 
-export const retryOrganizationProvisioning = async (
+export const retryAccountProvisioning = async (
   env: Bindings,
   ownerIdentityId: string,
 ): Promise<void> => {
-  const provisioning = await controlDatabase(env.CONTROL_DB).select().from(organizationProvisionings)
+  const provisioning = await controlDatabase(env.CONTROL_DB).select().from(accountProvisionings)
     .where(and(
-      eq(organizationProvisionings.ownerIdentityId, ownerIdentityId),
-      eq(organizationProvisionings.state, 'failed'),
+      eq(accountProvisionings.ownerIdentityId, ownerIdentityId),
+      eq(accountProvisionings.state, 'failed'),
     )).get();
-  if (!provisioning) throw new Error('Organization provisioning is not waiting for retry.');
+  if (!provisioning) throw new Error('Account provisioning is not waiting for retry.');
   if (Date.parse(provisioning.expiresAt) <= Date.now()) {
     await discardProvisioning(env, provisioning);
-    throw new Error('Organization setup expired. Start over with Google authorization.');
+    throw new Error('Account setup expired. Start over with Google authorization.');
   }
-  await controlDatabase(env.CONTROL_DB).update(organizationProvisionings)
+  await controlDatabase(env.CONTROL_DB).update(accountProvisionings)
     .set({ state: 'provisioning', errorMessage: null, updatedAt: now() })
-    .where(eq(organizationProvisionings.organizationId, provisioning.organizationId)).run();
-  const ready = await provisioningByOrganizationId(env, provisioning.organizationId);
-  if (!ready) throw new Error('Organization provisioning could not be retried.');
+    .where(eq(accountProvisionings.accountId, provisioning.accountId)).run();
+  const ready = await provisioningByAccountId(env, provisioning.accountId);
+  if (!ready) throw new Error('Account provisioning could not be retried.');
   await attemptProvision(env, ready);
 };
 
-export const cancelOrganizationOnboarding = async (
+export const cancelAccountOnboarding = async (
   env: Bindings,
   ownerIdentityId: string,
 ): Promise<boolean> => {
   const control = controlDatabase(env.CONTROL_DB);
-  const setup = await control.select().from(organizationSetups)
-    .where(eq(organizationSetups.ownerIdentityId, ownerIdentityId)).get();
+  const setup = await control.select().from(accountSetups)
+    .where(eq(accountSetups.ownerIdentityId, ownerIdentityId)).get();
   if (setup) await discardSetup(env, setup);
-  const provisioning = await control.select().from(organizationProvisionings)
-    .where(eq(organizationProvisionings.ownerIdentityId, ownerIdentityId)).get();
+  const provisioning = await control.select().from(accountProvisionings)
+    .where(eq(accountProvisionings.ownerIdentityId, ownerIdentityId)).get();
   if (provisioning) await discardProvisioning(env, provisioning);
   return Boolean(setup || provisioning);
 };
@@ -204,16 +204,16 @@ export const applicationState = async (env: Bindings, session: SessionRow): Prom
   const identity = { email: session.email, displayName: session.display_name };
   const control = controlDatabase(env.CONTROL_DB);
   const memberships = await control.select({
-    organizationId: admins.organizationId,
-    name: organizations.name,
-    status: organizations.status,
-    databaseId: organizations.databaseId,
-    bindingName: organizations.bindingName,
-  }).from(admins).innerJoin(organizations, eq(organizations.id, admins.organizationId))
+    accountId: accountIdentities.accountId,
+    name: accounts.name,
+    status: accounts.status,
+    databaseId: accounts.databaseId,
+    bindingName: accounts.bindingName,
+  }).from(accountIdentities).innerJoin(accounts, eq(accounts.id, accountIdentities.accountId))
     .where(and(
-      eq(admins.identityId, session.identity_id),
-      eq(admins.state, 'active'),
-      isNotNull(organizations.databaseId),
+      eq(accountIdentities.identityId, session.identity_id),
+      eq(accountIdentities.state, 'active'),
+      isNotNull(accounts.databaseId),
     )).all();
   if (memberships.length > 0) {
     const databases = createDatabaseAccess(env);
@@ -223,32 +223,32 @@ export const applicationState = async (env: Bindings, session: SessionRow): Prom
         bindingName: membership.bindingName,
         databaseId: membership.databaseId,
       });
-      await createAutomation(env).verifyOrganizationInboxCredential({
-        organizationId: membership.organizationId,
+      await createAutomation(env).verifyAccountInboxCredential({
+        accountId: membership.accountId,
         database: database.raw,
       });
     }));
     return {
       kind: 'ready',
       identity,
-      organizations: memberships.map(({ organizationId, name, status }) => ({ organizationId, name, status })),
+      accounts: memberships.map(({ accountId, name, status }) => ({ accountId, name, status })),
     };
   }
-  const memberLogin = await control.select({
-    organizationId: memberLogins.organizationId,
-    name: organizations.name,
-  }).from(memberLogins).innerJoin(organizations, eq(organizations.id, memberLogins.organizationId))
-    .innerJoin(identities, eq(identities.googleSubject, memberLogins.googleSubject))
-    .where(and(eq(identities.id, session.identity_id), eq(organizations.status, 'active'))).get();
-  if (memberLogin) {
+  const contactLogin = await control.select({
+    accountId: contactLogins.accountId,
+    name: accounts.name,
+  }).from(contactLogins).innerJoin(accounts, eq(accounts.id, contactLogins.accountId))
+    .innerJoin(identities, eq(identities.googleSubject, contactLogins.googleSubject))
+    .where(and(eq(identities.id, session.identity_id), eq(accounts.status, 'active'))).get();
+  if (contactLogin) {
     return {
       kind: 'member',
       identity,
-      organization: { organizationId: memberLogin.organizationId, name: memberLogin.name },
+      account: { accountId: contactLogin.accountId, name: contactLogin.name },
     };
   }
-  const setup = await control.select().from(organizationSetups)
-    .where(eq(organizationSetups.ownerIdentityId, session.identity_id)).get();
+  const setup = await control.select().from(accountSetups)
+    .where(eq(accountSetups.ownerIdentityId, session.identity_id)).get();
   if (setup) {
     if (Date.parse(setup.expiresAt) <= Date.now()) {
       await discardSetup(env, setup);
@@ -266,20 +266,20 @@ export const applicationState = async (env: Bindings, session: SessionRow): Prom
     };
   }
   const provisioning = await control.select({
-    organizationId: organizationProvisionings.organizationId,
-    name: organizations.name,
-    state: organizationProvisionings.state,
-    phase: organizationProvisionings.phase,
-    errorMessage: organizationProvisionings.errorMessage,
-    expiresAt: organizationProvisionings.expiresAt,
-  }).from(organizationProvisionings)
-    .innerJoin(organizations, eq(organizations.id, organizationProvisionings.organizationId))
-    .where(eq(organizationProvisionings.ownerIdentityId, session.identity_id)).get();
+    accountId: accountProvisionings.accountId,
+    name: accounts.name,
+    state: accountProvisionings.state,
+    phase: accountProvisionings.phase,
+    errorMessage: accountProvisionings.errorMessage,
+    expiresAt: accountProvisionings.expiresAt,
+  }).from(accountProvisionings)
+    .innerJoin(accounts, eq(accounts.id, accountProvisionings.accountId))
+    .where(eq(accountProvisionings.ownerIdentityId, session.identity_id)).get();
   if (provisioning?.state === 'failed') {
     return {
       kind: 'provisioning_failed',
       identity,
-      organization: { id: provisioning.organizationId, name: provisioning.name },
+      account: { id: provisioning.accountId, name: provisioning.name },
       phase: provisioning.phase,
       error: provisioning.errorMessage,
       retryUntil: provisioning.expiresAt,
@@ -289,7 +289,7 @@ export const applicationState = async (env: Bindings, session: SessionRow): Prom
     return {
       kind: 'provisioning',
       identity,
-      organization: { id: provisioning.organizationId, name: provisioning.name },
+      account: { id: provisioning.accountId, name: provisioning.name },
       phase: provisioning.phase,
     };
   }
@@ -297,9 +297,9 @@ export const applicationState = async (env: Bindings, session: SessionRow): Prom
 };
 
 export const retryProvisioning = async (env: Bindings): Promise<void> => {
-  const rows = await controlDatabase(env.CONTROL_DB).select().from(organizationProvisionings)
-    .where(inArray(organizationProvisionings.state, ['provisioning', 'failed']))
-    .orderBy(asc(organizationProvisionings.updatedAt)).limit(10).all();
+  const rows = await controlDatabase(env.CONTROL_DB).select().from(accountProvisionings)
+    .where(inArray(accountProvisionings.state, ['provisioning', 'failed']))
+    .orderBy(asc(accountProvisionings.updatedAt)).limit(10).all();
   for (const provisioning of rows) {
     if (Date.parse(provisioning.expiresAt) <= Date.now()) {
       await discardProvisioning(env, provisioning);

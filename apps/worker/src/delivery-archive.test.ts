@@ -29,15 +29,15 @@ describe('Delivery retention archive', () => {
     const first = await archiveExpiredDeliveryRecords({
       database: database.binding,
       bucket: r2.bucket,
-      organizationKey: await archiveKey(),
-      organizationId: 'organization-1',
+      accountKey: await archiveKey(),
+      accountId: 'organization-1',
       before: '2026-01-01T00:00:00.000Z',
     });
     const second = await archiveExpiredDeliveryRecords({
       database: database.binding,
       bucket: r2.bucket,
-      organizationKey: await archiveKey(),
-      organizationId: 'organization-1',
+      accountKey: await archiveKey(),
+      accountId: 'organization-1',
       before: '2026-01-01T00:00:00.000Z',
     });
 
@@ -57,8 +57,8 @@ describe('Delivery retention archive', () => {
     });
     const input = {
       database: database.binding,
-      organizationKey: await archiveKey(),
-      organizationId: 'organization-1',
+      accountKey: await archiveKey(),
+      accountId: 'organization-1',
       before: '2026-01-01T00:00:00.000Z',
     };
 

@@ -2,9 +2,9 @@ import { createDatabaseAccess } from './database-access';
 import type { Bindings } from './types';
 import { nextRetry } from '@mail/domain';
 import { and, asc, eq, isNotNull, lte } from 'drizzle-orm';
-import { controlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
-import { organizations } from './storage/control-schema';
-import { jobs } from './storage/organization-schema';
+import { controlDatabase, accountDatabase as drizzleAccountDatabase } from './storage/database';
+import { accounts } from './storage/control-schema';
+import { jobs } from './storage/account-schema';
 
 export interface DurableJob {
   id: string;
@@ -16,7 +16,7 @@ export interface DurableJob {
   idempotencyKey: string;
 }
 
-/** Adds a durable Organization Job; a duplicate wake-up cannot duplicate its external effect. */
+/** Adds a durable Account Job; a duplicate wake-up cannot duplicate its external effect. */
 export const enqueueJob = async (
   database: D1Database,
   input: { kind: string; payload: Record<string, unknown>; idempotencyKey: string },
@@ -30,7 +30,7 @@ export const enqueueJob = async (
     availableAt: new Date().toISOString(),
     idempotencyKey: input.idempotencyKey,
   };
-  await drizzleOrganizationDatabase(database).insert(jobs).values({
+  await drizzleAccountDatabase(database).insert(jobs).values({
     ...job,
     payload: JSON.stringify(job.payload),
     createdAt: job.availableAt,
@@ -49,7 +49,7 @@ export interface ClaimedJob {
 
 /** Reclaims due work from D1 so Queue delivery remains only a wake-up hint. */
 export const claimDueJobs = async (database: D1Database, dueAt: string): Promise<ClaimedJob[]> => {
-  const db = drizzleOrganizationDatabase(database);
+  const db = drizzleAccountDatabase(database);
   const rows = await db.select({
     id: jobs.id,
     kind: jobs.kind,
@@ -69,7 +69,7 @@ export const claimDueJobs = async (database: D1Database, dueAt: string): Promise
 
 /** Finalizes a claimed Job once its idempotent external effect has succeeded. */
 export const completeJob = async (database: D1Database, id: string, completedAt: string): Promise<void> => {
-  await drizzleOrganizationDatabase(database).update(jobs).set({ state: 'succeeded', updatedAt: completedAt })
+  await drizzleAccountDatabase(database).update(jobs).set({ state: 'succeeded', updatedAt: completedAt })
     .where(and(eq(jobs.id, id), eq(jobs.state, 'running'))).run();
 };
 
@@ -85,28 +85,28 @@ export const retryJob = async (
   const attempts = job.attempts + 1;
   const retry = nextRetry({ attempts, now: failedAt });
   if ('terminal' in retry) {
-    await drizzleOrganizationDatabase(database).update(jobs).set({ state: 'failed', attempts, lastError: error, updatedAt: failedAt })
+    await drizzleAccountDatabase(database).update(jobs).set({ state: 'failed', attempts, lastError: error, updatedAt: failedAt })
       .where(and(eq(jobs.id, job.id), eq(jobs.state, 'running'))).run();
     return { state: 'failed', attempts };
   }
-  await drizzleOrganizationDatabase(database).update(jobs).set({ state: 'pending', attempts, availableAt: retry.retryAt, lastError: error, updatedAt: failedAt })
+  await drizzleAccountDatabase(database).update(jobs).set({ state: 'pending', attempts, availableAt: retry.retryAt, lastError: error, updatedAt: failedAt })
     .where(and(eq(jobs.id, job.id), eq(jobs.state, 'running'))).run();
   return { state: 'pending', attempts, availableAt: retry.retryAt };
 };
 
-/** Finds due Jobs in every active Organization database; Queue messages never own job state. */
-export const recoverDueOrganizationJobs = async (env: Bindings, dueAt: string): Promise<ClaimedJob[]> => {
-  const activeOrganizations = await controlDatabase(env.CONTROL_DB).select({
-    bindingName: organizations.bindingName,
-    databaseId: organizations.databaseId,
-  }).from(organizations).where(and(eq(organizations.status, 'active'), isNotNull(organizations.databaseId))).all();
+/** Finds due Jobs in every active Account database; Queue messages never own job state. */
+export const recoverDueAccountJobs = async (env: Bindings, dueAt: string): Promise<ClaimedJob[]> => {
+  const activeAccounts = await controlDatabase(env.CONTROL_DB).select({
+    bindingName: accounts.bindingName,
+    databaseId: accounts.databaseId,
+  }).from(accounts).where(and(eq(accounts.status, 'active'), isNotNull(accounts.databaseId))).all();
   const claimed: ClaimedJob[] = [];
   const databases = createDatabaseAccess(env);
-  for (const organization of activeOrganizations) {
+  for (const account of activeAccounts) {
     const database = await databases.open({
       kind: 'organization',
-      bindingName: organization.bindingName,
-      databaseId: organization.databaseId,
+      bindingName: account.bindingName,
+      databaseId: account.databaseId,
     });
     claimed.push(...await claimDueJobs(database.raw, dueAt));
   }

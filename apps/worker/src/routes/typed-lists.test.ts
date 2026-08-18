@@ -13,7 +13,7 @@ describe('Typed List routes', () => {
 
     const created = await typedListRoutes.fetch(fixture.jsonRequest(
       '/organizations/organization-1/lists',
-      { kind: 'source', name: 'Members' },
+      { kind: 'source', name: 'Contacts' },
     ), fixture.environment);
     const listed = await typedListRoutes.fetch(
       fixture.request('/organizations/organization-1/lists'),
@@ -21,6 +21,6 @@ describe('Typed List routes', () => {
     );
 
     expect(created.status).toBe(201);
-    await expect(listed.json()).resolves.toMatchObject({ data: [{ kind: 'source', name: 'Members' }] });
+    await expect(listed.json()).resolves.toMatchObject({ data: [{ kind: 'source', name: 'Contacts' }] });
   });
 });

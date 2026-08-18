@@ -5,8 +5,8 @@ import { isRouteErrorResponse, NavLink, Outlet, useLoaderData, useNavigate, useN
 import type { AppState } from '@mail/domain';
 
 import { api } from './api';
-import type { MemberAttendanceStatus, MemberPortal, AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, OrganizationAgentRule, OrganizationConnections, OrganizationDashboard, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationMember, OrganizationMemberInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, MemberLineDestinationInput, RuleRun, TaskAssignmentProposal, TaskReassignmentReview, TaskRoleConfiguration } from './api';
-import { defaultOrganizationName, setupPhaseLabel, SignedOutEntry } from './entry';
+import type { ContactAttendanceStatus, ContactPortal, AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, AccountAgentRule, AccountConnections, AccountDashboard, AccountLineDestination, AccountMembership, AccountPrompt, AccountContact, AccountContactInput, AccountRule, AccountRuleInput, AccountTask, AccountTypedList, PresetSummary, ContactLineDestinationInput, RuleRun, TaskAssignmentProposal, TaskReassignmentReview, TaskRoleConfiguration } from './api';
+import { defaultAccountName, setupPhaseLabel, SignedOutEntry } from './entry';
 import { pendingKey, usePendingOperations, type PendingOperations } from './pending';
 import { PendingOverlay } from './progress';
 import { Dashboard } from './dashboard';
@@ -15,7 +15,7 @@ export const DEFAULT_MAIL_TEST_SUBJECT = '名古屋名城RAC30周年記念式典
 
 /**
  * A route loader can run several API calls in parallel (e.g. switching
- * Organization) while the previous page stays on screen, so without this bar
+ * Account) while the previous page stays on screen, so without this bar
  * that wait looks indistinguishable from the app being stuck.
  */
 export const NavigationProgress = () => {
@@ -65,9 +65,9 @@ export const SetupRoute = () => {
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Google 認可を開始できませんでした。'); setBusy(false); }
   };
   return <SetupCard>
-    <div className="setup-brand"><strong>Mail Automation</strong><small>CREATE ORGANIZATION</small></div>
-    <p className="eyebrow">NO ORGANIZATION</p><h1>Organizationをセットアップ</h1>
-    <p className="setup-copy">Automation Inboxを認可すると、このGoogleアカウントを初期OwnerとしてOrganization DBを作成します。</p>
+    <div className="setup-brand"><strong>Mail Automation</strong><small>CREATE ACCOUNT</small></div>
+    <p className="eyebrow">NO ACCOUNT</p><h1>Accountをセットアップ</h1>
+    <p className="setup-copy">Automation Inboxを認可すると、このGoogleアカウントを初期OwnerとしてAccount DBを作成します。</p>
     {error && <p className="setup-error">{error}</p>}
     <button className="primary" onClick={() => void begin()} disabled={busy}>{busy ? 'Googleへ接続中…' : 'Automation Inboxを認可する'}</button>
     <button className="quiet-button" onClick={() => void logout()} disabled={busy}>ログアウト</button>
@@ -88,7 +88,7 @@ export const PresetSetupChoice = ({ presets, selectedId, onChange }: {
     />
     <span><strong>{preset.name}</strong><small>{preset.description}</small></span>
   </label>)}
-  <p>選択した構成をOrganization作成時にコピーします。後の製品更新とはリンクされません。</p>
+  <p>選択した構成をAccount作成時にコピーします。後の製品更新とはリンクされません。</p>
 </fieldset>;
 
 export const SetupConfirmRoute = () => {
@@ -113,7 +113,7 @@ export const SetupConfirmRoute = () => {
   };
   return <SetupCard><form className="setup-form" onSubmit={(event) => void submit(event)}>
     {error && <p className="setup-error">{error}</p>}
-    <p className="eyebrow">CONFIRM ORGANIZATION</p><h1>組織名を確認</h1>
+    <p className="eyebrow">CONFIRM ACCOUNT</p><h1>組織名を確認</h1>
     <p className="setup-copy">認可したGoogleアカウントをAutomation Inboxと初期Ownerにします。</p>
     <label>組織名<input value={name} onChange={(event) => setName(event.target.value)} autoComplete="organization" required /></label>
     {presetsLoading
@@ -161,65 +161,65 @@ export const SetupProgressRoute = ({ failed }: { failed: boolean }) => {
   return null;
 };
 
-export interface OrganizationRouteData {
+export interface AccountRouteData {
   state: Extract<AppState, { kind: 'ready' }>;
-  organization: OrganizationMembership;
+  account: AccountMembership;
   automation: AutomationStatus | null;
-  connections: OrganizationConnections;
-  dashboard: OrganizationDashboard;
-  rules: OrganizationRule[];
-  prompts: OrganizationPrompt[];
-  agentRules: OrganizationAgentRule[];
+  connections: AccountConnections;
+  dashboard: AccountDashboard;
+  rules: AccountRule[];
+  prompts: AccountPrompt[];
+  agentRules: AccountAgentRule[];
   agentRuns: AgentRunIndex[];
   ruleRuns: RuleRun[];
-  lists: OrganizationTypedList[];
+  lists: AccountTypedList[];
   audit: DeliveryAuditRecord[];
-  tasks: OrganizationTask[];
+  tasks: AccountTask[];
   taskRoles: TaskRoleConfiguration;
   taskReassignment: TaskReassignmentReview;
-  members: OrganizationMember[];
-  lineDestinations: OrganizationLineDestination[];
+  contacts: AccountContact[];
+  lineDestinations: AccountLineDestination[];
   presets: PresetSummary[];
   attachmentFolder: { path: string };
   responseWindow: { days: number };
   guestRegistrations: GuestRegistrationRoster[];
 }
 
-export const loadOrganization = async (organizationId: string): Promise<OrganizationRouteData> => {
+export const loadAccount = async (accountId: string): Promise<AccountRouteData> => {
   const state = await api.bootstrap();
-  if (state.kind !== 'ready') throw new Response('Organization is not ready', { status: 409 });
-  const organization = state.organizations.find((value) => value.organizationId === organizationId);
-  if (!organization) throw new Response('Organization was not found', { status: 404 });
-  const [automation, connections, dashboard, rules, prompts, agentRules, agentRuns, ruleRuns, lists, audit, tasks, taskRoles, taskReassignment, members, lineDestinations, presets, attachmentFolder, guestRegistrations, responseWindow] = await Promise.all([
-    api.currentAutomation(organizationId),
-    api.organizationConnections(organizationId),
-    api.organizationDashboard(organizationId),
-    api.organizationRules(organizationId),
-    api.organizationPrompts(organizationId),
-    api.organizationAgentRules(organizationId),
-    api.organizationAgentRuns(organizationId),
-    api.organizationRuleRuns(organizationId),
-    api.organizationLists(organizationId),
-    api.organizationDeliveryAudit(organizationId),
-    api.organizationTasks(organizationId),
-    api.organizationTaskRoles(organizationId),
-    api.organizationTaskReassignment(organizationId),
-    api.organizationMembers(organizationId),
-    api.organizationLineDestinations(organizationId),
+  if (state.kind !== 'ready') throw new Response('Account is not ready', { status: 409 });
+  const account = state.accounts.find((value) => value.accountId === accountId);
+  if (!account) throw new Response('Account was not found', { status: 404 });
+  const [automation, connections, dashboard, rules, prompts, agentRules, agentRuns, ruleRuns, lists, audit, tasks, taskRoles, taskReassignment, contacts, lineDestinations, presets, attachmentFolder, guestRegistrations, responseWindow] = await Promise.all([
+    api.currentAutomation(accountId),
+    api.accountConnections(accountId),
+    api.accountDashboard(accountId),
+    api.accountRules(accountId),
+    api.accountPrompts(accountId),
+    api.accountAgentRules(accountId),
+    api.accountAgentRuns(accountId),
+    api.accountRuleRuns(accountId),
+    api.accountLists(accountId),
+    api.accountDeliveryAudit(accountId),
+    api.accountTasks(accountId),
+    api.accountTaskRoles(accountId),
+    api.accountTaskReassignment(accountId),
+    api.accountContacts(accountId),
+    api.accountLineDestinations(accountId),
     api.presets(),
-    api.organizationAttachmentFolder(organizationId),
-    api.organizationGuestRegistrations(organizationId),
-    api.organizationResponseWindow(organizationId),
+    api.accountAttachmentFolder(accountId),
+    api.accountGuestRegistrations(accountId),
+    api.accountResponseWindow(accountId),
   ]);
-  return { state, organization, automation, connections, dashboard, rules, prompts, agentRules, agentRuns, ruleRuns, lists, audit, tasks, taskRoles, taskReassignment, members, lineDestinations, presets, attachmentFolder, guestRegistrations, responseWindow };
+  return { state, account, automation, connections, dashboard, rules, prompts, agentRules, agentRuns, ruleRuns, lists, audit, tasks, taskRoles, taskReassignment, contacts, lineDestinations, presets, attachmentFolder, guestRegistrations, responseWindow };
 };
 
-const roleChangeOpensReassignment = (current: OrganizationRouteData): OrganizationRouteData => ({
+const roleChangeOpensReassignment = (current: AccountRouteData): AccountRouteData => ({
   ...current,
   taskReassignment: { ...current.taskReassignment, pending: true, rolesChangedAt: new Date().toISOString() },
 });
 
-interface OrganizationContextValue extends OrganizationRouteData, PendingOperations {
+interface AccountContextValue extends AccountRouteData, PendingOperations {
   summary: AutomationSummary | null;
   setEnabled: (enabled: boolean) => void;
   runAutomation: () => void;
@@ -235,8 +235,8 @@ interface OrganizationContextValue extends OrganizationRouteData, PendingOperati
   prepareRefresh: () => void;
   planRefresh: () => void;
   applyRefresh: (candidateIndexes: number[]) => void;
-  createRule: (input: OrganizationRuleInput) => Promise<void>;
-  updateRule: (ruleId: string, input: Partial<Pick<OrganizationRule, 'state' | 'executionMode' | 'permittedRecipientListIds' | 'permittedLineListIds'>>) => Promise<void>;
+  createRule: (input: AccountRuleInput) => Promise<void>;
+  updateRule: (ruleId: string, input: Partial<Pick<AccountRule, 'state' | 'executionMode' | 'permittedRecipientListIds' | 'permittedLineListIds'>>) => Promise<void>;
   agentTranscript: AgentRunTranscript | null;
   createPrompt: (input: { name: string; instructions: string }) => Promise<void>;
   updatePrompt: (promptId: string, input: { name?: string; instructions?: string }) => Promise<void>;
@@ -249,19 +249,19 @@ interface OrganizationContextValue extends OrganizationRouteData, PendingOperati
   createTaskRole: (input: { displayName: string; description: string }) => Promise<void>;
   updateTaskRole: (roleId: string, input: { displayName?: string; description?: string }) => Promise<void>;
   deleteTaskRole: (roleId: string) => Promise<void>;
-  assignTaskRole: (roleId: string, memberId: string) => void;
+  assignTaskRole: (roleId: string, contactId: string) => void;
   taskReassignmentProposals: TaskAssignmentProposal[];
   taskReassignmentSkipped: string[];
   suggestTaskReassignments: () => void;
   applyTaskReassignments: (assignments: Array<{ taskId: string; roleId: string }>) => void;
   discardTaskReassignments: () => void;
-  createMember: (input: OrganizationMemberInput) => Promise<OrganizationMember | null>;
-  updateMember: (memberId: string, input: Partial<Pick<OrganizationMember, 'name' | 'email' | 'tags' | 'state'>>) => Promise<void>;
-  setLineDestination: (memberId: string, input: MemberLineDestinationInput) => Promise<void>;
-  unlinkLineDestination: (memberId: string, lineDestinationId: string) => Promise<void>;
-  registerLineDestination: (input: MemberLineDestinationInput) => Promise<void>;
+  createContact: (input: AccountContactInput) => Promise<AccountContact | null>;
+  updateContact: (contactId: string, input: Partial<Pick<AccountContact, 'name' | 'email' | 'tags' | 'state'>>) => Promise<void>;
+  setLineDestination: (contactId: string, input: ContactLineDestinationInput) => Promise<void>;
+  unlinkLineDestination: (contactId: string, lineDestinationId: string) => Promise<void>;
+  registerLineDestination: (input: ContactLineDestinationInput) => Promise<void>;
   removeLineDestination: (lineDestinationId: string) => Promise<void>;
-  refreshMembers: () => void;
+  refreshContacts: () => void;
   applyPreset: (presetId: string, conflictPolicy?: 'duplicate') => void;
   lineChannelAccessToken: string;
   lineChannelSecret: string;
@@ -297,15 +297,15 @@ interface OrganizationContextValue extends OrganizationRouteData, PendingOperati
   reauthenticate: () => void;
 }
 
-const OrganizationContext = createContext<OrganizationContextValue | null>(null);
-const useOrganization = (): OrganizationContextValue => {
-  const value = useContext(OrganizationContext);
-  if (!value) throw new Error('Organization route context is unavailable.');
+const AccountContext = createContext<AccountContextValue | null>(null);
+const useAccount = (): AccountContextValue => {
+  const value = useContext(AccountContext);
+  if (!value) throw new Error('Account route context is unavailable.');
   return value;
 };
 
-export const OrganizationLayout = () => {
-  const initial = useLoaderData() as OrganizationRouteData;
+export const AccountLayout = () => {
+  const initial = useLoaderData() as AccountRouteData;
   const navigate = useNavigate();
   const [data, setData] = useState(initial);
   const operations = usePendingOperations();
@@ -345,24 +345,24 @@ export const OrganizationLayout = () => {
     setTaskReassignmentSkipped([]);
   }, [initial]);
 
-  const organizationId = data.organization.organizationId;
+  const accountId = data.account.accountId;
   const runOperation = operations.run;
   const runAutomation = () => void runOperation(pendingKey.automationRun, async () => {
-    const value = await api.runAutomation(organizationId);
+    const value = await api.runAutomation(accountId);
     const [automation, ruleRuns] = await Promise.all([
-      api.currentAutomation(organizationId),
-      api.organizationRuleRuns(organizationId),
+      api.currentAutomation(accountId),
+      api.accountRuleRuns(accountId),
     ]);
     setSummary(value);
     setData((current) => ({ ...current, automation, ruleRuns }));
   });
   const setEnabled = (enabled: boolean) => void runOperation(pendingKey.automationEnabled, async () => {
-    await api.setEnabled(organizationId, enabled);
-    const automation = await api.currentAutomation(organizationId);
+    await api.setEnabled(accountId, enabled);
+    const automation = await api.currentAutomation(accountId);
     setData((current) => ({ ...current, automation }));
   });
   const saveLineConnection = () => void runOperation(pendingKey.lineConnection, async () => {
-    const line = await api.saveOrganizationLineConnection(organizationId, {
+    const line = await api.saveAccountLineConnection(accountId, {
       channelAccessToken: lineChannelAccessToken || undefined,
       channelSecret: lineChannelSecret || undefined,
     });
@@ -371,7 +371,7 @@ export const OrganizationLayout = () => {
     setLineChannelSecret('');
   });
   const saveAiConnection = () => void runOperation(pendingKey.aiConnection, async () => {
-    const ai = await api.saveOrganizationAiConnection(organizationId, {
+    const ai = await api.saveAccountAiConnection(accountId, {
       apiKey: aiApiKey || undefined,
       model: aiModel,
       baseUrl: aiBaseUrl,
@@ -380,19 +380,19 @@ export const OrganizationLayout = () => {
     setAiApiKey('');
   });
   const saveResponseWindowDays = () => void runOperation(pendingKey.responseWindow, async () => {
-    const responseWindow = await api.saveOrganizationResponseWindow(organizationId, Number(responseWindowDays.trim()));
+    const responseWindow = await api.saveAccountResponseWindow(accountId, Number(responseWindowDays.trim()));
     setData((current) => ({ ...current, responseWindow }));
     setResponseWindowDays(String(responseWindow.days));
   });
 
   const saveAttachmentFolderPath = () => void runOperation(pendingKey.attachmentFolder, async () => {
-    const attachmentFolder = await api.saveOrganizationAttachmentFolder(organizationId, attachmentFolderPath);
+    const attachmentFolder = await api.saveAccountAttachmentFolder(accountId, attachmentFolderPath);
     setData((current) => ({ ...current, attachmentFolder }));
     setAttachmentFolderPath(attachmentFolder.path);
   });
   const testAi = () => void runOperation(pendingKey.aiTest, async () => {
     setAiTestResult('');
-    setAiTestResult((await api.testAiConnection(organizationId, aiTestPrompt)).text);
+    setAiTestResult((await api.testAiConnection(accountId, aiTestPrompt)).text);
   });
   const searchMailbox = () => void runOperation(pendingKey.mailSearch, async () => {
     setMailTestAiRequest(null);
@@ -400,10 +400,10 @@ export const OrganizationLayout = () => {
     setDraftRulePreview(null);
     setMailTestCreatedEventIds([]);
     setMailTestRuleRunIds([]);
-    setMailTestMatches((await api.searchMailboxForTest(organizationId, mailTestSubject.trim())).messages);
+    setMailTestMatches((await api.searchMailboxForTest(accountId, mailTestSubject.trim())).messages);
   });
   const prepareMailbox = (messageId: string) => void runOperation(pendingKey.mailPrepare(messageId), async () => {
-    setMailTestAiRequest(await api.prepareMailboxTestAiRequest(organizationId, messageId));
+    setMailTestAiRequest(await api.prepareMailboxTestAiRequest(accountId, messageId));
     setMailTestPreview(null);
     setDraftRulePreview(null);
     setMailTestCreatedEventIds([]);
@@ -411,24 +411,24 @@ export const OrganizationLayout = () => {
   });
   const previewMailbox = (messageId: string) => void runOperation(pendingKey.mailPreview, async () => {
     if (mailTestAiRequest?.id !== messageId) throw new Error('先に AI への送信内容を確認してください。');
-    setMailTestPreview(await api.previewMailboxTestEvent(organizationId, messageId));
+    setMailTestPreview(await api.previewMailboxTestEvent(accountId, messageId));
     setMailTestCreatedEventIds([]);
   });
   const previewDraftMailbox = (messageId: string, ruleId: string) => void runOperation(pendingKey.mailPreview, async () => {
     if (mailTestAiRequest?.id !== messageId) throw new Error('先に AI への送信内容を確認してください。');
-    setDraftRulePreview(await api.previewDraftRuleEvent(organizationId, messageId, ruleId));
+    setDraftRulePreview(await api.previewDraftRuleEvent(accountId, messageId, ruleId));
     setMailTestRuleRunIds([]);
   });
   const createMailboxTestEvents = () => void runOperation(pendingKey.mailCreate, async () => {
     if (!mailTestPreview) throw new Error('先に AI 抽出を実行してください。');
     setMailTestCreatedEventIds((await api.createMailboxTestCalendarEvents(
-      organizationId,
+      accountId,
       mailTestPreview.confirmationToken,
     )).eventIds);
   });
   const startDraftRuleRun = (ruleId: string) => void runOperation(pendingKey.mailStartRuleRun, async () => {
     if (draftRulePreview) {
-      const run = await api.startMailboxTestRuleRun(organizationId, draftRulePreview.confirmationToken, ruleId);
+      const run = await api.startMailboxTestRuleRun(accountId, draftRulePreview.confirmationToken, ruleId);
       setMailTestRuleRunIds([run.id]);
       setData((current) => ({ ...current, ruleRuns: [run, ...current.ruleRuns] }));
     }
@@ -437,16 +437,16 @@ export const OrganizationLayout = () => {
     if (!mailTestPreview) throw new Error('先に AI 抽出を実行してください。');
     setMailTestRefreshPlan(null);
     setMailTestRefreshOutcome(null);
-    setMailTestRefreshRequest(await api.prepareMailboxTestRefreshRequest(organizationId, mailTestPreview.id, mailTestPreview.confirmationToken));
+    setMailTestRefreshRequest(await api.prepareMailboxTestRefreshRequest(accountId, mailTestPreview.id, mailTestPreview.confirmationToken));
   });
   const planRefresh = () => void runOperation(pendingKey.refreshPlan, async () => {
     if (!mailTestPreview) throw new Error('先に AI 抽出を実行してください。');
     setMailTestRefreshOutcome(null);
-    setMailTestRefreshPlan(await api.planMailboxTestRefresh(organizationId, mailTestPreview.id, mailTestPreview.confirmationToken));
+    setMailTestRefreshPlan(await api.planMailboxTestRefresh(accountId, mailTestPreview.id, mailTestPreview.confirmationToken));
   });
   const applyRefresh = (candidateIndexes: number[]) => void runOperation(pendingKey.refreshApply, async () => {
     if (!mailTestRefreshPlan) throw new Error('先に既存予定と照合してください。');
-    const outcome = await api.applyMailboxTestRefresh(organizationId, mailTestRefreshPlan.confirmationToken, candidateIndexes);
+    const outcome = await api.applyMailboxTestRefresh(accountId, mailTestRefreshPlan.confirmationToken, candidateIndexes);
     setMailTestRefreshOutcome(outcome);
     if (outcome.confirmationToken) {
       setMailTestRefreshPlan({
@@ -463,69 +463,69 @@ export const OrganizationLayout = () => {
       });
     }
   });
-  const createRule = async (input: OrganizationRuleInput): Promise<void> => runOperation(pendingKey.ruleCreate, async () => {
-    const rule = await api.createOrganizationRule(organizationId, input);
+  const createRule = async (input: AccountRuleInput): Promise<void> => runOperation(pendingKey.ruleCreate, async () => {
+    const rule = await api.createAccountRule(accountId, input);
     setData((current) => ({ ...current, rules: [...current.rules, rule] }));
   });
-  const updateRule = async (ruleId: string, input: Partial<Pick<OrganizationRule, 'state' | 'executionMode' | 'permittedRecipientListIds' | 'permittedLineListIds'>>): Promise<void> => runOperation(pendingKey.ruleUpdate(ruleId), async () => {
-    const updated = await api.updateOrganizationRule(organizationId, ruleId, input);
+  const updateRule = async (ruleId: string, input: Partial<Pick<AccountRule, 'state' | 'executionMode' | 'permittedRecipientListIds' | 'permittedLineListIds'>>): Promise<void> => runOperation(pendingKey.ruleUpdate(ruleId), async () => {
+    const updated = await api.updateAccountRule(accountId, ruleId, input);
     setData((current) => ({ ...current, rules: current.rules.map((rule) => rule.id === ruleId ? { ...rule, ...updated } : rule) }));
   });
   const createPrompt = async (input: { name: string; instructions: string }): Promise<void> => runOperation(pendingKey.promptCreate, async () => {
-    const prompt = await api.createOrganizationPrompt(organizationId, input);
+    const prompt = await api.createAccountPrompt(accountId, input);
     setData((current) => ({ ...current, prompts: [...current.prompts, prompt] }));
   });
   const updatePrompt = async (promptId: string, input: { name?: string; instructions?: string }): Promise<void> => runOperation(pendingKey.promptUpdate(promptId), async () => {
-    const updated = await api.updateOrganizationPrompt(organizationId, promptId, input);
+    const updated = await api.updateAccountPrompt(accountId, promptId, input);
     setData((current) => ({ ...current, prompts: current.prompts.map((prompt) => prompt.id === promptId ? { ...prompt, ...updated } : prompt) }));
   });
   const deletePrompt = async (promptId: string): Promise<void> => runOperation(pendingKey.promptDelete(promptId), async () => {
-    await api.removeOrganizationPrompt(organizationId, promptId);
+    await api.removeAccountPrompt(accountId, promptId);
     setData((current) => ({ ...current, prompts: current.prompts.filter((prompt) => prompt.id !== promptId) }));
   });
   const createAgentRule = async (input: { name: string; promptId: string; state: 'draft' | 'active'; executionMode?: 'read_only' | 'approval' | 'unattended'; selectionPolicy: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[]; priority?: number }): Promise<void> => runOperation(pendingKey.agentRuleCreate, async () => {
-    const rule = await api.createOrganizationAgentRule(organizationId, input);
+    const rule = await api.createAccountAgentRule(accountId, input);
     setData((current) => ({ ...current, agentRules: [...current.agentRules, rule] }));
   });
   const updateAgentRule = async (agentRuleId: string, input: { state?: 'draft' | 'active' | 'suspended' | 'archived'; executionMode?: 'read_only' | 'approval' | 'unattended'; permittedRecipientListIds?: string[]; permittedLineListIds?: string[] }): Promise<void> => runOperation(pendingKey.agentRuleUpdate(agentRuleId), async () => {
-    const updated = await api.updateOrganizationAgentRule(organizationId, agentRuleId, input);
+    const updated = await api.updateAccountAgentRule(accountId, agentRuleId, input);
     setData((current) => ({ ...current, agentRules: current.agentRules.map((rule) => rule.id === agentRuleId ? updated : rule) }));
   });
   const loadAgentTranscript = (runId: string) => void runOperation(pendingKey.agentRunTranscript(runId), async () => {
-    setAgentTranscript(await api.agentRunTranscript(organizationId, runId));
+    setAgentTranscript(await api.agentRunTranscript(accountId, runId));
   });
   const decideRuleRun = (runId: string, decision: 'approve' | 'reject') => void runOperation(pendingKey.ruleRunDecision(runId, decision), async () => {
-    const decided = await api.decideRuleRun(organizationId, runId, decision);
+    const decided = await api.decideRuleRun(accountId, runId, decision);
     setData((current) => ({ ...current, ruleRuns: current.ruleRuns.map((run) => run.id === runId ? decided : run) }));
   });
   const updateTask = (taskId: string, input: { completed?: boolean; remarks?: string }) => void runOperation(pendingKey.taskUpdate(taskId), async () => {
-    const task = await api.updateOrganizationTask(organizationId, taskId, input);
+    const task = await api.updateAccountTask(accountId, taskId, input);
     setData((current) => ({ ...current, tasks: current.tasks.map((currentTask) => currentTask.id === task.id ? task : currentTask) }));
   });
   const createTaskRole = async (input: { displayName: string; description: string }): Promise<void> => runOperation(pendingKey.taskRoleCreate, async () => {
-    const role = await api.createOrganizationTaskRole(organizationId, input);
+    const role = await api.createAccountTaskRole(accountId, input);
     setData((current) => roleChangeOpensReassignment({ ...current, taskRoles: { ...current.taskRoles, roles: [...current.taskRoles.roles, role] } }));
   });
   const updateTaskRole = async (roleId: string, input: { displayName?: string; description?: string }): Promise<void> => runOperation(pendingKey.taskRoleUpdate(roleId), async () => {
-    const role = await api.updateOrganizationTaskRole(organizationId, roleId, input);
+    const role = await api.updateAccountTaskRole(accountId, roleId, input);
     setData((current) => roleChangeOpensReassignment({ ...current, taskRoles: { ...current.taskRoles, roles: current.taskRoles.roles.map((item) => item.id === role.id ? role : item) } }));
   });
   const deleteTaskRole = async (roleId: string): Promise<void> => runOperation(pendingKey.taskRoleDelete(roleId), async () => {
-    await api.removeOrganizationTaskRole(organizationId, roleId);
+    await api.removeAccountTaskRole(accountId, roleId);
     setData((current) => roleChangeOpensReassignment({ ...current, taskRoles: { ...current.taskRoles, roles: current.taskRoles.roles.filter((role) => role.id !== roleId), assignments: current.taskRoles.assignments.filter((assignment) => assignment.roleId !== roleId) } }));
   });
-  const assignTaskRole = (roleId: string, memberId: string) => void runOperation(pendingKey.taskRoleAssign(roleId), async () => {
-    const assignment = await api.assignOrganizationTaskRole(organizationId, roleId, memberId);
+  const assignTaskRole = (roleId: string, contactId: string) => void runOperation(pendingKey.taskRoleAssign(roleId), async () => {
+    const assignment = await api.assignAccountTaskRole(accountId, roleId, contactId);
     setData((current) => ({ ...current, taskRoles: { ...current.taskRoles, assignments: [...current.taskRoles.assignments.filter((currentAssignment) => currentAssignment.roleId !== roleId), assignment] } }));
   });
   const suggestTaskReassignments = () => void runOperation(pendingKey.reassignmentSuggest, async () => {
     setTaskReassignmentSkipped([]);
-    const suggested = await api.suggestOrganizationTaskReassignments(organizationId);
+    const suggested = await api.suggestAccountTaskReassignments(accountId);
     setTaskReassignmentProposals(suggested.proposals);
     setData((current) => ({ ...current, taskReassignment: suggested.review }));
   });
   const applyTaskReassignments = (assignments: Array<{ taskId: string; roleId: string }>) => void runOperation(pendingKey.reassignmentApply, async () => {
-    const applied = await api.applyOrganizationTaskReassignments(organizationId, assignments);
+    const applied = await api.applyAccountTaskReassignments(accountId, assignments);
     const reassigned = new Map(applied.tasks.map((task) => [task.id, task]));
     setTaskReassignmentProposals([]);
     setTaskReassignmentSkipped(applied.skipped);
@@ -535,71 +535,71 @@ export const OrganizationLayout = () => {
     setTaskReassignmentProposals([]);
     setTaskReassignmentSkipped([]);
   };
-  const reloadMembers = async (): Promise<void> => {
-    const [members, lineDestinations] = await Promise.all([
-      api.organizationMembers(organizationId),
-      api.organizationLineDestinations(organizationId),
+  const reloadContacts = async (): Promise<void> => {
+    const [contacts, lineDestinations] = await Promise.all([
+      api.accountContacts(accountId),
+      api.accountLineDestinations(accountId),
     ]);
-    setData((current) => ({ ...current, members, lineDestinations }));
+    setData((current) => ({ ...current, contacts, lineDestinations }));
   };
-  const createMember = async (input: OrganizationMemberInput): Promise<OrganizationMember | null> => {
-    let created: OrganizationMember | null = null;
-    await runOperation(pendingKey.memberCreate, async () => {
-      created = await api.createOrganizationMember(organizationId, input);
-      await reloadMembers();
+  const createContact = async (input: AccountContactInput): Promise<AccountContact | null> => {
+    let created: AccountContact | null = null;
+    await runOperation(pendingKey.contactCreate, async () => {
+      created = await api.createAccountContact(accountId, input);
+      await reloadContacts();
     });
     return created;
   };
-  const updateMember = async (
-    memberId: string,
-    input: Partial<Pick<OrganizationMember, 'name' | 'email' | 'tags' | 'state'>>,
-  ): Promise<void> => runOperation(pendingKey.memberUpdate(memberId), async () => {
-    await api.updateOrganizationMember(organizationId, memberId, input);
-    await reloadMembers();
+  const updateContact = async (
+    contactId: string,
+    input: Partial<Pick<AccountContact, 'name' | 'email' | 'tags' | 'state'>>,
+  ): Promise<void> => runOperation(pendingKey.contactUpdate(contactId), async () => {
+    await api.updateAccountContact(accountId, contactId, input);
+    await reloadContacts();
   });
-  const setLineDestination = async (memberId: string, input: MemberLineDestinationInput): Promise<void> =>
-    runOperation(pendingKey.lineDestinationSet(memberId), async () => {
-      await api.setMemberLineDestination(organizationId, memberId, input);
-      await reloadMembers();
+  const setLineDestination = async (contactId: string, input: ContactLineDestinationInput): Promise<void> =>
+    runOperation(pendingKey.lineDestinationSet(contactId), async () => {
+      await api.setContactLineDestination(accountId, contactId, input);
+      await reloadContacts();
     });
-  const unlinkLineDestination = async (memberId: string, lineDestinationId: string): Promise<void> =>
+  const unlinkLineDestination = async (contactId: string, lineDestinationId: string): Promise<void> =>
     runOperation(pendingKey.lineDestinationUnlink(lineDestinationId), async () => {
-      await api.removeMemberLineDestination(organizationId, memberId, lineDestinationId);
-      await reloadMembers();
+      await api.removeContactLineDestination(accountId, contactId, lineDestinationId);
+      await reloadContacts();
     });
-  const registerLineDestination = async (input: MemberLineDestinationInput): Promise<void> =>
+  const registerLineDestination = async (input: ContactLineDestinationInput): Promise<void> =>
     runOperation(pendingKey.lineDestinationRegister, async () => {
-      await api.registerLineDestination(organizationId, input);
-      await reloadMembers();
+      await api.registerLineDestination(accountId, input);
+      await reloadContacts();
     });
   const removeLineDestination = async (lineDestinationId: string): Promise<void> =>
     runOperation(pendingKey.lineDestinationRemove(lineDestinationId), async () => {
-      await api.removeLineDestination(organizationId, lineDestinationId);
-      await reloadMembers();
+      await api.removeLineDestination(accountId, lineDestinationId);
+      await reloadContacts();
     });
-  const refreshMembers = () => void runOperation(pendingKey.memberRefresh, reloadMembers);
+  const refreshContacts = () => void runOperation(pendingKey.contactRefresh, reloadContacts);
   const applyPreset = (presetId: string, conflictPolicy?: 'duplicate') => void runOperation(pendingKey.presetApply(presetId), async () => {
-    await api.applyOrganizationPreset(organizationId, presetId, conflictPolicy);
+    await api.applyAccountPreset(accountId, presetId, conflictPolicy);
     const [rules, prompts, agentRules, lists, taskRoles] = await Promise.all([
-      api.organizationRules(organizationId),
-      api.organizationPrompts(organizationId),
-      api.organizationAgentRules(organizationId),
-      api.organizationLists(organizationId),
-      api.organizationTaskRoles(organizationId),
+      api.accountRules(accountId),
+      api.accountPrompts(accountId),
+      api.accountAgentRules(accountId),
+      api.accountLists(accountId),
+      api.accountTaskRoles(accountId),
     ]);
     setData((current) => ({ ...current, rules, prompts, agentRules, lists, taskRoles }));
   });
   const logout = () => void runOperation(pendingKey.logout, async () => { await api.logout(); navigate('/', { replace: true }); });
-  const reauthenticate = () => void runOperation(pendingKey.reauthenticate, async () => { window.location.assign((await api.reauthorizeAutomationInbox(organizationId)).authorizationUrl); });
-  const value: OrganizationContextValue = { ...data, ...operations, summary, setEnabled, runAutomation, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, previewDraftMailbox, createMailboxTestEvents, startDraftRuleRun, createRule, updateRule, agentTranscript, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, decideRuleRun, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, taskReassignmentProposals, taskReassignmentSkipped, suggestTaskReassignments, applyTaskReassignments, discardTaskReassignments, createMember, updateMember, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshMembers, applyPreset, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, draftRulePreview, mailTestCreatedEventIds, mailTestRuleRunIds, mailTestRefreshRequest, mailTestRefreshPlan, mailTestRefreshOutcome, prepareRefresh, planRefresh, applyRefresh, attachmentFolderPath, setAttachmentFolderPath, saveAttachmentFolderPath, responseWindowDays, setResponseWindowDays, saveResponseWindowDays, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
-  return <OrganizationContext.Provider value={value}><Outlet /></OrganizationContext.Provider>;
+  const reauthenticate = () => void runOperation(pendingKey.reauthenticate, async () => { window.location.assign((await api.reauthorizeAutomationInbox(accountId)).authorizationUrl); });
+  const value: AccountContextValue = { ...data, ...operations, summary, setEnabled, runAutomation, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, previewDraftMailbox, createMailboxTestEvents, startDraftRuleRun, createRule, updateRule, agentTranscript, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, decideRuleRun, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, taskReassignmentProposals, taskReassignmentSkipped, suggestTaskReassignments, applyTaskReassignments, discardTaskReassignments, createContact, updateContact, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshContacts, applyPreset, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, draftRulePreview, mailTestCreatedEventIds, mailTestRuleRunIds, mailTestRefreshRequest, mailTestRefreshPlan, mailTestRefreshOutcome, prepareRefresh, planRefresh, applyRefresh, attachmentFolderPath, setAttachmentFolderPath, saveAttachmentFolderPath, responseWindowDays, setResponseWindowDays, saveResponseWindowDays, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
+  return <AccountContext.Provider value={value}><Outlet /></AccountContext.Provider>;
 };
 
-type OrganizationPage = 'automation' | 'connections' | 'rules' | 'members' | 'mailbox-test' | 'rule-runs' | 'event-refresh' | 'tasks';
-export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
-  const value = useOrganization();
+type AccountPage = 'automation' | 'connections' | 'rules' | 'members' | 'mailbox-test' | 'rule-runs' | 'event-refresh' | 'tasks';
+export const AccountPage = ({ page }: { page: AccountPage }) => {
+  const value = useAccount();
   const navigation = useNavigation();
-  const auth: AuthMe = { email: value.state.identity.email, displayName: value.state.identity.displayName, organizations: value.state.organizations };
+  const auth: AuthMe = { email: value.state.identity.email, displayName: value.state.identity.displayName, accounts: value.state.accounts };
   return <Dashboard
     page={page}
     automation={value.automation}
@@ -613,9 +613,9 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     onSetEnabled={value.setEnabled}
     onLogout={value.logout}
     onReauthenticate={value.reauthenticate}
-    organization={value.organization}
-    organizationId={value.organization.organizationId}
-    organizations={auth.organizations}
+    account={value.account}
+    accountId={value.account.accountId}
+    accounts={auth.accounts}
     connections={value.connections}
     lineChannelAccessToken={value.lineChannelAccessToken}
     lineChannelSecret={value.lineChannelSecret}
@@ -662,8 +662,8 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     onPreviewDraftMailbox={value.previewDraftMailbox}
     onCreateMailboxTestEvents={value.createMailboxTestEvents}
     onStartDraftRuleRun={value.startDraftRuleRun}
-    organizationRules={value.rules}
-    organizationLists={value.lists}
+    accountRules={value.rules}
+    accountLists={value.lists}
     onCreateRule={value.createRule}
     onUpdateRule={value.updateRule}
     prompts={value.prompts}
@@ -678,11 +678,11 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     onCreateAgentRule={value.createAgentRule}
     onUpdateAgentRule={value.updateAgentRule}
     onLoadAgentTranscript={value.loadAgentTranscript}
-    organizationTasks={value.tasks}
+    accountTasks={value.tasks}
     onUpdateTask={value.updateTask}
     taskRoles={value.taskRoles.roles}
     taskRoleAssignments={value.taskRoles.assignments}
-    taskMembers={value.taskRoles.members}
+    taskContacts={value.taskRoles.contacts}
     onCreateTaskRole={value.createTaskRole}
     onUpdateTaskRole={value.updateTaskRole}
     onDeleteTaskRole={value.deleteTaskRole}
@@ -693,15 +693,15 @@ export const OrganizationPage = ({ page }: { page: OrganizationPage }) => {
     onSuggestTaskReassignments={value.suggestTaskReassignments}
     onApplyTaskReassignments={value.applyTaskReassignments}
     onDiscardTaskReassignments={value.discardTaskReassignments}
-    organizationMembers={value.members}
+    accountContacts={value.contacts}
     lineDestinations={value.lineDestinations}
-    onCreateMember={value.createMember}
-    onUpdateMember={value.updateMember}
+    onCreateContact={value.createContact}
+    onUpdateContact={value.updateContact}
     onSetLineDestination={value.setLineDestination}
     onUnlinkLineDestination={value.unlinkLineDestination}
     onRegisterLineDestination={value.registerLineDestination}
     onRemoveLineDestination={value.removeLineDestination}
-    onRefreshMembers={value.refreshMembers}
+    onRefreshContacts={value.refreshContacts}
     presets={value.presets}
     onApplyPreset={value.applyPreset}
   />;
@@ -726,7 +726,7 @@ export const RouteError = ({ logout = api.logout }: { logout?: Logout }) => {
   const revalidator = useRevalidator();
   const [busy, setBusy] = useState(false);
   const [logoutError, setLogoutError] = useState('');
-  const message = isRouteErrorResponse(error) ? error.status === 404 ? 'Organizationまたはページが見つかりません。' : error.statusText : error instanceof Error ? error.message : '画面を表示できませんでした。';
+  const message = isRouteErrorResponse(error) ? error.status === 404 ? 'Accountまたはページが見つかりません。' : error.statusText : error instanceof Error ? error.message : '画面を表示できませんでした。';
   const leave = async () => {
     setBusy(true);
     setLogoutError('');
@@ -753,20 +753,20 @@ export const RouteError = ({ logout = api.logout }: { logout?: Logout }) => {
 
 export const LoadingRoute = () => <SetupCard><div className="loading"><RefreshCw className="spin" size={18} />読み込み中…</div></SetupCard>;
 
-export const organizationDefaultName = (state: Extract<AppState, { kind: 'ready' }>): string => defaultOrganizationName({ email: state.identity.email, displayName: state.identity.displayName, organizations: state.organizations });
+export const accountDefaultName = (state: Extract<AppState, { kind: 'ready' }>): string => defaultAccountName({ email: state.identity.email, displayName: state.identity.displayName, accounts: state.accounts });
 
 /**
- * The single-use link that first brings a Member into the Member Portal. It is
- * the only entry: a Member reaches it through their linked LINE Destination,
+ * The single-use link that first brings a Contact into the Contact Portal. It is
+ * the only entry: a Contact reaches it through their linked LINE Destination,
  * signs in with the identity-only Google grant, and is bound to that account.
  */
-export const MemberPortalJoinRoute = () => {
+export const ContactPortalJoinRoute = () => {
   const state = useLoaderData() as AppState;
   const parameters = useParams();
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const organizationId = parameters.organizationId ?? '';
+  const accountId = parameters.accountId ?? '';
   const token = parameters.token ?? '';
   const signIn = async () => {
     setBusy(true); setError('');
@@ -776,7 +776,7 @@ export const MemberPortalJoinRoute = () => {
   const join = async () => {
     setBusy(true); setError('');
     try {
-      await api.joinMemberPortal(organizationId, token);
+      await api.joinContactPortal(accountId, token);
       navigate('/portal', { replace: true });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'このリンクは使用できませんでした。');
@@ -784,7 +784,7 @@ export const MemberPortalJoinRoute = () => {
     }
   };
   return <SetupCard>
-    <div className="setup-brand"><strong>Mail Automation</strong><small>MEMBER PORTAL</small></div>
+    <div className="setup-brand"><strong>Mail Automation</strong><small>CONTACT PORTAL</small></div>
     <p className="eyebrow">JOIN</p><h1>メンバーページを開く</h1>
     {error && <p className="setup-error">{error}</p>}
     {state.kind === 'signed_out'
@@ -799,33 +799,33 @@ export const MemberPortalJoinRoute = () => {
   </SetupCard>;
 };
 
-const attendanceLabel: Record<MemberAttendanceStatus, string> = {
+const attendanceLabel: Record<ContactAttendanceStatus, string> = {
   unanswered: '未回答',
   attending: '出席',
   not_attending: '欠席',
 };
 
-/** The one signed-in page a Member has: attendance, comments, and their Tasks. */
-export interface MemberPortalViewProps {
-  portal: MemberPortal;
+/** The one signed-in page a Contact has: attendance, comments, and their Tasks. */
+export interface ContactPortalViewProps {
+  portal: ContactPortal;
   running: readonly string[];
   pending: (key: string) => boolean;
   settled: (key: string) => boolean;
   error: string;
-  onAttendance: (eventId: string, status: MemberAttendanceStatus, comment: string) => void;
-  onComment: (eventId: string, status: MemberAttendanceStatus, comment: string) => void;
+  onAttendance: (eventId: string, status: ContactAttendanceStatus, comment: string) => void;
+  onComment: (eventId: string, status: ContactAttendanceStatus, comment: string) => void;
   onTaskCompleted: (taskId: string, completed: boolean) => void;
   onTaskRemarks: (taskId: string, remarks: string) => void;
   onLogout: () => void;
 }
 
-/** The Member Portal itself: every control reports the one answer it is sending. */
-export const MemberPortalView = ({ portal, running, pending, settled, error, onAttendance, onComment, onTaskCompleted, onTaskRemarks, onLogout }: MemberPortalViewProps) => {
+/** The Contact Portal itself: every control reports the one answer it is sending. */
+export const ContactPortalView = ({ portal, running, pending, settled, error, onAttendance, onComment, onTaskCompleted, onTaskRemarks, onLogout }: ContactPortalViewProps) => {
   const leaving = pending(pendingKey.portalLogout);
   return <main className="portal-shell">
     <PendingOverlay running={running} />
     <header className="portal-header">
-      <div><p className="eyebrow">{portal.organization.name}</p><h1>{portal.member.name} さんのページ</h1></div>
+      <div><p className="eyebrow">{portal.account.name}</p><h1>{portal.contact.name} さんのページ</h1></div>
       <button className="quiet-button" disabled={leaving} onClick={onLogout}>{leaving ? 'ログアウト中…' : 'ログアウト'}</button>
     </header>
     {error && <p className="setup-error">{error}</p>}
@@ -833,7 +833,7 @@ export const MemberPortalView = ({ portal, running, pending, settled, error, onA
       <h2>出欠登録</h2>
       {portal.events.length === 0 && <p className="portal-empty">登録が必要な予定はありません。</p>}
       {portal.events.map((event) => {
-        const answering = (status: MemberAttendanceStatus): boolean => pending(pendingKey.portalAttendance(event.eventId, status));
+        const answering = (status: ContactAttendanceStatus): boolean => pending(pendingKey.portalAttendance(event.eventId, status));
         const commenting = pending(pendingKey.portalComment(event.eventId));
         return <article key={event.eventId} className="portal-event" aria-busy={commenting || answering('attending') || answering('not_attending')}>
           <div><h3>{event.title}</h3><p>{event.startsAt}{event.location && ` ・ ${event.location}`}</p></div>
@@ -894,27 +894,27 @@ export const MemberPortalView = ({ portal, running, pending, settled, error, onA
   </main>;
 };
 
-/** The one signed-in page a Member has: attendance, comments, and their Tasks. */
-export const MemberPortalRoute = () => {
-  const [portal, setPortal] = useState<MemberPortal | null>(null);
+/** The one signed-in page a Contact has: attendance, comments, and their Tasks. */
+export const ContactPortalRoute = () => {
+  const [portal, setPortal] = useState<ContactPortal | null>(null);
   const [loadError, setLoadError] = useState('');
   const { running, pending, settled, error, run } = usePendingOperations();
-  const reload = async (): Promise<void> => { setPortal(await api.memberPortal()); };
+  const reload = async (): Promise<void> => { setPortal(await api.contactPortal()); };
   useEffect(() => {
     void reload().catch((cause: unknown) => setLoadError(cause instanceof Error ? cause.message : 'メンバーページを開けませんでした。'));
   }, []);
   const answer = (key: string, work: () => Promise<unknown>): void => void run(key, async () => { await work(); await reload(); });
   if (!portal) return <SetupCard>{loadError ? <p className="setup-error">{loadError}</p> : <div className="loading"><RefreshCw className="spin" size={18} />読み込み中…</div>}</SetupCard>;
-  return <MemberPortalView
+  return <ContactPortalView
     portal={portal}
     running={running}
     pending={pending}
     settled={settled}
     error={loadError || error}
-    onAttendance={(eventId, status, comment) => answer(pendingKey.portalAttendance(eventId, status), () => api.registerMemberAttendance(eventId, { status, comment }))}
-    onComment={(eventId, status, comment) => answer(pendingKey.portalComment(eventId), () => api.registerMemberAttendance(eventId, { status, comment }))}
-    onTaskCompleted={(taskId, completed) => answer(pendingKey.portalTask(taskId), () => api.updateMemberTask(taskId, { completed }))}
-    onTaskRemarks={(taskId, remarks) => answer(pendingKey.portalRemarks(taskId), () => api.updateMemberTask(taskId, { remarks }))}
+    onAttendance={(eventId, status, comment) => answer(pendingKey.portalAttendance(eventId, status), () => api.registerContactAttendance(eventId, { status, comment }))}
+    onComment={(eventId, status, comment) => answer(pendingKey.portalComment(eventId), () => api.registerContactAttendance(eventId, { status, comment }))}
+    onTaskCompleted={(taskId, completed) => answer(pendingKey.portalTask(taskId), () => api.updateContactTask(taskId, { completed }))}
+    onTaskRemarks={(taskId, remarks) => answer(pendingKey.portalRemarks(taskId), () => api.updateContactTask(taskId, { remarks }))}
     onLogout={() => void run(pendingKey.portalLogout, async () => { await api.logout(); window.location.assign('/'); })}
   />;
 };

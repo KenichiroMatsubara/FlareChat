@@ -1,21 +1,21 @@
 import { and, eq } from 'drizzle-orm';
 
 import { ensureBaselineSchemaRule } from './baseline-automation';
-import { createOrganizationKey, decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
+import { createAccountKey, decrypt, encrypt, masterKey, unwrapAccountKey } from './cryptography';
 import { fleetMigration } from './fleet-migration';
-import { provisionOrganizationDatabase } from './organization-db';
+import { provisionAccountDatabase } from './account-db';
 import { applyPreset } from './presets';
-import { controlDatabase, organizationDatabase } from './storage/database';
-import { admins, organizationKeys, organizationProvisionings, organizations } from './storage/control-schema';
-import type { OrganizationProvisioningRecord } from './storage/control-schema';
-import { googleConnections } from './storage/organization-schema';
+import { controlDatabase, accountDatabase } from './storage/database';
+import { accountIdentities, accountKeys, accountProvisionings, accounts } from './storage/control-schema';
+import type { AccountProvisioningRecord } from './storage/control-schema';
+import { googleConnections } from './storage/account-schema';
 import type { Bindings } from './types';
 
-type ProvisioningPhase = NonNullable<OrganizationProvisioningRecord['phase']>;
+type ProvisioningPhase = NonNullable<AccountProvisioningRecord['phase']>;
 
 export class SchemaReleaseInProgressError extends Error {
   constructor() {
-    super('Organization provisioning is paused during a schema release.');
+    super('Account provisioning is paused during a schema release.');
     this.name = 'SchemaReleaseInProgressError';
   }
 }
@@ -26,50 +26,50 @@ const requireProvisioningAllowed = async (env: Bindings): Promise<void> => {
   }
 };
 
-const recordPhase = async (env: Bindings, organizationId: string, phase: ProvisioningPhase): Promise<void> => {
-  await controlDatabase(env.CONTROL_DB).update(organizationProvisionings).set({
+const recordPhase = async (env: Bindings, accountId: string, phase: ProvisioningPhase): Promise<void> => {
+  await controlDatabase(env.CONTROL_DB).update(accountProvisionings).set({
     phase,
     updatedAt: new Date().toISOString(),
-  }).where(eq(organizationProvisionings.organizationId, organizationId)).run();
+  }).where(eq(accountProvisionings.accountId, accountId)).run();
 };
 
-export const provisionOrganization = async (
+export const provisionAccount = async (
   env: Bindings,
-  provisioning: OrganizationProvisioningRecord,
+  provisioning: AccountProvisioningRecord,
 ): Promise<void> => {
   await requireProvisioningAllowed(env);
   const key = await masterKey(env.CREDENTIAL_MASTER_KEY);
-  await recordPhase(env, provisioning.organizationId, 'allocating_database');
-  const provisioned = await provisionOrganizationDatabase(env, {
-    organizationId: provisioning.organizationId,
+  await recordPhase(env, provisioning.accountId, 'allocating_database');
+  const provisioned = await provisionAccountDatabase(env, {
+    accountId: provisioning.accountId,
     inboxAddress: provisioning.inboxAddress,
     bindingName: provisioning.bindingName,
     databaseId: provisioning.databaseId,
   });
   const control = controlDatabase(env.CONTROL_DB);
-  await control.update(organizationProvisionings).set({
+  await control.update(accountProvisionings).set({
     databaseId: provisioned.databaseId,
     bindingName: provisioned.bindingName,
     updatedAt: new Date().toISOString(),
-  }).where(eq(organizationProvisionings.organizationId, provisioning.organizationId)).run();
-  await recordPhase(env, provisioning.organizationId, 'applying_schema');
+  }).where(eq(accountProvisionings.accountId, provisioning.accountId)).run();
+  await recordPhase(env, provisioning.accountId, 'applying_schema');
   await provisioned.initialize();
-  const organization = organizationDatabase(provisioned.database);
+  const account = accountDatabase(provisioned.database);
   if (provisioning.presetId) {
-    await applyPreset(organization, provisioning.organizationId, provisioning.presetId, {
+    await applyPreset(account, provisioning.accountId, provisioning.presetId, {
       applicationKey: provisioning.provisioningKey,
     });
   }
-  await ensureBaselineSchemaRule(organization, provisioning.organizationId);
+  await ensureBaselineSchemaRule(account, provisioning.accountId);
   const keyRecord = await control.select({
-    masterKeyVersion: organizationKeys.masterKeyVersion,
-    wrappedKeyEnvelope: organizationKeys.wrappedKeyEnvelope,
-  }).from(organizationKeys).where(eq(organizationKeys.organizationId, provisioning.organizationId)).get();
-  if (!keyRecord) throw new Error('Organization encryption key is missing.');
-  const organizationKey = await unwrapOrganizationKey({
+    masterKeyVersion: accountKeys.masterKeyVersion,
+    wrappedKeyEnvelope: accountKeys.wrappedKeyEnvelope,
+  }).from(accountKeys).where(eq(accountKeys.accountId, provisioning.accountId)).get();
+  if (!keyRecord) throw new Error('Account encryption key is missing.');
+  const accountKey = await unwrapAccountKey({
     masterKeyVersion: keyRecord.masterKeyVersion,
     envelope: JSON.parse(keyRecord.wrappedKeyEnvelope),
-  }, key, provisioning.organizationId);
+  }, key, provisioning.accountId);
   const tokenSet = await decrypt(
     JSON.parse(provisioning.credentialEnvelope),
     key,
@@ -77,12 +77,12 @@ export const provisionOrganization = async (
   );
   const tokenEnvelope = await encrypt(
     tokenSet,
-    organizationKey,
-    `google-connection:${provisioning.organizationId}:automation-inbox`,
+    accountKey,
+    `google-connection:${provisioning.accountId}:automation-inbox`,
   );
   const timestamp = new Date().toISOString();
-  await recordPhase(env, provisioning.organizationId, 'storing_credentials');
-  await organization.insert(googleConnections).values({
+  await recordPhase(env, provisioning.accountId, 'storing_credentials');
+  await account.insert(googleConnections).values({
     id: crypto.randomUUID(),
     kind: 'automation_inbox',
     googleSubject: provisioning.googleSubject,
@@ -107,32 +107,32 @@ export const provisionOrganization = async (
       updatedAt: timestamp,
     },
   }).run();
-  await recordPhase(env, provisioning.organizationId, 'verifying_binding');
+  await recordPhase(env, provisioning.accountId, 'verifying_binding');
   await provisioned.finalize();
   await requireProvisioningAllowed(env);
-  await recordPhase(env, provisioning.organizationId, 'activating_organization');
+  await recordPhase(env, provisioning.accountId, 'activating_organization');
   await control.batch([
-    control.update(organizations).set({
+    control.update(accounts).set({
       databaseId: provisioned.databaseId,
       bindingName: provisioned.bindingName,
       status: 'active',
       updatedAt: timestamp,
-    }).where(eq(organizations.id, provisioning.organizationId)),
-    control.update(admins).set({ state: 'active', updatedAt: timestamp }).where(and(
-      eq(admins.organizationId, provisioning.organizationId),
-      eq(admins.identityId, provisioning.ownerIdentityId),
+    }).where(eq(accounts.id, provisioning.accountId)),
+    control.update(accountIdentities).set({ state: 'active', updatedAt: timestamp }).where(and(
+      eq(accountIdentities.accountId, provisioning.accountId),
+      eq(accountIdentities.identityId, provisioning.ownerIdentityId),
     )),
-    control.delete(organizationProvisionings)
-      .where(eq(organizationProvisionings.organizationId, provisioning.organizationId)),
+    control.delete(accountProvisionings)
+      .where(eq(accountProvisionings.accountId, provisioning.accountId)),
   ]);
 };
 
-export const createProvisioningOrganizationKey = async (env: Bindings, organizationId: string): Promise<void> => {
+export const createProvisioningAccountKey = async (env: Bindings, accountId: string): Promise<void> => {
   const key = await masterKey(env.CREDENTIAL_MASTER_KEY);
-  const wrapped = await createOrganizationKey(key, env.CREDENTIAL_MASTER_KEY_VERSION, organizationId);
+  const wrapped = await createAccountKey(key, env.CREDENTIAL_MASTER_KEY_VERSION, accountId);
   const timestamp = new Date().toISOString();
-  await controlDatabase(env.CONTROL_DB).insert(organizationKeys).values({
-    organizationId,
+  await controlDatabase(env.CONTROL_DB).insert(accountKeys).values({
+    accountId,
     masterKeyVersion: wrapped.masterKeyVersion,
     wrappedKeyEnvelope: JSON.stringify(wrapped.envelope),
     createdAt: timestamp,

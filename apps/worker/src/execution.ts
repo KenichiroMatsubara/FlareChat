@@ -1,7 +1,7 @@
 import { and, asc, desc, eq } from 'drizzle-orm';
 
-import { organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
-import { ruleEffects, ruleRuns, sourceMessages } from './storage/organization-schema';
+import { accountDatabase as drizzleAccountDatabase } from './storage/database';
+import { ruleEffects, ruleRuns, sourceMessages } from './storage/account-schema';
 
 export type ExecutionMode = 'read_only' | 'approval' | 'unattended';
 export type RuleReference = { type: 'schema' | 'agent'; id: string; revision: number };
@@ -88,7 +88,7 @@ interface RuleExecutionDependencies {
 const parsed = (value: string | null): unknown | null => value === null ? null : JSON.parse(value) as unknown;
 
 export const createRuleExecution = (dependencies: RuleExecutionDependencies) => {
-  const database = drizzleOrganizationDatabase(dependencies.database);
+  const database = drizzleAccountDatabase(dependencies.database);
   const currentTime = dependencies.now ?? (() => new Date());
   const nextId = dependencies.id ?? (() => crypto.randomUUID());
   const approvalExpiry = (date: Date): string => new Date(date.getTime() + 7 * 86_400_000).toISOString();

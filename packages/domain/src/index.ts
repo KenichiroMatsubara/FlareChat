@@ -1,4 +1,4 @@
-export type OrganizationStatus = 'provisioning' | 'active' | 'suspended' | 'failed';
+export type AccountStatus = 'provisioning' | 'active' | 'suspended' | 'failed';
 export type ListKind = 'source' | 'recipient' | 'line';
 export type RuleStatus = 'draft' | 'active' | 'suspended' | 'archived';
 export type AgentRuleStatus = RuleStatus;
@@ -7,17 +7,17 @@ export type AgentExecutionMode = ExecutionMode;
 export type EventStatus = 'draft' | 'scheduled' | 'cancelled' | 'exception';
 export type AttendanceStatus = 'unanswered' | 'attending' | 'not_attending';
 
-export interface Organization {
+export interface Account {
   id: string;
   name: string;
   inboxAddress: string;
-  status: OrganizationStatus;
+  status: AccountStatus;
   createdAt: string;
 }
 
 export interface TypedList {
   id: string;
-  organizationId: string;
+  accountId: string;
   kind: ListKind;
   name: string;
   description: string;
@@ -36,7 +36,7 @@ export interface ListItem {
 
 export interface AutomationRule {
   id: string;
-  organizationId: string;
+  accountId: string;
   name: string;
   status: RuleStatus;
   executionMode: ExecutionMode;
@@ -52,7 +52,7 @@ export interface AutomationRule {
 
 export interface Prompt {
   id: string;
-  organizationId: string;
+  accountId: string;
   name: string;
   instructions: string;
   revision: number;
@@ -62,7 +62,7 @@ export interface Prompt {
 
 export interface AgentRule {
   id: string;
-  organizationId: string;
+  accountId: string;
   name: string;
   status: AgentRuleStatus;
   executionMode: AgentExecutionMode;
@@ -94,7 +94,7 @@ export interface AgentRunIndex {
 
 export interface ScheduledEvent {
   id: string;
-  organizationId: string;
+  accountId: string;
   title: string;
   startsAt: string;
   endsAt: string;
@@ -134,7 +134,7 @@ export interface AppIdentity {
 }
 
 export interface AppMembership {
-  organizationId: string;
+  accountId: string;
   name: string;
   status: string;
 }
@@ -150,19 +150,19 @@ export type AppState =
   | {
     kind: 'provisioning';
     identity: AppIdentity;
-    organization: { id: string; name: string };
+    account: { id: string; name: string };
     phase: ProvisioningPhase | null;
   }
   | {
     kind: 'provisioning_failed';
     identity: AppIdentity;
-    organization: { id: string; name: string };
+    account: { id: string; name: string };
     phase: ProvisioningPhase | null;
     error: string | null;
     retryUntil: string;
   }
-  | { kind: 'ready'; identity: AppIdentity; organizations: AppMembership[] }
-  | { kind: 'member'; identity: AppIdentity; organization: { organizationId: string; name: string } };
+  | { kind: 'ready'; identity: AppIdentity; accounts: AppMembership[] }
+  | { kind: 'member'; identity: AppIdentity; account: { accountId: string; name: string } };
 
 export interface PasskeyCreationOptions {
   challenge: string;
@@ -204,8 +204,8 @@ export { MAX_DELIVERY_ATTEMPTS, MAX_RETRY_WINDOW_MS, nextRetry } from './retry';
 export type { RetryDecision } from './retry';
 export { CAPACITY_CRITICAL_THRESHOLD, CAPACITY_WARNING_THRESHOLD, capacityWarning } from './capacity';
 export type { CapacityWarning } from './capacity';
-export { canConsumeMemberLink } from './member-links';
-export type { MemberLinkCheck } from './member-links';
+export { canConsumeContactLink } from './member-links';
+export type { ContactLinkCheck } from './member-links';
 export { ATTENDANCE_REMINDER_DAYS, TASK_REMINDER_DAYS, shouldSendAttendanceReminder, shouldSendTaskReminder } from './reminders';
 export { classifyEventChange } from './event-changes';
 export type { EventChangeKind } from './event-changes';

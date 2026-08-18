@@ -2,8 +2,8 @@ import { CheckSquare, CircleAlert, LogOut, Mail, Menu, Play, RefreshCw, Settings
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
-import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, OperationalTaskRole, OrganizationAgentRule, OrganizationConnections, OrganizationLineDestination, OrganizationMembership, OrganizationPrompt, OrganizationMember, OrganizationMemberInput, OrganizationRule, OrganizationRuleInput, OrganizationTask, OrganizationTypedList, PresetSummary, MemberLineDestinationInput, RuleRun, TaskAssignmentProposal, TaskReassignmentReview, TaskRoleAssignment } from './api';
-import { AutomationPage, ConnectionsPage, EventRefreshPage, MailboxTestPage, MembersPage, RuleRunsPage, RulesPage, TasksPage } from './dashboard-pages';
+import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, OperationalTaskRole, AccountAgentRule, AccountConnections, AccountLineDestination, AccountMembership, AccountPrompt, AccountContact, AccountContactInput, AccountRule, AccountRuleInput, AccountTask, AccountTypedList, PresetSummary, ContactLineDestinationInput, RuleRun, TaskAssignmentProposal, TaskReassignmentReview, TaskRoleAssignment } from './api';
+import { AutomationPage, ConnectionsPage, EventRefreshPage, MailboxTestPage, ContactsPage, RuleRunsPage, RulesPage, TasksPage } from './dashboard-pages';
 import { pendingKey, ROUTE_NAVIGATION_KEY } from './pending';
 import { PendingOverlay } from './progress';
 
@@ -57,10 +57,10 @@ export interface DashboardProps {
   onSetEnabled: (enabled: boolean) => void;
   onLogout: () => void;
   onReauthenticate: () => void;
-  organization: { name: string } | null;
-  organizationId?: string;
-  organizations?: OrganizationMembership[];
-  connections: OrganizationConnections | null;
+  account: { name: string } | null;
+  accountId?: string;
+  accounts?: AccountMembership[];
+  connections: AccountConnections | null;
   lineChannelAccessToken: string;
   lineChannelSecret: string;
   aiApiKey: string;
@@ -106,12 +106,12 @@ export interface DashboardProps {
   onPrepareRefresh: () => void;
   onPlanRefresh: () => void;
   onApplyRefresh: (candidateIndexes: number[]) => void;
-  organizationRules: OrganizationRule[];
-  organizationLists: OrganizationTypedList[];
-  onCreateRule: (input: OrganizationRuleInput) => Promise<void>;
-  onUpdateRule: (ruleId: string, input: Partial<Pick<OrganizationRule, 'state' | 'executionMode' | 'permittedRecipientListIds' | 'permittedLineListIds'>>) => Promise<void>;
-  prompts: OrganizationPrompt[];
-  agentRules: OrganizationAgentRule[];
+  accountRules: AccountRule[];
+  accountLists: AccountTypedList[];
+  onCreateRule: (input: AccountRuleInput) => Promise<void>;
+  onUpdateRule: (ruleId: string, input: Partial<Pick<AccountRule, 'state' | 'executionMode' | 'permittedRecipientListIds' | 'permittedLineListIds'>>) => Promise<void>;
+  prompts: AccountPrompt[];
+  agentRules: AccountAgentRule[];
   agentRuns: AgentRunIndex[];
   agentTranscript: AgentRunTranscript | null;
   ruleRuns: RuleRun[];
@@ -122,15 +122,15 @@ export interface DashboardProps {
   onCreateAgentRule: (input: { name: string; promptId: string; state: 'draft' | 'active'; executionMode?: 'read_only' | 'approval' | 'unattended'; selectionPolicy: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[]; priority?: number }) => Promise<void>;
   onUpdateAgentRule: (agentRuleId: string, input: { state?: 'draft' | 'active' | 'suspended' | 'archived'; executionMode?: 'read_only' | 'approval' | 'unattended'; permittedRecipientListIds?: string[]; permittedLineListIds?: string[] }) => Promise<void>;
   onLoadAgentTranscript: (runId: string) => void;
-  organizationTasks: OrganizationTask[];
+  accountTasks: AccountTask[];
   onUpdateTask: (taskId: string, input: { completed?: boolean; remarks?: string }) => void;
   taskRoles: OperationalTaskRole[];
   taskRoleAssignments: TaskRoleAssignment[];
-  taskMembers: Array<{ memberId: string; displayName: string }>;
+  taskContacts: Array<{ contactId: string; displayName: string }>;
   onCreateTaskRole: (input: { displayName: string; description: string }) => Promise<void>;
   onUpdateTaskRole: (roleId: string, input: { displayName?: string; description?: string }) => Promise<void>;
   onDeleteTaskRole: (roleId: string) => Promise<void>;
-  onAssignTaskRole: (roleId: string, memberId: string) => void;
+  onAssignTaskRole: (roleId: string, contactId: string) => void;
   taskReassignment: TaskReassignmentReview;
   taskReassignmentProposals: TaskAssignmentProposal[];
   /** Task ids an accepted proposal could not be applied to. */
@@ -138,15 +138,15 @@ export interface DashboardProps {
   onSuggestTaskReassignments: () => void;
   onApplyTaskReassignments: (assignments: Array<{ taskId: string; roleId: string }>) => void;
   onDiscardTaskReassignments: () => void;
-  organizationMembers: OrganizationMember[];
-  lineDestinations: OrganizationLineDestination[];
-  onCreateMember: (input: OrganizationMemberInput) => Promise<OrganizationMember | null>;
-  onUpdateMember: (memberId: string, input: Partial<Pick<OrganizationMember, 'name' | 'email' | 'tags' | 'state'>>) => Promise<void>;
-  onSetLineDestination: (memberId: string, input: MemberLineDestinationInput) => Promise<void>;
-  onUnlinkLineDestination: (memberId: string, lineDestinationId: string) => Promise<void>;
-  onRegisterLineDestination: (input: MemberLineDestinationInput) => Promise<void>;
+  accountContacts: AccountContact[];
+  lineDestinations: AccountLineDestination[];
+  onCreateContact: (input: AccountContactInput) => Promise<AccountContact | null>;
+  onUpdateContact: (contactId: string, input: Partial<Pick<AccountContact, 'name' | 'email' | 'tags' | 'state'>>) => Promise<void>;
+  onSetLineDestination: (contactId: string, input: ContactLineDestinationInput) => Promise<void>;
+  onUnlinkLineDestination: (contactId: string, lineDestinationId: string) => Promise<void>;
+  onRegisterLineDestination: (input: ContactLineDestinationInput) => Promise<void>;
   onRemoveLineDestination: (lineDestinationId: string) => Promise<void>;
-  onRefreshMembers: () => void;
+  onRefreshContacts: () => void;
   presets: PresetSummary[];
   onApplyPreset: (presetId: string, conflictPolicy?: 'duplicate') => void;
 }
@@ -164,7 +164,7 @@ export const Dashboard = (props: DashboardProps) => {
       : page === 'rules'
         ? <RulesPage {...props} />
         : page === 'members'
-          ? <MembersPage {...props} />
+          ? <ContactsPage {...props} />
           : page === 'tasks'
             ? <TasksPage {...props} />
             : page === 'mailbox-test'
@@ -197,7 +197,7 @@ export const Dashboard = (props: DashboardProps) => {
       <div className="app-brand"><span><Mail size={20} /></span><strong>Mail Automation</strong></div>
       <button type="button" className="topbar-toggle" aria-controls={NAVIGATION_PANEL_ID} aria-expanded={menuOpen} aria-label={menuOpen ? 'メニューを閉じる' : 'メニューを開く'} onClick={() => setMenuOpen((open) => !open)}>{menuOpen ? <X size={20} /> : <Menu size={20} />}</button>
       <div id={NAVIGATION_PANEL_ID} className={menuOpen ? 'topbar-panel open' : 'topbar-panel'}>
-        {props.organizations && props.organizationId && <label className="organization-picker"><span className="sr-only">Organization</span><select aria-label="Organization" value={props.organizationId} disabled={props.navigating} onChange={(event) => navigate(`/organizations/${encodeURIComponent(event.target.value)}/automation`)}>{props.organizations.map((organization) => <option key={organization.organizationId} value={organization.organizationId}>{organization.name}</option>)}</select></label>}
+        {props.accounts && props.accountId && <label className="organization-picker"><span className="sr-only">Account</span><select aria-label="Account" value={props.accountId} disabled={props.navigating} onChange={(event) => navigate(`/organizations/${encodeURIComponent(event.target.value)}/automation`)}>{props.accounts.map((account) => <option key={account.accountId} value={account.accountId}>{account.name}</option>)}</select></label>}
         <nav aria-label="メインナビゲーション">
           {navigationItems.map((item) => <NavLink key={item.to} to={item.to} className={({ isActive, isPending }) => [isActive ? 'active' : '', isPending ? 'loading' : ''].filter(Boolean).join(' ')} onClick={() => setMenuOpen(false)}>{item.icon}{item.label}</NavLink>)}
         </nav>

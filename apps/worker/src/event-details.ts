@@ -33,7 +33,7 @@ export interface TaskRoleDescription {
  */
 export type SourceMessageKind = 'invitation' | 'response';
 
-/** One person from outside the Organization named by an Event Response. */
+/** One person from outside the Account named by an Event Response. */
 export interface GuestDetails {
   name: string;
   affiliation: string;

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import organizationInitialMigration from '../migrations/organization/0000_initial.sql';
+import accountInitialMigration from '../migrations/organization/0000_initial.sql';
 import { createMigratedTestD1, createTestD1Database, type TestD1Database } from '../test/d1';
-import { seedOrganizationRoute } from '../test/seed';
+import { seedAccountRoute } from '../test/seed';
 import { fleetMigration } from './fleet-migration';
 import type { Bindings } from './types';
 
@@ -13,10 +13,10 @@ afterEach(() => {
   for (const database of openDatabases.splice(0)) database.close();
 });
 
-const initialOrganizationDatabase = (): TestD1Database => {
+const initialAccountDatabase = (): TestD1Database => {
   const database = createTestD1Database();
   openDatabases.push(database);
-  for (const statement of organizationInitialMigration
+  for (const statement of accountInitialMigration
     .split('--> statement-breakpoint')
     .map((value) => value.trim())
     .filter(Boolean)) {
@@ -30,7 +30,7 @@ const initialOrganizationDatabase = (): TestD1Database => {
 };
 
 describe('Fleet Migration', () => {
-  it('pauses Organization provisioning until the prepared release is completed', async () => {
+  it('pauses Account provisioning until the prepared release is completed', async () => {
     const control = createMigratedTestD1('control');
     openDatabases.push(control);
     const environment = { CONTROL_DB: control.binding } as unknown as Bindings;
@@ -59,17 +59,17 @@ describe('Fleet Migration', () => {
     } as unknown as Bindings)).rejects.toThrow(/another schema release/iu);
   });
 
-  it('makes every recorded Organization database current before release', async () => {
+  it('makes every recorded Account database current before release', async () => {
     const control = createMigratedTestD1('control');
-    const active = initialOrganizationDatabase();
-    const suspended = initialOrganizationDatabase();
+    const active = initialAccountDatabase();
+    const suspended = initialAccountDatabase();
     openDatabases.push(control);
-    seedOrganizationRoute(control, {
+    seedAccountRoute(control, {
       id: 'organization-active',
       bindingName: 'ORG_ACTIVE',
       status: 'active',
     });
-    seedOrganizationRoute(control, {
+    seedAccountRoute(control, {
       id: 'organization-suspended',
       bindingName: 'ORG_SUSPENDED',
       status: 'suspended',
@@ -93,10 +93,10 @@ describe('Fleet Migration', () => {
     )).toEqual([]);
   });
 
-  it('migrates an unbound production Organization database by its recorded database ID', async () => {
+  it('migrates an unbound production Account database by its recorded database ID', async () => {
     const control = createMigratedTestD1('control');
     openDatabases.push(control);
-    seedOrganizationRoute(control, {
+    seedAccountRoute(control, {
       id: 'organization-production',
       bindingName: 'ORG_PRODUCTION',
       databaseId: 'database-production',
@@ -150,9 +150,9 @@ describe('Fleet Migration', () => {
     expect(applied.has('0008_rule_permitted_lists.sql')).toBe(true);
   });
 
-  it('includes an allocated database that is still in Organization provisioning', async () => {
+  it('includes an allocated database that is still in Account provisioning', async () => {
     const control = createMigratedTestD1('control');
-    const provisioning = initialOrganizationDatabase();
+    const provisioning = initialAccountDatabase();
     openDatabases.push(control);
     const timestamp = '2026-07-31T00:00:00.000Z';
     control.execute(
@@ -160,7 +160,7 @@ describe('Fleet Migration', () => {
         (id, name, status, database_id, binding_name, created_at, updated_at)
        VALUES (?, ?, 'provisioning', NULL, ?, ?, ?)`,
       'organization-provisioning',
-      'Provisioning Organization',
+      'Provisioning Account',
       'ORG_PROVISIONING',
       timestamp,
       timestamp,

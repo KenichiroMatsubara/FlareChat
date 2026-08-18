@@ -1,4 +1,4 @@
-import { createOrganizationKey, encrypt, masterKey, unwrapOrganizationKey } from '../src/cryptography';
+import { createAccountKey, encrypt, masterKey, unwrapAccountKey } from '../src/cryptography';
 import type { Bindings } from '../src/types';
 import { createTestApp, type TestApp } from './app';
 import { createMemoryR2, type MemoryR2 } from './seed';
@@ -16,8 +16,8 @@ export const createAutomationTestApp = async (
 ): Promise<AutomationTestApp> => {
   const fixture = createTestApp({ includeAutomationInbox: false });
   const deploymentKey = await masterKey(MASTER_KEY_MATERIAL);
-  const wrapped = await createOrganizationKey(deploymentKey, 'v1', 'organization-1');
-  const organizationKey = await unwrapOrganizationKey(wrapped, deploymentKey, 'organization-1');
+  const wrapped = await createAccountKey(deploymentKey, 'v1', 'organization-1');
+  const accountKey = await unwrapAccountKey(wrapped, deploymentKey, 'organization-1');
   const googleCredential = await encrypt(
     JSON.stringify({
       accessToken: 'access-token',
@@ -26,7 +26,7 @@ export const createAutomationTestApp = async (
       scopes: [],
       tokenType: 'Bearer',
     }),
-    organizationKey,
+    accountKey,
     'google-connection:organization-1:automation-inbox',
   );
   fixture.control.execute(
@@ -39,7 +39,7 @@ export const createAutomationTestApp = async (
     CREATED_AT,
     CREATED_AT,
   );
-  fixture.organization.execute(
+  fixture.account.execute(
     `INSERT INTO google_connections
       (id, kind, google_subject, inbox_address, granted_scopes, token_envelope, gmail_history_id, enabled, status, created_at, updated_at)
      VALUES (?, 'automation_inbox', ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
@@ -53,7 +53,7 @@ export const createAutomationTestApp = async (
     CREATED_AT,
     CREATED_AT,
   );
-  fixture.organization.execute(
+  fixture.account.execute(
     `INSERT INTO rules
       (id, organization_id, name, status, selection_policy, routing_policy, priority, created_at, updated_at)
      VALUES (?, ?, ?, 'active', '{}', '{}', 0, ?, ?)`,
@@ -70,10 +70,10 @@ export const createAutomationTestApp = async (
         baseUrl: 'https://ai.example.com/v1',
         model: 'test-model',
       }),
-      organizationKey,
+      accountKey,
       'organization-connection:organization-1:ai',
     );
-    fixture.organization.execute(
+    fixture.account.execute(
       `INSERT INTO connections
         (id, kind, label, credential, status, created_at, updated_at)
        VALUES (?, 'ai', ?, ?, 'active', ?, ?)`,
@@ -90,10 +90,10 @@ export const createAutomationTestApp = async (
         channelSecret: options.lineSecret,
         channelAccessToken: 'line-token',
       }),
-      organizationKey,
+      accountKey,
       'organization-connection:organization-1:line',
     );
-    fixture.organization.execute(
+    fixture.account.execute(
       `INSERT INTO connections
         (id, kind, label, credential, status, created_at, updated_at)
        VALUES (?, 'line', ?, ?, 'active', ?, ?)`,

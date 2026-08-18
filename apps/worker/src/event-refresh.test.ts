@@ -62,7 +62,7 @@ describe('the Source Attribution', () => {
     expect(attributedMessageId(description)).toBe('gmail-2');
   });
 
-  it('reports no correlation for a description an Admin wrote by hand', () => {
+  it('reports no correlation for a description an Account wrote by hand', () => {
     expect(attributedMessageId('手で作成した予定です。')).toBeNull();
   });
 });
@@ -213,7 +213,7 @@ describe('the approved plan', () => {
 });
 
 describe('invited attendees', () => {
-  it('appends a missing active Member and leaves an existing attendee untouched', () => {
+  it('appends a missing active Contact and leaves an existing attendee untouched', () => {
     const result = invitedAttendees(
       [{ email: 'guest@example.com', responseStatus: 'accepted' }],
       [{ email: 'first@example.com' }],
@@ -225,7 +225,7 @@ describe('invited attendees', () => {
     expect(result.added).toBe(1);
   });
 
-  it('adds nobody, and reports it, when every Member already appears regardless of case', () => {
+  it('adds nobody, and reports it, when every Contact already appears regardless of case', () => {
     const result = invitedAttendees(
       [{ email: 'First@Example.com', responseStatus: 'declined' }],
       [{ email: 'first@example.com' }],

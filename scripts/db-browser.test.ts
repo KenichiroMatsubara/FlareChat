@@ -45,7 +45,7 @@ describe('local D1 browser', () => {
     const directory = mkdtempSync(join(tmpdir(), 'mail-automation-db-browser-'));
     directories.push(directory);
     const controlPath = createBrowsableDatabase(directory, 'control.sqlite', 'control row');
-    const organizationPath = createBrowsableDatabase(directory, 'organization.sqlite', 'organization row');
+    const accountPath = createBrowsableDatabase(directory, 'organization.sqlite', 'organization row');
     const port = await freePort();
     const child = spawn(process.execPath, ['--import', 'tsx', 'scripts/db-browser.ts'], {
       cwd: root,
@@ -53,7 +53,7 @@ describe('local D1 browser', () => {
         ...process.env,
         DB_BROWSER_NO_OPEN: '1',
         DB_BROWSER_PORT: String(port),
-        DB_STUDIO_PATHS: `${controlPath},${organizationPath}`,
+        DB_STUDIO_PATHS: `${controlPath},${accountPath}`,
       },
       stdio: 'ignore',
     });
@@ -68,9 +68,9 @@ describe('local D1 browser', () => {
     const pageResponse = await fetch(baseUrl);
     await expect(pageResponse.text()).resolves.toContain('データベースを選択してください');
 
-    const organization = databases[1];
-    expect(organization).toBeDefined();
-    const tableResponse = await fetch(`${baseUrl}/api/table?database=${encodeURIComponent(organization!.id)}&name=entries`);
+    const account = databases[1];
+    expect(account).toBeDefined();
+    const tableResponse = await fetch(`${baseUrl}/api/table?database=${encodeURIComponent(account!.id)}&name=entries`);
     expect(tableResponse.ok).toBe(true);
     await expect(tableResponse.json()).resolves.toMatchObject({ rows: [{ value: 'organization row' }] });
   });

@@ -17,7 +17,7 @@ const cloudflareResponse = (result: unknown): Response =>
   });
 
 describe('Cloudflare control plane', () => {
-  it('preserves dynamically provisioned Organization D1 bindings during deployment', async () => {
+  it('preserves dynamically provisioned Account D1 bindings during deployment', async () => {
     const config = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8')) as {
       keep_vars?: boolean;
       secrets?: { required?: string[] };

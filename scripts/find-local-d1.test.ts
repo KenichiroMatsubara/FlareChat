@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { findStudioDatabasesIn } from './find-local-d1';
 import {
   createDiscoverableControlDatabase,
-  createDiscoverableOrganizationDatabase,
+  createDiscoverableAccountDatabase,
 } from './test/sqlite';
 const directories: string[] = [];
 
@@ -15,14 +15,14 @@ afterEach(() => {
 });
 
 describe('local D1 discovery', () => {
-  it('finds runtime-provisioned Organization D1 without Wrangler migration records', () => {
+  it('finds runtime-provisioned Account D1 without Wrangler migration records', () => {
     const directory = mkdtempSync(join(tmpdir(), 'mail-automation-d1-discovery-'));
     directories.push(directory);
     createDiscoverableControlDatabase(directory, 'control.sqlite');
-    createDiscoverableOrganizationDatabase(directory, 'organization.sqlite');
+    createDiscoverableAccountDatabase(directory, 'organization.sqlite');
 
     const databases = findStudioDatabasesIn(directory);
 
-    expect(databases.map(({ name }) => name)).toEqual(['Control D1', 'Organization D1 1']);
+    expect(databases.map(({ name }) => name)).toEqual(['Control D1', 'Account D1 1']);
   });
 });

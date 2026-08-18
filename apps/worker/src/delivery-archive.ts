@@ -1,8 +1,8 @@
 import { asc, eq, lt } from 'drizzle-orm';
 
 import { encrypt } from './cryptography';
-import { organizationDatabase } from './storage/database';
-import { deliveries, deliveryArchives } from './storage/organization-schema';
+import { accountDatabase } from './storage/database';
+import { deliveries, deliveryArchives } from './storage/account-schema';
 
 interface ArchivedDelivery {
   id: string;
@@ -19,11 +19,11 @@ interface ArchivedDelivery {
 export const archiveExpiredDeliveryRecords = async (input: {
   database: D1Database;
   bucket: R2Bucket;
-  organizationKey: CryptoKey;
-  organizationId: string;
+  accountKey: CryptoKey;
+  accountId: string;
   before: string;
 }): Promise<number> => {
-  const db = organizationDatabase(input.database);
+  const db = accountDatabase(input.database);
   const rows: ArchivedDelivery[] = await db.select().from(deliveries)
     .where(lt(deliveries.createdAt, input.before))
     .orderBy(asc(deliveries.createdAt))
@@ -31,8 +31,8 @@ export const archiveExpiredDeliveryRecords = async (input: {
     .all();
   if (!rows.length) return 0;
   const archiveId = crypto.randomUUID();
-  const encrypted = await encrypt(JSON.stringify(rows), input.organizationKey, `delivery-archive:${input.organizationId}:${archiveId}`);
-  const objectKey = `delivery-archives/${input.organizationId}/${archiveId}.json`;
+  const encrypted = await encrypt(JSON.stringify(rows), input.accountKey, `delivery-archive:${input.accountId}:${archiveId}`);
+  const objectKey = `delivery-archives/${input.accountId}/${archiveId}.json`;
   await input.bucket.put(objectKey, JSON.stringify(encrypted), { httpMetadata: { contentType: 'application/json' } });
   await db.batch([
     db.insert(deliveryArchives).values({

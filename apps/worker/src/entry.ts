@@ -1,6 +1,6 @@
 import { and, eq, gt, inArray, or } from 'drizzle-orm';
 
-import { decrypt, encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
+import { decrypt, encrypt, masterKey, unwrapAccountKey } from './cryptography';
 import { randomToken, sha256 } from './encoding';
 import {
   createPkce,
@@ -15,18 +15,18 @@ import {
 } from './google';
 import { loginReturnOrigin } from './origin';
 import { createDatabaseAccess } from './database-access';
-import { controlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
+import { controlDatabase, accountDatabase as drizzleAccountDatabase } from './storage/database';
 import {
-  admins,
+  accountIdentities,
   automationInboxClaims,
   identities,
   oauthFlows,
-  organizationKeys,
-  organizationSetups,
-  organizations,
+  accountKeys,
+  accountSetups,
+  accounts,
   sessions,
 } from './storage/control-schema';
-import { googleConnections } from './storage/organization-schema';
+import { googleConnections } from './storage/account-schema';
 import type { Bindings } from './types';
 
 export type GoogleEntryIntent = 'login' | 'organization_setup';
@@ -37,7 +37,7 @@ export interface GoogleEntryCompletion {
 }
 
 interface GoogleEntryOptions {
-  recoveryOrganizationId?: string;
+  recoveryAccountId?: string;
 }
 
 const SETUP_WINDOW_MS = 15 * 60 * 1_000;
@@ -47,12 +47,12 @@ const SESSION_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
 const now = (): string => new Date().toISOString();
 const expiresIn = (milliseconds: number): string => new Date(Date.now() + milliseconds).toISOString();
 const redirectUri = (env: Bindings): string => `${env.APP_URL.replace(/\/$/u, '')}/oauth/google/callback`;
-const recoveryReturnOrigin = (env: Bindings, organizationId: string): string => {
-  const target = new URL(`/organizations/${encodeURIComponent(organizationId)}/automation`, env.WEB_ORIGIN || env.APP_URL);
-  target.searchParams.set('automation_reauthorization', organizationId);
+const recoveryReturnOrigin = (env: Bindings, accountId: string): string => {
+  const target = new URL(`/organizations/${encodeURIComponent(accountId)}/automation`, env.WEB_ORIGIN || env.APP_URL);
+  target.searchParams.set('automation_reauthorization', accountId);
   return target.toString();
 };
-const recoveryOrganizationIdFrom = (returnOrigin: string): string | null => {
+const recoveryAccountIdFrom = (returnOrigin: string): string | null => {
   const target = new URL(returnOrigin);
   return target.searchParams.get('automation_reauthorization');
 };
@@ -75,8 +75,8 @@ export const beginGoogleEntry = async (
   const key = await masterKey(env.CREDENTIAL_MASTER_KEY);
   const createdAt = now();
   const verifierEnvelope = await encrypt(pkce.verifier, key, `oauth-flow-pkce:${id}`);
-  const returnOrigin = options.recoveryOrganizationId
-    ? recoveryReturnOrigin(env, options.recoveryOrganizationId)
+  const returnOrigin = options.recoveryAccountId
+    ? recoveryReturnOrigin(env, options.recoveryAccountId)
     : intent === 'login'
     ? loginReturnOrigin(request, env.APP_URL, env.WEB_ORIGIN)
     : env.WEB_ORIGIN || env.APP_URL;
@@ -116,8 +116,8 @@ export const completeGoogleEntry = async (
     gt(oauthFlows.expiresAt, now()),
   )).get();
   if (!flow) return locationWithError(target, 'Google authorization flow expired.');
-  const recoveryOrganizationId = flow.intent === 'organization_setup' ? recoveryOrganizationIdFrom(flow.returnOrigin) : null;
-  target = recoveryOrganizationId
+  const recoveryAccountId = flow.intent === 'organization_setup' ? recoveryAccountIdFrom(flow.returnOrigin) : null;
+  target = recoveryAccountId
     ? new URL(flow.returnOrigin)
     : new URL(flow.intent === 'login' ? '/' : '/setup', flow.returnOrigin);
   try {
@@ -164,11 +164,11 @@ export const completeGoogleEntry = async (
     if (flow.intent === 'login') {
       return await completeAsLogin(target);
     }
-    if (!recoveryOrganizationId) {
-      const existingMembership = await control.select({ organizationId: admins.organizationId }).from(admins)
+    if (!recoveryAccountId) {
+      const existingMembership = await control.select({ accountId: accountIdentities.accountId }).from(accountIdentities)
         .where(and(
-          eq(admins.identityId, owner.id),
-          eq(admins.state, 'active'),
+          eq(accountIdentities.identityId, owner.id),
+          eq(accountIdentities.state, 'active'),
         )).get();
       if (existingMembership) {
         return await completeAsLogin(new URL('/', flow.returnOrigin));
@@ -182,46 +182,46 @@ export const completeGoogleEntry = async (
         `Required Google permissions are missing: ${missingGoogleScopes(tokenSet.scopes).join(', ')}`,
       );
     }
-    if (recoveryOrganizationId) {
-      const authorizedOrganization = await control.select({
-        id: organizations.id,
-        databaseId: organizations.databaseId,
-        bindingName: organizations.bindingName,
-      }).from(admins).innerJoin(organizations, eq(organizations.id, admins.organizationId)).where(and(
-        eq(admins.organizationId, recoveryOrganizationId),
-        eq(admins.identityId, owner.id),
-        eq(admins.state, 'active'),
-        eq(organizations.status, 'active'),
+    if (recoveryAccountId) {
+      const authorizedAccount = await control.select({
+        id: accounts.id,
+        databaseId: accounts.databaseId,
+        bindingName: accounts.bindingName,
+      }).from(accountIdentities).innerJoin(accounts, eq(accounts.id, accountIdentities.accountId)).where(and(
+        eq(accountIdentities.accountId, recoveryAccountId),
+        eq(accountIdentities.identityId, owner.id),
+        eq(accountIdentities.state, 'active'),
+        eq(accounts.status, 'active'),
       )).get();
-      if (!authorizedOrganization) throw new Error('この Automation Inbox を再接続する権限がありません。');
+      if (!authorizedAccount) throw new Error('この Automation Inbox を再接続する権限がありません。');
       const database = await createDatabaseAccess(env).open({
         kind: 'organization',
-        bindingName: authorizedOrganization.bindingName,
-        databaseId: authorizedOrganization.databaseId,
+        bindingName: authorizedAccount.bindingName,
+        databaseId: authorizedAccount.databaseId,
       });
-      const organization = drizzleOrganizationDatabase(database.raw);
-      const inbox = await organization.select().from(googleConnections).where(eq(googleConnections.kind, 'automation_inbox')).get();
+      const account = drizzleAccountDatabase(database.raw);
+      const inbox = await account.select().from(googleConnections).where(eq(googleConnections.kind, 'automation_inbox')).get();
       if (!inbox || inbox.googleSubject !== identity.subject) {
         await revokeGoogleToken(tokenSet.refreshToken);
         await control.delete(oauthFlows).where(eq(oauthFlows.id, flow.id)).run();
         return locationWithError(target, 'Automation Inbox は同じ Google アカウントで再接続してください。');
       }
-      const organizationKeyRecord = await control.select({
-        masterKeyVersion: organizationKeys.masterKeyVersion,
-        wrappedKeyEnvelope: organizationKeys.wrappedKeyEnvelope,
-      }).from(organizationKeys).where(eq(organizationKeys.organizationId, recoveryOrganizationId)).get();
-      if (!organizationKeyRecord) throw new Error('Organization encryption key is missing.');
-      const organizationKey = await unwrapOrganizationKey({
-        masterKeyVersion: organizationKeyRecord.masterKeyVersion,
-        envelope: JSON.parse(organizationKeyRecord.wrappedKeyEnvelope),
-      }, key, recoveryOrganizationId);
+      const accountKeyRecord = await control.select({
+        masterKeyVersion: accountKeys.masterKeyVersion,
+        wrappedKeyEnvelope: accountKeys.wrappedKeyEnvelope,
+      }).from(accountKeys).where(eq(accountKeys.accountId, recoveryAccountId)).get();
+      if (!accountKeyRecord) throw new Error('Account encryption key is missing.');
+      const accountKey = await unwrapAccountKey({
+        masterKeyVersion: accountKeyRecord.masterKeyVersion,
+        envelope: JSON.parse(accountKeyRecord.wrappedKeyEnvelope),
+      }, key, recoveryAccountId);
       const historyId = await fetchGmailHistoryId(tokenSet.accessToken);
       const credentialEnvelope = await encrypt(
         JSON.stringify(tokenSet),
-        organizationKey,
-        `google-connection:${recoveryOrganizationId}:automation-inbox`,
+        accountKey,
+        `google-connection:${recoveryAccountId}:automation-inbox`,
       );
-      await organization.update(googleConnections).set({
+      await account.update(googleConnections).set({
         inboxAddress: identity.email,
         grantedScopes: JSON.stringify(tokenSet.scopes),
         tokenEnvelope: JSON.stringify(credentialEnvelope),
@@ -261,7 +261,7 @@ export const completeGoogleEntry = async (
       `automation-inbox-token:${identity.subject}`,
     );
     await control.batch([
-      control.insert(organizationSetups).values({
+      control.insert(accountSetups).values({
         id: setupId,
         name: identity.displayName || identity.email,
         inboxAddress: identity.email,

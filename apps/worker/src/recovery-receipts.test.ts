@@ -17,7 +17,7 @@ describe('Recovery Receipts', () => {
     const r2 = createMemoryR2();
     const key = await masterKey('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
     const receipt = {
-      organizationId: 'organization-1',
+      accountId: 'organization-1',
       idempotencyKey: 'calendar:event-1:recipient-1',
       effectType: 'calendar' as const,
       externalId: 'google-event-1',
@@ -25,13 +25,13 @@ describe('Recovery Receipts', () => {
       succeededAt: '2026-07-25T00:00:00.000Z',
     };
 
-    const path = await writeRecoveryReceipt({ bucket: r2.bucket, organizationKey: key, receipt });
+    const path = await writeRecoveryReceipt({ bucket: r2.bucket, accountKey: key, receipt });
 
     expect(r2.object(path)).not.toContain('google-event-1');
     await expect(readRecoveryReceipt({
       bucket: r2.bucket,
-      organizationKey: key,
-      organizationId: 'organization-1',
+      accountKey: key,
+      accountId: 'organization-1',
       idempotencyKey: 'calendar:event-1:recipient-1',
     })).resolves.toEqual(receipt);
   });
@@ -42,7 +42,7 @@ describe('Recovery Receipts', () => {
     seedScheduledEvent(database, { id: 'event-1' });
 
     await restoreDeliveryRecordFromReceipt(database.binding, {
-      organizationId: 'organization-1',
+      accountId: 'organization-1',
       idempotencyKey: 'calendar:event-1:recipient-1',
       effectType: 'calendar',
       externalId: 'google-event-1',
@@ -53,8 +53,8 @@ describe('Recovery Receipts', () => {
     await expect(archiveExpiredDeliveryRecords({
       database: database.binding,
       bucket: createMemoryR2().bucket,
-      organizationKey: await masterKey('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'),
-      organizationId: 'organization-1',
+      accountKey: await masterKey('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'),
+      accountId: 'organization-1',
       before: '2099-01-01T00:00:00.000Z',
     })).resolves.toBe(1);
   });

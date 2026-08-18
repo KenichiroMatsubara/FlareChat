@@ -24,7 +24,7 @@ export type AttachmentFolderPathResult =
 const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F]/u;
 
 /**
- * Reads the Drive location an Organization typed. `/` separates levels; empty
+ * Reads the Drive location an Account typed. `/` separates levels; empty
  * segments are dropped rather than rejected so that a leading, trailing, or
  * doubled separator is not an error. Surrounding whitespace is removed from
  * each segment because it is invisible in the GUI yet produces a different

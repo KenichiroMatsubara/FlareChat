@@ -1,8 +1,8 @@
 import { eq } from 'drizzle-orm';
 
 import type { GoogleAutomationPort } from './automation/providers';
-import { organizationDatabase } from './storage/database';
-import { deliveries, eventRecipients, members } from './storage/organization-schema';
+import { accountDatabase } from './storage/database';
+import { deliveries, eventRecipients, contacts } from './storage/account-schema';
 
 export interface DeliveryAttempt {
   id: string;
@@ -33,7 +33,7 @@ export const recordDeliveryAttempt = async (
     externalId: input.externalId,
     createdAt: new Date().toISOString(),
   };
-  await organizationDatabase(database).insert(deliveries).values(record).run();
+  await accountDatabase(database).insert(deliveries).values(record).run();
   return record;
 };
 
@@ -134,7 +134,7 @@ export const deliverCalendarInvitation = async (input: {
 };
 
 export interface EventInvitee {
-  memberId: string;
+  contactId: string;
   name: string;
   email: string;
 }
@@ -143,23 +143,23 @@ export interface EventInvitee {
 const invitableEmail = (email: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email);
 
 /**
- * The Google accounts a Scheduled Event invites: every active Member that
- * carries an address. A Member without one is administered without Calendar and
+ * The Google accounts a Scheduled Event invites: every active Contact that
+ * carries an address. A Contact without one is administered without Calendar and
  * is simply absent from the attendee list rather than an automation failure.
  */
-export const activeMemberInvitees = async (database: D1Database): Promise<EventInvitee[]> => {
-  const rows = await organizationDatabase(database).select({
-    memberId: members.id,
-    name: members.name,
-    email: members.email,
-  }).from(members).where(eq(members.state, 'active')).all();
+export const activeContactInvitees = async (database: D1Database): Promise<EventInvitee[]> => {
+  const rows = await accountDatabase(database).select({
+    contactId: contacts.id,
+    name: contacts.name,
+    email: contacts.email,
+  }).from(contacts).where(eq(contacts.state, 'active')).all();
   const seen = new Set<string>();
   const invitees: EventInvitee[] = [];
   for (const row of rows) {
     const email = row.email.trim().toLowerCase();
     if (!invitableEmail(email) || seen.has(email)) continue;
     seen.add(email);
-    invitees.push({ memberId: row.memberId, name: row.name, email });
+    invitees.push({ contactId: row.contactId, name: row.name, email });
   }
   return invitees;
 };
@@ -179,12 +179,12 @@ export const recordEventInvitations = async (input: {
   outcome: DeliveryAttempt['outcome'];
 }): Promise<DeliveryAttempt[]> => {
   if (!input.invitees.length) return [];
-  const database = organizationDatabase(input.database);
+  const database = accountDatabase(input.database);
   const createdAt = new Date().toISOString();
   for (const invitee of input.invitees) {
     await database.insert(eventRecipients).values({
       eventId: input.eventId,
-      memberId: invitee.memberId,
+      contactId: invitee.contactId,
       nameSnapshot: invitee.name,
       emailSnapshot: invitee.email,
       createdAt,

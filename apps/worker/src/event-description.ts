@@ -10,7 +10,7 @@ export interface CalendarDescriptionInput {
   /**
    * The Guest Registration counts by Affiliation, omitted when nobody from
    * outside has registered. It carries counts and never names, and it is passed
-   * as plain text so the Affiliations another organization wrote are escaped
+   * as plain text so the Affiliations another account wrote are escaped
    * here rather than by the caller that assembled them.
    */
   guestCounts?: string;

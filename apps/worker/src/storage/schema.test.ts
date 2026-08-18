@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import { createMigratedTestD1 } from '../../test/d1';
-import { connections, googleConnections } from './organization-schema';
+import { connections, googleConnections } from './account-schema';
 
 const migrations = (kind: 'control' | 'organization'): string[] =>
   readdirSync(resolve(import.meta.dirname, `../../migrations/${kind}`))
@@ -27,7 +27,7 @@ const applicationSources = (): Array<{ name: string; source: string }> => {
   const sourceRoot = resolve(import.meta.dirname, '..');
   const infrastructure = new Set([
     'cloudflare.ts',
-    'organization-db.ts',
+    'account-db.ts',
     'schema-lifecycle.ts',
     'storage/database.ts',
   ]);
@@ -115,7 +115,7 @@ describe('canonical D1 schemas', () => {
     );
   });
 
-  it('models the Automation Inbox only in Organization D1', () => {
+  it('models the Automation Inbox only in Account D1', () => {
     expect(tableNames('organization')).toContain('google_connections');
     expect(tableNames('organization')).toContain('d1_migrations');
     expect(tableNames('organization')).not.toContain('schema_migrations');
@@ -142,10 +142,10 @@ describe('canonical D1 schemas', () => {
 
   it('rejects the removed generic Google connection shape at the type seam', () => {
     type AutomationInboxKind = typeof googleConnections.$inferInsert.kind;
-    type OrganizationConnectionKind = typeof connections.$inferInsert.kind;
+    type AccountConnectionKind = typeof connections.$inferInsert.kind;
 
     expectTypeOf<AutomationInboxKind>().toEqualTypeOf<'automation_inbox'>();
-    expectTypeOf<OrganizationConnectionKind>().toEqualTypeOf<'line' | 'ai'>();
+    expectTypeOf<AccountConnectionKind>().toEqualTypeOf<'line' | 'ai'>();
   });
 
   it('keeps handwritten D1 statements out of application persistence', () => {

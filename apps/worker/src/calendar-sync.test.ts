@@ -15,9 +15,9 @@ afterEach(() => {
 describe('Calendar deletion', () => {
   it('raises an Operations Exception and does not keep a deleted event scheduled', async () => {
     fixture = createTestApp();
-    seedScheduledEvent(fixture.organization, { id: 'event-1' });
+    seedScheduledEvent(fixture.account, { id: 'event-1' });
 
-    await recordCalendarDeletion(fixture.organization.binding, {
+    await recordCalendarDeletion(fixture.account.binding, {
       eventId: 'event-1',
       sourceMessageId: null,
       now: '2026-07-25T00:00:00.000Z',

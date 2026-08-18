@@ -1,7 +1,7 @@
 import { SchemaReadinessError, schemaLifecycle, type SchemaReceipt } from './schema-lifecycle';
 import type { Bindings } from './types';
 
-export interface ReadyOrganizationDatabase {
+export interface ReadyAccountDatabase {
   kind: 'organization';
   raw: D1Database;
   schema: SchemaReceipt;
@@ -13,23 +13,23 @@ export interface ReadyControlDatabase {
   schema: SchemaReceipt;
 }
 
-export type ReadyDatabase = ReadyControlDatabase | ReadyOrganizationDatabase;
+export type ReadyDatabase = ReadyControlDatabase | ReadyAccountDatabase;
 
 type ControlDatabaseLocator = {
   kind: 'control';
 };
 
-type OrganizationDatabaseLocator = {
+type AccountDatabaseLocator = {
   kind: 'organization';
   bindingName: string;
   databaseId: string | null;
 };
 
-export type DatabaseLocator = ControlDatabaseLocator | OrganizationDatabaseLocator;
+export type DatabaseLocator = ControlDatabaseLocator | AccountDatabaseLocator;
 
 export class DatabaseBindingUnavailableError extends Error {
   constructor(bindingName: string) {
-    super(`Organization database binding ${bindingName} is unavailable.`);
+    super(`Account database binding ${bindingName} is unavailable.`);
     this.name = 'DatabaseBindingUnavailableError';
   }
 }

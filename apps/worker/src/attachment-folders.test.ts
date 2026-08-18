@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createMigratedTestD1 } from '../test/d1';
-import { organizationDatabase } from './storage/database';
+import { accountDatabase } from './storage/database';
 import {
   ATTACHMENT_FOLDER_PATH_SETTING,
-  organizationAttachmentFolderPath,
+  accountAttachmentFolderPath,
   resolveSourceMessageFolder,
-  saveOrganizationAttachmentFolderPath,
+  saveAccountAttachmentFolderPath,
 } from './attachment-folders';
 
 const seedSourceMessage = (database: ReturnType<typeof createMigratedTestD1>, id: string): void => {
@@ -24,15 +24,15 @@ const drivePort = () => ({
 });
 
 describe('Attachment Folder Path setting', () => {
-  it('falls back to the product default until an Organization writes its own path', async () => {
+  it('falls back to the product default until an Account writes its own path', async () => {
     const test = createMigratedTestD1('organization');
     try {
-      const database = organizationDatabase(test.binding);
-      await expect(organizationAttachmentFolderPath(database)).resolves.toBe('Mail Automation');
+      const database = accountDatabase(test.binding);
+      await expect(accountAttachmentFolderPath(database)).resolves.toBe('Mail Automation');
 
-      await saveOrganizationAttachmentFolderPath(database, '会計 2026/添付', '2026-08-01T00:00:00.000Z');
+      await saveAccountAttachmentFolderPath(database, '会計 2026/添付', '2026-08-01T00:00:00.000Z');
 
-      await expect(organizationAttachmentFolderPath(database)).resolves.toBe('会計 2026/添付');
+      await expect(accountAttachmentFolderPath(database)).resolves.toBe('会計 2026/添付');
       expect(test.rows<{ key: string }>('SELECT key FROM settings')).toEqual([{ key: ATTACHMENT_FOLDER_PATH_SETTING }]);
     } finally {
       test.close();
@@ -45,8 +45,8 @@ describe('Source Message attachment folder', () => {
     const test = createMigratedTestD1('organization');
     try {
       seedSourceMessage(test, 'source-1');
-      const database = organizationDatabase(test.binding);
-      await saveOrganizationAttachmentFolderPath(database, '会計 2026/添付', '2026-08-01T00:00:00.000Z');
+      const database = accountDatabase(test.binding);
+      await saveAccountAttachmentFolderPath(database, '会計 2026/添付', '2026-08-01T00:00:00.000Z');
       const drive = drivePort();
 
       await expect(resolveSourceMessageFolder({
@@ -78,7 +78,7 @@ describe('Source Message attachment folder', () => {
       const drive = drivePort();
 
       await expect(resolveSourceMessageFolder({
-        database: organizationDatabase(test.binding),
+        database: accountDatabase(test.binding),
         drive,
         accessToken: 'token',
         subject: '年次行事',
@@ -97,7 +97,7 @@ describe('Source Message attachment folder', () => {
   it('refuses to publish into the Drive root when the stored path is unusable', async () => {
     const test = createMigratedTestD1('organization');
     try {
-      const database = organizationDatabase(test.binding);
+      const database = accountDatabase(test.binding);
       test.execute(
         'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)',
         ATTACHMENT_FOLDER_PATH_SETTING,

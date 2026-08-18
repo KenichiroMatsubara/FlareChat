@@ -2,13 +2,13 @@ import { and, eq } from 'drizzle-orm';
 
 import { gmailRawMessage } from './delivery';
 import { GoogleGrantRejectedError } from './google';
-import { admins, identities } from './storage/control-schema';
+import { accountIdentities, identities } from './storage/control-schema';
 import { controlDatabase } from './storage/database';
 import type { GoogleAutomationPort } from './automation/providers';
 import type { Bindings } from './types';
 
 /**
- * A run stopped by Organization configuration rather than by the Google grant.
+ * A run stopped by Account configuration rather than by the Google grant.
  * The Automation Inbox stays connected and the next scheduled run retries.
  */
 export class AutomationConfigurationError extends Error {
@@ -22,7 +22,7 @@ export class AutomationConfigurationError extends Error {
  * Why one Automation run failed, which decides whether the Automation Inbox
  * keeps retrying on its own or has to wait for a human.
  *
- * - `configuration`: the Organization has to change a setting.
+ * - `configuration`: the Account has to change a setting.
  * - `transient`: a provider, network, or model fault that the next run retries.
  * - `credential`: Google rejected the grant, so only reauthorization restores it.
  */
@@ -92,13 +92,13 @@ export const automationAlertMessage = (input: {
   ].join('\n'),
 });
 
-/** Every active Administrator of one Organization, read from the Control database. */
-export const administratorEmails = async (env: Bindings, organizationId: string): Promise<string[]> => {
+/** Every active Administrator of one Account, read from the Control database. */
+export const administratorEmails = async (env: Bindings, accountId: string): Promise<string[]> => {
   const rows = await controlDatabase(env.CONTROL_DB)
     .select({ email: identities.email })
-    .from(admins)
-    .innerJoin(identities, eq(identities.id, admins.identityId))
-    .where(and(eq(admins.organizationId, organizationId), eq(admins.state, 'active')))
+    .from(accountIdentities)
+    .innerJoin(identities, eq(identities.id, accountIdentities.identityId))
+    .where(and(eq(accountIdentities.accountId, accountId), eq(accountIdentities.state, 'active')))
     .all();
   return [...new Set(rows.map((row) => row.email).filter(Boolean))];
 };

@@ -1,9 +1,9 @@
-import { enqueueDueOrganizationAttendanceReminders } from '../attendance-reminders';
-import { enqueueDueOrganizationTaskReminders } from '../task-reminders';
+import { enqueueDueAccountAttendanceReminders } from '../attendance-reminders';
+import { enqueueDueAccountTaskReminders } from '../task-reminders';
 import { createAutomation } from '../automation';
 import { createDatabaseAccess } from '../database-access';
 import { retryProvisioning } from '../onboarding';
-import { recoverDueOrganizationJobs } from '../jobs';
+import { recoverDueAccountJobs } from '../jobs';
 import type { Bindings } from '../types';
 
 /**
@@ -15,8 +15,8 @@ export const runBackgroundWork = async (env: Bindings): Promise<void> => {
   await createDatabaseAccess(env).open({ kind: 'control' });
   const dueAt = new Date().toISOString();
   await retryProvisioning(env);
-  await enqueueDueOrganizationAttendanceReminders(env, dueAt);
-  await enqueueDueOrganizationTaskReminders(env, dueAt);
-  await recoverDueOrganizationJobs(env, dueAt);
-  await createAutomation(env).runEnabledOrganizations();
+  await enqueueDueAccountAttendanceReminders(env, dueAt);
+  await enqueueDueAccountTaskReminders(env, dueAt);
+  await recoverDueAccountJobs(env, dueAt);
+  await createAutomation(env).runEnabledAccounts();
 };

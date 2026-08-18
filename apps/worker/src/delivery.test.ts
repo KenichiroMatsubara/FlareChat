@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { archiveExpiredDeliveryRecords } from './delivery-archive';
-import { activeMemberInvitees, deliverCalendarInvitation, deliverLineBatch, recordDeliveryAttempt, recordEventInvitations } from './delivery';
+import { activeContactInvitees, deliverCalendarInvitation, deliverLineBatch, recordDeliveryAttempt, recordEventInvitations } from './delivery';
 import { masterKey } from './cryptography';
 import { createMigratedTestD1, type TestD1Database } from '../test/d1';
-import { createMemoryR2, seedMember, seedScheduledEvent } from '../test/seed';
+import { createMemoryR2, seedContact, seedScheduledEvent } from '../test/seed';
 
 const openDatabases: TestD1Database[] = [];
 
@@ -24,8 +24,8 @@ const archivedRecordCount = async (database: TestD1Database): Promise<number> =>
   archiveExpiredDeliveryRecords({
     database: database.binding,
     bucket: createMemoryR2().bucket,
-    organizationKey: await masterKey('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'),
-    organizationId: 'organization-1',
+    accountKey: await masterKey('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'),
+    accountId: 'organization-1',
     before: '2099-01-01T00:00:00.000Z',
   });
 
@@ -105,30 +105,30 @@ describe('Delivery Records', () => {
     await expect(archivedRecordCount(database)).resolves.toBe(1);
   });
 
-  it('invites every active Member that carries a usable address, once', async () => {
+  it('invites every active Contact that carries a usable address, once', async () => {
     const database = deliveryDatabase();
-    seedMember(database, { id: 'member-1', name: '一郎', email: 'first@example.com' });
-    seedMember(database, { id: 'member-2', name: '二郎', email: 'FIRST@example.com' });
-    seedMember(database, { id: 'member-3', name: '三郎', email: '' });
-    seedMember(database, { id: 'member-4', name: '四郎', email: 'not-an-address' });
-    seedMember(database, { id: 'member-5', name: '五郎', email: 'fifth@example.com' });
+    seedContact(database, { id: 'member-1', name: '一郎', email: 'first@example.com' });
+    seedContact(database, { id: 'member-2', name: '二郎', email: 'FIRST@example.com' });
+    seedContact(database, { id: 'member-3', name: '三郎', email: '' });
+    seedContact(database, { id: 'member-4', name: '四郎', email: 'not-an-address' });
+    seedContact(database, { id: 'member-5', name: '五郎', email: 'fifth@example.com' });
     database.execute("UPDATE members SET state = 'inactive' WHERE id = 'member-5'");
 
-    await expect(activeMemberInvitees(database.binding)).resolves.toEqual([
-      { memberId: 'member-1', name: '一郎', email: 'first@example.com' },
+    await expect(activeContactInvitees(database.binding)).resolves.toEqual([
+      { contactId: 'member-1', name: '一郎', email: 'first@example.com' },
     ]);
   });
 
-  it('snapshots each invited Member and records one Delivery Record per invitation', async () => {
+  it('snapshots each invited Contact and records one Delivery Record per invitation', async () => {
     const database = deliveryDatabase();
-    seedMember(database, { id: 'member-1', name: '一郎', email: 'first@example.com' });
-    seedMember(database, { id: 'member-2', name: '二郎', email: 'second@example.com' });
+    seedContact(database, { id: 'member-1', name: '一郎', email: 'first@example.com' });
+    seedContact(database, { id: 'member-2', name: '二郎', email: 'second@example.com' });
 
     const results = await recordEventInvitations({
       database: database.binding,
       eventId: 'event-1',
       googleEventId: 'calendar-event-1',
-      invitees: await activeMemberInvitees(database.binding),
+      invitees: await activeContactInvitees(database.binding),
       outcome: 'succeeded',
     });
 
@@ -144,13 +144,13 @@ describe('Delivery Records', () => {
 
   it('records a withheld invitation as pending work rather than a delivered one', async () => {
     const database = deliveryDatabase();
-    seedMember(database, { id: 'member-1', name: '一郎', email: 'first@example.com' });
+    seedContact(database, { id: 'member-1', name: '一郎', email: 'first@example.com' });
 
     const results = await recordEventInvitations({
       database: database.binding,
       eventId: 'event-1',
       googleEventId: 'calendar-event-1',
-      invitees: await activeMemberInvitees(database.binding),
+      invitees: await activeContactInvitees(database.binding),
       outcome: 'pending',
     });
 

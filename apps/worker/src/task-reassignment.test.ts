@@ -9,7 +9,7 @@ const openTask = (overrides: Partial<TaskView> = {}): TaskView => ({
   deadline: '2026-08-25',
   assigneeRoleId: 'role-registration',
   assigneeRoleName: '参加登録担当',
-  assigneeMemberId: null,
+  assigneeContactId: null,
   assigneeName: '未割り当て',
   sourceMessageSubject: '総会案内',
   description: '指定口座へ送金する',
@@ -25,7 +25,7 @@ const roles = [
 ];
 
 describe('Task reassignment request', () => {
-  it('bounds the model to the open Task ids and the roles the Organization defines', () => {
+  it('bounds the model to the open Task ids and the roles the Account defines', () => {
     const request = buildTaskReassignmentRequest({ tasks: [openTask()], roles });
     const schema = (request.response_format as { json_schema: { schema: { properties: { assignments: { items: { properties: Record<string, { enum?: string[] }> } } } } } })
       .json_schema.schema.properties.assignments.items.properties;

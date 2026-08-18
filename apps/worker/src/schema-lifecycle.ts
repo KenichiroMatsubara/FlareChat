@@ -1,31 +1,31 @@
 import controlInitialMigration from '../migrations/control/0000_initial.sql';
 import controlSchemaReleaseMigration from '../migrations/control/0001_schema_release.sql';
 import controlPresetSelectionMigration from '../migrations/control/0002_preset_selection.sql';
-import controlAdminsMigration from '../migrations/control/0003_admins.sql';
-import controlSingleAdminRoleMigration from '../migrations/control/0004_single_admin_role.sql';
-import controlMemberLoginsMigration from '../migrations/control/0005_member_logins.sql';
-import organizationInitialMigration from '../migrations/organization/0000_initial.sql';
-import organizationTasksMigration from '../migrations/organization/0001_tasks.sql';
-import organizationLineDestinationRosterMigration from '../migrations/organization/0002_line_destination_roster.sql';
-import organizationReleaseSafeLineDestinationIndexMigration from '../migrations/organization/0003_release_safe_line_destination_index.sql';
-import organizationManualLineDestinationSourceMigration from '../migrations/organization/0004_manual_line_destination_source.sql';
-import organizationOptionalRecipientEmailMigration from '../migrations/organization/0005_optional_recipient_email.sql';
-import organizationOperationalTaskRolesMigration from '../migrations/organization/0006_operational_task_roles.sql';
-import organizationSourceMessageDeliveriesMigration from '../migrations/organization/0007_source_message_deliveries.sql';
-import organizationRulePermittedListsMigration from '../migrations/organization/0008_rule_permitted_lists.sql';
-import organizationPromptsMigration from '../migrations/organization/0009_prompts.sql';
-import organizationAgentRulesMigration from '../migrations/organization/0010_agent_rules.sql';
-import organizationAgentRunsMigration from '../migrations/organization/0011_agent_runs.sql';
-import organizationEventAgentOwnersMigration from '../migrations/organization/0012_event_agent_owners.sql';
-import organizationAgentRuleWritesMigration from '../migrations/organization/0013_agent_rule_writes.sql';
-import organizationMembersMigration from '../migrations/organization/0014_members.sql';
-import organizationAttachmentFoldersMigration from '../migrations/organization/0015_attachment_folders.sql';
-import organizationMemberTaskAssignmentsMigration from '../migrations/organization/0016_member_task_assignments.sql';
-import organizationMemberPortalMigration from '../migrations/organization/0017_member_portal.sql';
-import organizationAutomationInboxHealthMigration from '../migrations/organization/0018_automation_inbox_health.sql';
-import organizationTaskRoleRevisionsMigration from '../migrations/organization/0019_task_role_revisions.sql';
-import organizationEventResponsesAndGuestsMigration from '../migrations/organization/0020_event_responses_and_guests.sql';
-import organizationRuleExecutionMigration from '../migrations/organization/0021_rule_execution.sql';
+import controlAccountIdentitiesMigration from '../migrations/control/0003_admins.sql';
+import controlSingleAccountIdentityRoleMigration from '../migrations/control/0004_single_admin_role.sql';
+import controlContactLoginsMigration from '../migrations/control/0005_member_logins.sql';
+import accountInitialMigration from '../migrations/organization/0000_initial.sql';
+import accountTasksMigration from '../migrations/organization/0001_tasks.sql';
+import accountLineDestinationRosterMigration from '../migrations/organization/0002_line_destination_roster.sql';
+import accountReleaseSafeLineDestinationIndexMigration from '../migrations/organization/0003_release_safe_line_destination_index.sql';
+import accountManualLineDestinationSourceMigration from '../migrations/organization/0004_manual_line_destination_source.sql';
+import accountOptionalRecipientEmailMigration from '../migrations/organization/0005_optional_recipient_email.sql';
+import accountOperationalTaskRolesMigration from '../migrations/organization/0006_operational_task_roles.sql';
+import accountSourceMessageDeliveriesMigration from '../migrations/organization/0007_source_message_deliveries.sql';
+import accountRulePermittedListsMigration from '../migrations/organization/0008_rule_permitted_lists.sql';
+import accountPromptsMigration from '../migrations/organization/0009_prompts.sql';
+import accountAgentRulesMigration from '../migrations/organization/0010_agent_rules.sql';
+import accountAgentRunsMigration from '../migrations/organization/0011_agent_runs.sql';
+import accountEventAgentOwnersMigration from '../migrations/organization/0012_event_agent_owners.sql';
+import accountAgentRuleWritesMigration from '../migrations/organization/0013_agent_rule_writes.sql';
+import accountContactsMigration from '../migrations/organization/0014_members.sql';
+import accountAttachmentFoldersMigration from '../migrations/organization/0015_attachment_folders.sql';
+import accountContactTaskAssignmentsMigration from '../migrations/organization/0016_member_task_assignments.sql';
+import accountContactPortalMigration from '../migrations/organization/0017_member_portal.sql';
+import accountAutomationInboxHealthMigration from '../migrations/organization/0018_automation_inbox_health.sql';
+import accountTaskRoleRevisionsMigration from '../migrations/organization/0019_task_role_revisions.sql';
+import accountEventResponsesAndGuestsMigration from '../migrations/organization/0020_event_responses_and_guests.sql';
+import accountRuleExecutionMigration from '../migrations/organization/0021_rule_execution.sql';
 
 type SchemaKind = 'control' | 'organization';
 
@@ -77,52 +77,52 @@ const CONTROL_MIGRATIONS: readonly SchemaMigration[] = [
   { name: '0000_initial.sql', sql: controlInitialMigration },
   { name: '0001_schema_release.sql', sql: controlSchemaReleaseMigration },
   { name: '0002_preset_selection.sql', sql: controlPresetSelectionMigration },
-  { name: '0003_admins.sql', sql: controlAdminsMigration },
-  { name: '0004_single_admin_role.sql', sql: controlSingleAdminRoleMigration },
-  { name: '0005_member_logins.sql', sql: controlMemberLoginsMigration },
+  { name: '0003_admins.sql', sql: controlAccountIdentitiesMigration },
+  { name: '0004_single_admin_role.sql', sql: controlSingleAccountIdentityRoleMigration },
+  { name: '0005_member_logins.sql', sql: controlContactLoginsMigration },
 ];
 
 const ORGANIZATION_MIGRATIONS: readonly SchemaMigration[] = [
-  { name: '0000_initial.sql', sql: organizationInitialMigration },
-  { name: '0001_tasks.sql', sql: organizationTasksMigration },
-  { name: '0002_line_destination_roster.sql', sql: organizationLineDestinationRosterMigration },
+  { name: '0000_initial.sql', sql: accountInitialMigration },
+  { name: '0001_tasks.sql', sql: accountTasksMigration },
+  { name: '0002_line_destination_roster.sql', sql: accountLineDestinationRosterMigration },
   {
     name: '0003_release_safe_line_destination_index.sql',
-    sql: organizationReleaseSafeLineDestinationIndexMigration,
+    sql: accountReleaseSafeLineDestinationIndexMigration,
   },
   {
     name: '0004_manual_line_destination_source.sql',
-    sql: organizationManualLineDestinationSourceMigration,
+    sql: accountManualLineDestinationSourceMigration,
   },
   {
     name: '0005_optional_recipient_email.sql',
-    sql: organizationOptionalRecipientEmailMigration,
+    sql: accountOptionalRecipientEmailMigration,
   },
   {
     name: '0006_operational_task_roles.sql',
-    sql: organizationOperationalTaskRolesMigration,
+    sql: accountOperationalTaskRolesMigration,
   },
   {
     name: '0007_source_message_deliveries.sql',
-    sql: organizationSourceMessageDeliveriesMigration,
+    sql: accountSourceMessageDeliveriesMigration,
   },
   {
     name: '0008_rule_permitted_lists.sql',
-    sql: organizationRulePermittedListsMigration,
+    sql: accountRulePermittedListsMigration,
   },
-  { name: '0009_prompts.sql', sql: organizationPromptsMigration },
-  { name: '0010_agent_rules.sql', sql: organizationAgentRulesMigration },
-  { name: '0011_agent_runs.sql', sql: organizationAgentRunsMigration },
-  { name: '0012_event_agent_owners.sql', sql: organizationEventAgentOwnersMigration },
-  { name: '0013_agent_rule_writes.sql', sql: organizationAgentRuleWritesMigration },
-  { name: '0014_members.sql', sql: organizationMembersMigration },
-  { name: '0015_attachment_folders.sql', sql: organizationAttachmentFoldersMigration },
-  { name: '0016_member_task_assignments.sql', sql: organizationMemberTaskAssignmentsMigration },
-  { name: '0017_member_portal.sql', sql: organizationMemberPortalMigration },
-  { name: '0018_automation_inbox_health.sql', sql: organizationAutomationInboxHealthMigration },
-  { name: '0019_task_role_revisions.sql', sql: organizationTaskRoleRevisionsMigration },
-  { name: '0020_event_responses_and_guests.sql', sql: organizationEventResponsesAndGuestsMigration },
-  { name: '0021_rule_execution.sql', sql: organizationRuleExecutionMigration },
+  { name: '0009_prompts.sql', sql: accountPromptsMigration },
+  { name: '0010_agent_rules.sql', sql: accountAgentRulesMigration },
+  { name: '0011_agent_runs.sql', sql: accountAgentRunsMigration },
+  { name: '0012_event_agent_owners.sql', sql: accountEventAgentOwnersMigration },
+  { name: '0013_agent_rule_writes.sql', sql: accountAgentRuleWritesMigration },
+  { name: '0014_members.sql', sql: accountContactsMigration },
+  { name: '0015_attachment_folders.sql', sql: accountAttachmentFoldersMigration },
+  { name: '0016_member_task_assignments.sql', sql: accountContactTaskAssignmentsMigration },
+  { name: '0017_member_portal.sql', sql: accountContactPortalMigration },
+  { name: '0018_automation_inbox_health.sql', sql: accountAutomationInboxHealthMigration },
+  { name: '0019_task_role_revisions.sql', sql: accountTaskRoleRevisionsMigration },
+  { name: '0020_event_responses_and_guests.sql', sql: accountEventResponsesAndGuestsMigration },
+  { name: '0021_rule_execution.sql', sql: accountRuleExecutionMigration },
 ];
 const LEGACY_MIGRATION_CHECKSUMS = new Map<string, ReadonlySet<string>>([
   ['0001_tasks.sql', new Set(['4b2f3889191d0eafbbe45b78103db7139c7ce2b937c02cbbb6824f5131d7429f'])],

@@ -2,7 +2,7 @@ import type { AppState } from '@mail/domain';
 import { createBrowserRouter, redirect, type LoaderFunctionArgs } from 'react-router-dom';
 
 import { api } from './api';
-import { loadOrganization, LoadingRoute, MemberPortalJoinRoute, MemberPortalRoute, NotFoundRoute, OAuthError, OrganizationLayout, OrganizationPage, RootLayout, RouteError, SetupConfirmRoute, SetupProgressRoute, SetupRoute } from './routes';
+import { loadAccount, LoadingRoute, ContactPortalJoinRoute, ContactPortalRoute, NotFoundRoute, OAuthError, AccountLayout, AccountPage, RootLayout, RouteError, SetupConfirmRoute, SetupProgressRoute, SetupRoute } from './routes';
 
 export const routePaths = {
   signedOut: '/',
@@ -10,43 +10,43 @@ export const routePaths = {
   setupConfirm: '/setup/confirm',
   setupProvisioning: '/setup/provisioning',
   setupFailed: '/setup/failed',
-  organization: '/organizations/:organizationId',
+  account: '/organizations/:accountId',
   portal: '/portal',
-  portalJoin: '/portal/join/:organizationId/:token',
+  portalJoin: '/portal/join/:accountId/:token',
 } as const;
 
-export const organizationRoutePaths = {
+export const accountRoutePaths = {
   automation: 'automation',
   connections: 'connections',
   rules: 'rules',
-  members: 'members',
+  contacts: 'members',
   mailboxTest: 'mailbox-test',
   ruleRuns: 'rule-runs',
   eventRefresh: 'event-refresh',
   tasks: 'tasks',
 } as const;
 
-export const organizationUrl = (
-  organizationId: string,
-  page: keyof typeof organizationRoutePaths,
-): string => `/organizations/${encodeURIComponent(organizationId)}/${organizationRoutePaths[page]}`;
+export const accountUrl = (
+  accountId: string,
+  page: keyof typeof accountRoutePaths,
+): string => `/organizations/${encodeURIComponent(accountId)}/${accountRoutePaths[page]}`;
 
-const firstOrganizationUrl = (state: Extract<AppState, { kind: 'ready' }>): string => {
-  const first = state.organizations[0]?.organizationId;
-  return first ? organizationUrl(first, 'automation') : routePaths.setup;
+const firstAccountUrl = (state: Extract<AppState, { kind: 'ready' }>): string => {
+  const first = state.accounts[0]?.accountId;
+  return first ? accountUrl(first, 'automation') : routePaths.setup;
 };
 
-const isOrganizationPath = (pathname: string): boolean => pathname.startsWith('/organizations/');
+const isAccountPath = (pathname: string): boolean => pathname.startsWith('/organizations/');
 const isPortalJoinPath = (pathname: string): boolean => pathname.startsWith('/portal/join/');
 const isSetupPath = (pathname: string): boolean => pathname === routePaths.setup || pathname === routePaths.setupConfirm || pathname === routePaths.setupProvisioning || pathname === routePaths.setupFailed;
 
-const organizationIdFromPath = (pathname: string): string | null => {
+const accountIdFromPath = (pathname: string): string | null => {
   const match = /^\/organizations\/([^/]+)/u.exec(pathname);
   return match?.[1] ? decodeURIComponent(match[1]) : null;
 };
 
 export const resolveApplicationRedirect = (pathname: string, state: AppState): string | null => {
-  // A portal invitation is the one entry a Member has, so it survives every
+  // A portal invitation is the one entry a Contact has, so it survives every
   // other redirect: signing in returns them to the same link.
   if (isPortalJoinPath(pathname)) return null;
   if (state.kind === 'member') return pathname === routePaths.portal ? null : routePaths.portal;
@@ -56,13 +56,13 @@ export const resolveApplicationRedirect = (pathname: string, state: AppState): s
   if (state.kind === 'provisioning') return pathname === routePaths.setupProvisioning ? null : routePaths.setupProvisioning;
   if (state.kind === 'provisioning_failed') return pathname === routePaths.setupFailed ? null : routePaths.setupFailed;
 
-  if (isOrganizationPath(pathname)) {
-    const organizationId = organizationIdFromPath(pathname);
-    return organizationId && state.organizations.some((organization) => organization.organizationId === organizationId)
+  if (isAccountPath(pathname)) {
+    const accountId = accountIdFromPath(pathname);
+    return accountId && state.accounts.some((account) => account.accountId === accountId)
       ? null
-      : firstOrganizationUrl(state);
+      : firstAccountUrl(state);
   }
-  if (pathname === routePaths.signedOut || isSetupPath(pathname)) return firstOrganizationUrl(state);
+  if (pathname === routePaths.signedOut || isSetupPath(pathname)) return firstAccountUrl(state);
   return null;
 };
 
@@ -84,27 +84,27 @@ const rootRoute = (client: RouterClient) => ({
   errorElement: <RouteError logout={client.logout} />,
   children: [
     { index: true, element: <OAuthError /> },
-    { path: 'portal', loader: stateLoader(client), element: <MemberPortalRoute />, errorElement: <RouteError logout={client.logout} /> },
-    { path: 'portal/join/:organizationId/:token', loader: stateLoader(client), element: <MemberPortalJoinRoute />, errorElement: <RouteError logout={client.logout} /> },
+    { path: 'portal', loader: stateLoader(client), element: <ContactPortalRoute />, errorElement: <RouteError logout={client.logout} /> },
+    { path: 'portal/join/:accountId/:token', loader: stateLoader(client), element: <ContactPortalJoinRoute />, errorElement: <RouteError logout={client.logout} /> },
     { path: 'setup', loader: stateLoader(client), element: <SetupRoute />, errorElement: <RouteError logout={client.logout} /> },
     { path: 'setup/confirm', loader: stateLoader(client), element: <SetupConfirmRoute />, errorElement: <RouteError logout={client.logout} /> },
     { path: 'setup/provisioning', loader: stateLoader(client), element: <SetupProgressRoute failed={false} />, errorElement: <RouteError logout={client.logout} /> },
     { path: 'setup/failed', loader: stateLoader(client), element: <SetupProgressRoute failed />, errorElement: <RouteError logout={client.logout} /> },
     {
-      path: 'organizations/:organizationId',
-      loader: ({ params }: LoaderFunctionArgs) => loadOrganization(params.organizationId ?? ''),
-      element: <OrganizationLayout />,
+      path: 'organizations/:accountId',
+      loader: ({ params }: LoaderFunctionArgs) => loadAccount(params.accountId ?? ''),
+      element: <AccountLayout />,
       errorElement: <RouteError logout={client.logout} />,
       children: [
         { index: true, loader: () => redirect('automation'), element: <LoadingRoute /> },
-        { path: 'automation', element: <OrganizationPage page="automation" /> },
-        { path: 'connections', element: <OrganizationPage page="connections" /> },
-        { path: 'rules', element: <OrganizationPage page="rules" /> },
-        { path: 'members', element: <OrganizationPage page="members" /> },
-        { path: 'mailbox-test', element: <OrganizationPage page="mailbox-test" /> },
-        { path: 'rule-runs', element: <OrganizationPage page="rule-runs" /> },
-        { path: 'event-refresh', element: <OrganizationPage page="event-refresh" /> },
-        { path: 'tasks', element: <OrganizationPage page="tasks" /> },
+        { path: 'automation', element: <AccountPage page="automation" /> },
+        { path: 'connections', element: <AccountPage page="connections" /> },
+        { path: 'rules', element: <AccountPage page="rules" /> },
+        { path: 'members', element: <AccountPage page="members" /> },
+        { path: 'mailbox-test', element: <AccountPage page="mailbox-test" /> },
+        { path: 'rule-runs', element: <AccountPage page="rule-runs" /> },
+        { path: 'event-refresh', element: <AccountPage page="event-refresh" /> },
+        { path: 'tasks', element: <AccountPage page="tasks" /> },
       ],
     },
     { path: '*', element: <NotFoundRoute /> },

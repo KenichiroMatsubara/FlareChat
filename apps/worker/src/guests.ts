@@ -17,7 +17,7 @@ const UNSTATED_AFFILIATION = '所属未記載';
  * Counts attending guests by Affiliation. Only the counts reach a Scheduled
  * Event's Calendar description; the names stay in the management GUI and in the
  * published registration, because a description is rendered on every invited
- * Member's own calendar and a roster is not for all of them to hold.
+ * Contact's own calendar and a roster is not for all of them to hold.
  */
 export const affiliationCounts = (rows: readonly GuestRegistrationRow[]): AffiliationCount[] => {
   const counts = new Map<string, number>();
@@ -38,7 +38,7 @@ export const affiliationCounts = (rows: readonly GuestRegistrationRow[]): Affili
 /**
  * The Guest Registration line for a Calendar description, or null when nobody
  * from outside has registered. Returned as plain text: the caller renders it
- * through the description builder so an Affiliation another organization wrote
+ * through the description builder so an Affiliation another account wrote
  * is escaped there rather than by whoever assembled this string.
  */
 export const guestCountsLine = (rows: readonly GuestRegistrationRow[]): string | null => {
