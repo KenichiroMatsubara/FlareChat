@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { CircleAlert, Plug, RefreshCw, Send, Trash2 } from 'lucide-react';
 
+import { AccessPanel } from './access';
 import { api, type ChatTurnView, type McpServerView } from './api';
 
 const errorText = (error: unknown, fallback: string): string =>
@@ -142,5 +143,7 @@ export const ChatPage = ({ accountId }: { accountId: string }) => {
         <button type="submit" disabled={!serverName.trim() || !serverUrl.trim()}>追加</button>
       </form>
     </section>
+
+    <AccessPanel accountId={accountId} />
   </section>;
 };

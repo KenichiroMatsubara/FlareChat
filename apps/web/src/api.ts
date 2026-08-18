@@ -666,7 +666,43 @@ export const api = {
     request(`/api/organizations/${encodeURIComponent(accountId)}/chat/${encodeURIComponent(conversationId)}`),
   sendChatMessage: (accountId: string, input: { conversationId: string | null; message: string }): Promise<ChatReply> =>
     request(`/api/organizations/${encodeURIComponent(accountId)}/chat`, { method: 'POST', body: JSON.stringify(input) }),
+  contactLists: (accountId: string): Promise<ContactListView[]> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/contact-lists`),
+  saveContactList: (accountId: string, id: string, input: { name: string; contactIds: string[] }): Promise<{ id: string }> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/contact-lists/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(input) }),
+  accessTokens: (accountId: string): Promise<AccessTokenView[]> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/access-tokens`),
+  issueAccessToken: (accountId: string, input: { name: string; contactListId: string; tools: string[]; suppressionWindow: string }): Promise<IssuedAccessToken> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/access-tokens`, { method: 'POST', body: JSON.stringify(input) }),
+  revokeAccessToken: (accountId: string, id: string): Promise<{ id: string }> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/access-tokens/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 };
+
+export interface ContactListView {
+  id: string;
+  name: string;
+  description: string;
+  contactIds: string[];
+}
+
+export interface AccessTokenView {
+  id: string;
+  name: string;
+  contactListId: string;
+  suppressionWindow: string;
+  callsPerHour: number;
+  writesPerDay: number;
+  lastUsedAt: string | null;
+  tools: string[];
+}
+
+export interface IssuedAccessToken {
+  id: string;
+  name: string;
+  tools: string[];
+  token: string;
+  url: string;
+}
 
 export interface McpServerView {
   id: string;

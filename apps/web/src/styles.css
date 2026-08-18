@@ -537,3 +537,16 @@ nav a.loading { opacity: .65; }
 .chat-server-url { color: var(--muted, #6b7280); overflow-wrap: anywhere; }
 .chat-servers form { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: flex-end; }
 .chat-servers form label { display: flex; flex-direction: column; gap: 0.25rem; }
+
+/* Outward access */
+.access-panel { display: flex; flex-direction: column; gap: 0.75rem; padding-top: 1rem; border-top: 1px solid var(--border, #e5e7eb); }
+.access-panel h3 { display: flex; align-items: center; gap: 0.4rem; }
+.access-form { display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start; }
+.access-form label { display: flex; flex-direction: column; gap: 0.25rem; }
+.access-form fieldset { display: flex; flex-wrap: wrap; gap: 0.75rem; border: 1px solid var(--border, #e5e7eb); border-radius: 0.5rem; padding: 0.6rem 0.8rem; }
+.access-check { flex-direction: row !important; align-items: center; gap: 0.35rem; }
+.access-issued { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.8rem; border: 1px solid var(--warning, #92400e); border-radius: 0.6rem; }
+.access-issued input { width: 100%; font-family: ui-monospace, monospace; }
+.access-tokens { display: flex; flex-direction: column; gap: 0.4rem; list-style: none; padding: 0; }
+.access-tokens li { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.access-token-name { font-weight: 600; }
