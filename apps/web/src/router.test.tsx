@@ -23,6 +23,7 @@ describe('application routes', () => {
     });
     expect(accountRoutePaths).toEqual({
       automation: 'automation',
+      chat: 'chat',
       connections: 'connections',
       rules: 'rules',
       contacts: 'members',

@@ -1,13 +1,14 @@
-import { CheckSquare, CircleAlert, LogOut, Mail, Menu, Play, RefreshCw, Settings, ShieldCheck, SlidersHorizontal, UsersRound, X } from 'lucide-react';
+import { CheckSquare, CircleAlert, LogOut, Mail, Menu, MessageSquare, Play, RefreshCw, Settings, ShieldCheck, SlidersHorizontal, UsersRound, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
 import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, OperationalTaskRole, AccountAgentRule, AccountConnections, AccountLineDestination, AccountMembership, AccountPrompt, AccountContact, AccountContactInput, AccountRule, AccountRuleInput, AccountTask, AccountTypedList, PresetSummary, ContactLineDestinationInput, RuleRun, TaskAssignmentProposal, TaskReassignmentReview, TaskRoleAssignment } from './api';
 import { AutomationPage, ConnectionsPage, EventRefreshPage, MailboxTestPage, ContactsPage, RuleRunsPage, RulesPage, TasksPage } from './dashboard-pages';
+import { ChatPage } from './chat';
 import { pendingKey, ROUTE_NAVIGATION_KEY } from './pending';
 import { PendingOverlay } from './progress';
 
-export type Page = 'automation' | 'connections' | 'rules' | 'members' | 'mailbox-test' | 'rule-runs' | 'event-refresh' | 'tasks';
+export type Page = 'automation' | 'chat' | 'connections' | 'rules' | 'members' | 'mailbox-test' | 'rule-runs' | 'event-refresh' | 'tasks';
 
 export const needsGoogleReauthentication = (error: string): boolean =>
   /token has been expired or revoked/iu.test(error);
@@ -31,6 +32,7 @@ interface NavigationItem {
 
 const navigationItems: readonly NavigationItem[] = [
   { to: '../automation', label: '自動化', icon: <Play size={16} /> },
+  { to: '../chat', label: 'チャット', icon: <MessageSquare size={16} /> },
   { to: '../connections', label: '接続設定', icon: <Settings size={16} /> },
   { to: '../rules', label: 'ルール', icon: <SlidersHorizontal size={16} /> },
   { to: '../members', label: 'メンバー', icon: <UsersRound size={16} /> },
@@ -159,6 +161,8 @@ export const Dashboard = (props: DashboardProps) => {
   const page = props.page ?? 'automation';
   const content = page === 'automation'
     ? <AutomationPage {...props} />
+    : page === 'chat'
+      ? <ChatPage accountId={props.accountId ?? ''} />
     : page === 'connections'
       ? <ConnectionsPage {...props} />
       : page === 'rules'

@@ -654,4 +654,50 @@ export const api = {
   runAutomation: (accountId: string): Promise<AutomationSummary> => request(`/api/organizations/${encodeURIComponent(accountId)}/automation/run`, { method: 'POST' }),
   setEnabled: (accountId: string, enabled: boolean): Promise<{ enabled: boolean }> => request(`/api/organizations/${encodeURIComponent(accountId)}/automation/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }),
   logout: (): Promise<{ loggedOut: boolean }> => request('/api/auth/logout', { method: 'POST' }),
+  mcpServers: (accountId: string): Promise<McpServerView[]> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/mcp-servers`),
+  saveMcpServer: (accountId: string, id: string, input: { name: string; url: string; token: string | null }): Promise<{ id: string }> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/mcp-servers/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(input) }),
+  removeMcpServer: (accountId: string, id: string): Promise<{ id: string }> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/mcp-servers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  chatConversations: (accountId: string): Promise<ChatConversationView[]> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/chat`),
+  chatTurns: (accountId: string, conversationId: string): Promise<ChatTurnView[]> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/chat/${encodeURIComponent(conversationId)}`),
+  sendChatMessage: (accountId: string, input: { conversationId: string | null; message: string }): Promise<ChatReply> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/chat`, { method: 'POST', body: JSON.stringify(input) }),
 };
+
+export interface McpServerView {
+  id: string;
+  name: string;
+  url: string;
+  revision: string | null;
+  authenticated: boolean;
+  updatedAt: string;
+}
+
+export interface ChatConversationView {
+  id: string;
+  title: string;
+  updatedAt: string;
+}
+
+export interface ChatTurnView {
+  id: string;
+  position: number;
+  request: string;
+  response: string | null;
+  status: 'running' | 'completed' | 'failed';
+  error: string | null;
+  ruleRunId: string;
+}
+
+export interface ChatReply {
+  conversationId: string;
+  turnId: string;
+  ruleRunId: string;
+  response: string;
+  toolCallCount: number;
+  unreachableServers: Array<{ server: string; error: string }>;
+}

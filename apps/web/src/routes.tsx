@@ -595,7 +595,7 @@ export const AccountLayout = () => {
   return <AccountContext.Provider value={value}><Outlet /></AccountContext.Provider>;
 };
 
-type AccountPage = 'automation' | 'connections' | 'rules' | 'members' | 'mailbox-test' | 'rule-runs' | 'event-refresh' | 'tasks';
+type AccountPage = 'automation' | 'chat' | 'connections' | 'rules' | 'members' | 'mailbox-test' | 'rule-runs' | 'event-refresh' | 'tasks';
 export const AccountPage = ({ page }: { page: AccountPage }) => {
   const value = useAccount();
   const navigation = useNavigation();

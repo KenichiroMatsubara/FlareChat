@@ -17,6 +17,7 @@ export const routePaths = {
 
 export const accountRoutePaths = {
   automation: 'automation',
+  chat: 'chat',
   connections: 'connections',
   rules: 'rules',
   contacts: 'members',
@@ -98,6 +99,7 @@ const rootRoute = (client: RouterClient) => ({
       children: [
         { index: true, loader: () => redirect('automation'), element: <LoadingRoute /> },
         { path: 'automation', element: <AccountPage page="automation" /> },
+        { path: 'chat', element: <AccountPage page="chat" /> },
         { path: 'connections', element: <AccountPage page="connections" /> },
         { path: 'rules', element: <AccountPage page="rules" /> },
         { path: 'members', element: <AccountPage page="members" /> },
