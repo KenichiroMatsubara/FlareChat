@@ -36,6 +36,17 @@ import {
   saveChatServer,
 } from './chat-store';
 import { completeChatTurn } from './chat-model';
+import { generateAccessToken, accessTokenHash, presentedToken } from './access-token';
+import { grantedServerTools, handleMcpServerRequest, MCP_SERVER_TOOLS, type JsonRpcRequest } from './mcp-server';
+import {
+  admitAccessTokenCall,
+  authenticateAccessToken,
+  mcpServerPorts,
+  publishedPrompts,
+  suppressionPort,
+} from './mcp-server-store';
+import { SUPPRESSION_WINDOWS, type SuppressionWindow } from './suppression';
+import { accessTokens, accessTokenTools, contactListMembers, contactLists } from './storage/account-schema';
 import { mcpServers } from './storage/account-schema';
 import { createTaskWorkflow } from './tasks';
 import { createRuleExecution } from './execution';
@@ -2686,6 +2697,184 @@ app.post('/api/organizations/:accountId/chat', async (context) => {
   } catch (error) {
     const detail = error instanceof Error ? error.message : 'Operator Chat turn failed.';
     return failure(context, detail, detail === 'Authentication is required.' ? 401 : 409);
+  }
+});
+
+
+const lineAccessTokenFor = async (input: { database: D1Database; accountKey: CryptoKey; accountId: string }): Promise<string | null> => {
+  const existing = await drizzleAccountDatabase(input.database).select().from(accountConnections)
+    .where(and(eq(accountConnections.kind, 'line'), eq(accountConnections.status, 'active'))).limit(1).get();
+  if (!existing) return null;
+  const credential = await connectionCredential(existing, input.accountKey, input.accountId, 'line');
+  return credential.channelAccessToken ?? null;
+};
+
+app.get('/api/organizations/:accountId/contact-lists', async (context) => {
+  try {
+    const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
+    if (!access.database) throw new Error('Account database is not available.');
+    const db = drizzleAccountDatabase(access.database);
+    const rows = await db.select().from(contactLists).orderBy(asc(contactLists.name)).all();
+    const memberships = rows.length
+      ? await db.select().from(contactListMembers).where(inArray(contactListMembers.listId, rows.map(({ id }) => id))).all()
+      : [];
+    return json(context, rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      contactIds: memberships.flatMap((entry) => entry.listId === row.id ? [entry.contactId] : []),
+    })));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Contact Lists could not be loaded.', 403);
+  }
+});
+
+app.put('/api/organizations/:accountId/contact-lists/:listId', async (context) => {
+  try {
+    const accountId = context.req.param('accountId');
+    const listId = context.req.param('listId');
+    const access = await accountForRequest(context.req.raw, context.env, accountId);
+    if (!access.database) throw new Error('Account database is not available.');
+    const input = await context.req.json<{ name?: string; description?: string; contactIds?: unknown }>();
+    const name = input.name?.trim() ?? '';
+    if (!name || name.length > 60) return failure(context, 'Contact List 名は 1〜60 文字で入力してください。');
+    const contactIds = Array.isArray(input.contactIds) ? input.contactIds.filter((id): id is string => typeof id === 'string') : [];
+    const db = drizzleAccountDatabase(access.database);
+    const timestamp = now();
+    await db.insert(contactLists).values({
+      id: listId, accountId, name, description: input.description?.trim() ?? '', createdAt: timestamp, updatedAt: timestamp,
+    }).onConflictDoUpdate({
+      target: contactLists.id,
+      set: { name, description: input.description?.trim() ?? '', updatedAt: timestamp },
+    }).run();
+    await db.delete(contactListMembers).where(eq(contactListMembers.listId, listId)).run();
+    for (const contactId of contactIds) {
+      await db.insert(contactListMembers).values({ listId, contactId }).onConflictDoNothing().run();
+    }
+    return json(context, { id: listId, name, contactIds });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Contact List could not be saved.', 409);
+  }
+});
+
+app.get('/api/organizations/:accountId/access-tokens', async (context) => {
+  try {
+    const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
+    if (!access.database) throw new Error('Account database is not available.');
+    const db = drizzleAccountDatabase(access.database);
+    const rows = await db.select().from(accessTokens).orderBy(asc(accessTokens.name)).all();
+    const grants = rows.length
+      ? await db.select().from(accessTokenTools).where(inArray(accessTokenTools.tokenId, rows.map(({ id }) => id))).all()
+      : [];
+    return json(context, rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      contactListId: row.contactListId,
+      suppressionWindow: row.suppressionWindow,
+      callsPerHour: row.callsPerHour,
+      writesPerDay: row.writesPerDay,
+      lastUsedAt: row.lastUsedAt,
+      tools: grants.flatMap((grant) => grant.tokenId === row.id ? [grant.tool] : []),
+    })));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Access Tokens could not be loaded.', 403);
+  }
+});
+
+/** Issues a Token once; the credential is shown here and never again, because only its hash is stored. */
+app.post('/api/organizations/:accountId/access-tokens', async (context) => {
+  try {
+    const accountId = context.req.param('accountId');
+    const access = await accountForRequest(context.req.raw, context.env, accountId);
+    if (!access.database) throw new Error('Account database is not available.');
+    const input = await context.req.json<{ name?: string; contactListId?: string; tools?: unknown; suppressionWindow?: string; callsPerHour?: number; writesPerDay?: number }>();
+    const name = input.name?.trim() ?? '';
+    const contactListId = input.contactListId?.trim() ?? '';
+    if (!name || name.length > 60) return failure(context, 'Access Token 名は 1〜60 文字で入力してください。');
+    if (!contactListId) return failure(context, '到達できる Contact List を選んでください。');
+    const requested = Array.isArray(input.tools) ? input.tools.filter((tool): tool is string => typeof tool === 'string') : [];
+    const tools = grantedServerTools(requested).map((tool) => tool.name);
+    if (!tools.length) return failure(context, '許可するツールを1つ以上選んでください。');
+    const window = input.suppressionWindow ?? 'day';
+    if (!SUPPRESSION_WINDOWS.includes(window as SuppressionWindow)) return failure(context, '重複抑止の窓の指定が不正です。');
+    const db = drizzleAccountDatabase(access.database);
+    const list = await db.select({ id: contactLists.id }).from(contactLists).where(eq(contactLists.id, contactListId)).get();
+    if (!list) return failure(context, '指定された Contact List が見つかりません。', 404);
+    const token = generateAccessToken();
+    const id = crypto.randomUUID();
+    const timestamp = now();
+    await db.insert(accessTokens).values({
+      id,
+      accountId,
+      name,
+      tokenHash: await accessTokenHash(token),
+      contactListId,
+      suppressionWindow: window as SuppressionWindow,
+      callsPerHour: Math.max(1, Math.min(input.callsPerHour ?? 60, 1_000)),
+      writesPerDay: Math.max(1, Math.min(input.writesPerDay ?? 100, 10_000)),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }).run();
+    for (const tool of tools) await db.insert(accessTokenTools).values({ tokenId: id, tool }).run();
+    return json(context, {
+      id,
+      name,
+      tools,
+      token,
+      url: `${context.env.APP_URL.replace(/\/$/u, '')}/api/public/organizations/${encodeURIComponent(accountId)}/mcp`,
+    });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Access Token could not be issued.', 409);
+  }
+});
+
+app.delete('/api/organizations/:accountId/access-tokens/:tokenId', async (context) => {
+  try {
+    const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
+    if (!access.database) throw new Error('Account database is not available.');
+    await drizzleAccountDatabase(access.database).delete(accessTokens)
+      .where(eq(accessTokens.id, context.req.param('tokenId'))).run();
+    return json(context, { id: context.req.param('tokenId'), revoked: true });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Access Token could not be revoked.', 409);
+  }
+});
+
+/** The MCP Server an outside agent reaches (ADR 0152). Authenticated by Access Token alone. */
+app.post('/api/public/organizations/:accountId/mcp', async (context) => {
+  const rpcError = (code: number, message: string, status: 200 | 401 | 429 | 503) =>
+    context.json({ jsonrpc: '2.0', id: null, error: { code, message } }, status);
+  try {
+    const accountId = context.req.param('accountId');
+    const presented = presentedToken(context.req.raw);
+    if (!presented) return rpcError(-32001, 'An Access Token must be presented in the Authorization header.', 401);
+    const database = await activeAccountDatabase(context.env, accountId);
+    if (!database) return rpcError(-32003, 'This Account is not available.', 503);
+    const token = await authenticateAccessToken({ database, presented });
+    if (!token) return rpcError(-32001, 'This Access Token is not recognised.', 401);
+
+    const request = await context.req.json<JsonRpcRequest>();
+    const at = new Date();
+    const calledTool = request.method === 'tools/call' && typeof request.params?.name === 'string' ? request.params.name : null;
+    const isWrite = MCP_SERVER_TOOLS.some((tool) => tool.name === calledTool && tool.isWrite);
+    const admitted = await admitAccessTokenCall({ database, token, tool: calledTool ?? request.method, isWrite, at });
+    if (!admitted.admitted) return rpcError(-32002, admitted.reason ?? 'This Access Token has spent its limit.', 429);
+
+    const accountKey = await accountKeyForRequest(context.env, accountId);
+    const response = await handleMcpServerRequest({
+      request,
+      grant: token.grant,
+      contactIds: token.contactIds,
+      prompts: await publishedPrompts(database),
+      ports: mcpServerPorts({ database, lineAccessToken: await lineAccessTokenFor({ database, accountKey, accountId }) }),
+      suppression: suppressionPort({ database, scope: token.id, window: token.suppressionWindow, at }),
+      scope: token.id,
+      window: token.suppressionWindow,
+      at,
+    });
+    return context.json(response);
+  } catch (error) {
+    return rpcError(-32603, error instanceof Error ? error.message : 'The MCP Server failed.', 503);
   }
 });
 

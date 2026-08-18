@@ -3,7 +3,8 @@ import { enqueueDueAccountTaskReminders } from '../task-reminders';
 import { createAutomation } from '../automation';
 import { createDatabaseAccess } from '../database-access';
 import { retryProvisioning } from '../onboarding';
-import { recoverDueAccountJobs } from '../jobs';
+import { dispatchDueAccountJobs } from '../job-dispatch';
+import { MCP_REMINDER_JOB_KIND, reminderJobHandler } from '../reminder-job';
 import type { Bindings } from '../types';
 
 /**
@@ -17,6 +18,6 @@ export const runBackgroundWork = async (env: Bindings): Promise<void> => {
   await retryProvisioning(env);
   await enqueueDueAccountAttendanceReminders(env, dueAt);
   await enqueueDueAccountTaskReminders(env, dueAt);
-  await recoverDueAccountJobs(env, dueAt);
+  await dispatchDueAccountJobs(env, dueAt, { [MCP_REMINDER_JOB_KIND]: reminderJobHandler(env) });
   await createAutomation(env).runEnabledAccounts();
 };
