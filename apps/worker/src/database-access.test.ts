@@ -35,7 +35,7 @@ describe('Database Access', () => {
       databaseId: 'database-example',
     });
 
-    expect(ready.schema.currentMigration).toBe('0022_operator_chat.sql');
+    expect(ready.schema.currentMigration).toBe('0023_access_tokens.sql');
     await expect(ready.raw.prepare(
       'SELECT display_name FROM line_destinations',
     ).all()).resolves.toMatchObject({ success: true });

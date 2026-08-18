@@ -75,6 +75,7 @@ export const prompts = sqliteTable('prompts', {
   name: text('name').notNull(),
   instructions: text('instructions').notNull(),
   currentRevision: integer('current_revision').notNull().default(1),
+  published: integer('published', { mode: 'boolean' }).notNull().default(false),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
@@ -596,4 +597,73 @@ export const chatTurns = sqliteTable('chat_turns', {
   check('chat_turns_status_check', sql`${table.status} in ('running', 'completed', 'failed')`),
   unique().on(table.conversationId, table.position),
   index('chat_turns_conversation_idx').on(table.conversationId, table.position),
+]);
+
+/** A named set of Contacts (ADR 0147). Delivery resolves each Contact's handle from the Channel it sends on. */
+export const contactLists = sqliteTable('contact_lists', {
+  id: text('id').primaryKey(),
+  accountId: text('account_id').notNull(),
+  name: text('name').notNull(),
+  description: text('description').notNull().default(''),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  uniqueIndex('contact_lists_name_idx').on(table.name),
+]);
+
+export const contactListMembers = sqliteTable('contact_list_members', {
+  listId: text('list_id').notNull().references(() => contactLists.id, { onDelete: 'cascade' }),
+  contactId: text('contact_id').notNull().references(() => contacts.id, { onDelete: 'cascade' }),
+}, (table) => [
+  primaryKey({ columns: [table.listId, table.contactId] }),
+]);
+
+/** The credential an outside agent presents, carrying one Tool Grant and one Contact List bound (ADR 0152). */
+export const accessTokens = sqliteTable('access_tokens', {
+  id: text('id').primaryKey(),
+  accountId: text('account_id').notNull(),
+  name: text('name').notNull(),
+  tokenHash: text('token_hash').notNull(),
+  contactListId: text('contact_list_id').notNull().references(() => contactLists.id, { onDelete: 'restrict' }),
+  suppressionWindow: text('suppression_window', { enum: ['none', 'hour', 'day', 'week', 'forever'] }).notNull().default('day'),
+  callsPerHour: integer('calls_per_hour').notNull().default(60),
+  writesPerDay: integer('writes_per_day').notNull().default(100),
+  lastUsedAt: text('last_used_at'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  check('access_tokens_window_check', sql`${table.suppressionWindow} in ('none', 'hour', 'day', 'week', 'forever')`),
+  check('access_tokens_calls_check', sql`${table.callsPerHour} > 0`),
+  check('access_tokens_writes_check', sql`${table.writesPerDay} > 0`),
+  uniqueIndex('access_tokens_hash_idx').on(table.tokenHash),
+]);
+
+export const accessTokenTools = sqliteTable('access_token_tools', {
+  tokenId: text('token_id').notNull().references(() => accessTokens.id, { onDelete: 'cascade' }),
+  tool: text('tool').notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.tokenId, table.tool] }),
+]);
+
+/** One admitted call, kept so a Token's own rate and write limits can be counted (ADR 0152). */
+export const accessTokenCalls = sqliteTable('access_token_calls', {
+  id: text('id').primaryKey(),
+  tokenId: text('token_id').notNull().references(() => accessTokens.id, { onDelete: 'cascade' }),
+  tool: text('tool').notNull(),
+  isWrite: integer('is_write', { mode: 'boolean' }).notNull().default(false),
+  createdAt: text('created_at').notNull(),
+}, (table) => [
+  check('access_token_calls_write_check', sql`${table.isWrite} in (0, 1)`),
+  index('access_token_calls_window_idx').on(table.tokenId, table.createdAt),
+]);
+
+/** One effect already performed, holding its repeat until the declared window passes (ADR 0141). */
+export const suppressions = sqliteTable('suppressions', {
+  key: text('key').primaryKey(),
+  scope: text('scope').notNull(),
+  tool: text('tool').notNull(),
+  recordedAt: text('recorded_at').notNull(),
+  expiresAt: text('expires_at'),
+}, (table) => [
+  index('suppressions_expiry_idx').on(table.expiresAt),
 ]);

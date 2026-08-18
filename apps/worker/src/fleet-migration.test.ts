@@ -82,7 +82,7 @@ describe('Fleet Migration', () => {
     } as unknown as Bindings);
 
     expect(receipt).toMatchObject({
-      targetMigration: '0022_operator_chat.sql',
+      targetMigration: '0023_access_tokens.sql',
       migratedDatabases: 2,
     });
     expect(active.rows<{ display_name: string }>(
@@ -141,7 +141,7 @@ describe('Fleet Migration', () => {
     } as unknown as Bindings);
 
     expect(receipt).toMatchObject({
-      targetMigration: '0022_operator_chat.sql',
+      targetMigration: '0023_access_tokens.sql',
       migratedDatabases: 1,
     });
     expect(applied.has('0004_manual_line_destination_source.sql')).toBe(true);
