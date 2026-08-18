@@ -22,6 +22,21 @@ import type { Bindings, ConnectionRow, SessionRow } from './types';
 import type { CipherEnvelope } from './cryptography';
 import { openAiChatCompletionsUrl, type EventDetails, type MailExtraction, type TaskDetails } from './event-details';
 import { readAgentRunTranscript } from './agent-runs';
+import { resolveChatTools, runChatTurn, type ChatModelPort } from './chat';
+import {
+  chatHistory,
+  chatInternalHandlers,
+  closeChatTurn,
+  deleteChatServer,
+  ensureChatConversation,
+  listChatConversations,
+  listChatServers,
+  openChatTurn,
+  readChatTurns,
+  saveChatServer,
+} from './chat-store';
+import { completeChatTurn } from './chat-model';
+import { mcpServers } from './storage/account-schema';
 import { createTaskWorkflow } from './tasks';
 import { createRuleExecution } from './execution';
 import { proposeTaskReassignments, TASK_REASSIGNMENT_LIMIT } from './task-reassignment';
@@ -2507,6 +2522,170 @@ app.patch('/api/organizations/:accountId/suspension', async (context) => {
     return json(context, { accountId, status });
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Account suspension could not be changed.', 409);
+  }
+});
+
+
+const MCP_REVISIONS = ['2026-07-28', '2025-06-18'] as const;
+
+const chatAiConnection = async (input: { database: D1Database; accountKey: CryptoKey; accountId: string }) => {
+  const existing = await drizzleAccountDatabase(input.database).select().from(accountConnections)
+    .where(and(eq(accountConnections.kind, 'ai'), eq(accountConnections.status, 'active'))).limit(1).get();
+  if (!existing) throw new Error('OpenAI 互換 API を設定してください。');
+  const credential = await connectionCredential(existing, input.accountKey, input.accountId, 'ai');
+  const model = credential.model?.trim();
+  const baseUrl = normalizedAiBaseUrl(credential.baseUrl || LEGACY_AI_BASE_URL);
+  if (!credential.apiKey || !model || !baseUrl) throw new Error('OpenAI 互換 API を設定してください。');
+  return { apiKey: credential.apiKey, baseUrl, model };
+};
+
+app.get('/api/organizations/:accountId/mcp-servers', async (context) => {
+  try {
+    const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
+    if (!access.database) throw new Error('Account database is not available.');
+    const rows = await drizzleAccountDatabase(access.database).select().from(mcpServers).orderBy(asc(mcpServers.name)).all();
+    return json(context, rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      url: row.url,
+      revision: row.revision,
+      authenticated: Boolean(row.tokenEnvelope),
+      updatedAt: row.updatedAt,
+    })));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'MCP Servers could not be loaded.', 403);
+  }
+});
+
+app.put('/api/organizations/:accountId/mcp-servers/:serverId', async (context) => {
+  try {
+    const accountId = context.req.param('accountId');
+    const access = await accountForRequest(context.req.raw, context.env, accountId);
+    if (!access.database) throw new Error('Account database is not available.');
+    const input = await context.req.json<{ name?: string; url?: string; token?: string | null; revision?: string | null }>();
+    const name = input.name?.trim() ?? '';
+    const url = input.url?.trim() ?? '';
+    if (!name || name.length > 40 || !/^[a-z0-9_-]+$/u.test(name)) {
+      return failure(context, 'MCP Server 名は英小文字・数字・ハイフン・アンダースコアで 1〜40 文字にしてください。');
+    }
+    if (!/^https:\/\//u.test(url)) return failure(context, 'MCP Server の URL は https で始まる必要があります。');
+    const revision = input.revision ?? null;
+    if (revision !== null && !MCP_REVISIONS.includes(revision as (typeof MCP_REVISIONS)[number])) {
+      return failure(context, 'MCP のリビジョン指定が不正です。');
+    }
+    await saveChatServer({
+      database: access.database,
+      accountKey: await accountKeyForRequest(context.env, accountId),
+      accountId,
+      id: context.req.param('serverId'),
+      name,
+      url,
+      token: input.token?.trim() || null,
+      revision: revision as '2026-07-28' | '2025-06-18' | null,
+      timestamp: now(),
+    });
+    return json(context, { id: context.req.param('serverId'), name, url });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'MCP Server could not be saved.', 409);
+  }
+});
+
+app.delete('/api/organizations/:accountId/mcp-servers/:serverId', async (context) => {
+  try {
+    const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
+    if (!access.database) throw new Error('Account database is not available.');
+    await deleteChatServer({ database: access.database, id: context.req.param('serverId') });
+    return json(context, { id: context.req.param('serverId'), deleted: true });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'MCP Server could not be removed.', 409);
+  }
+});
+
+app.get('/api/organizations/:accountId/chat', async (context) => {
+  try {
+    const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
+    if (!access.database) throw new Error('Account database is not available.');
+    return json(context, await listChatConversations(access.database));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Operator Chat could not be loaded.', 403);
+  }
+});
+
+app.get('/api/organizations/:accountId/chat/:conversationId', async (context) => {
+  try {
+    const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
+    if (!access.database) throw new Error('Account database is not available.');
+    return json(context, await readChatTurns({ database: access.database, conversationId: context.req.param('conversationId') }));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Operator Chat could not be loaded.', 403);
+  }
+});
+
+/** One exchange of Operator Chat, recorded as one Rule Run (ADR 0146). */
+app.post('/api/organizations/:accountId/chat', async (context) => {
+  const model: ChatModelPort = { complete: completeChatTurn };
+  try {
+    const accountId = context.req.param('accountId');
+    const access = await accountForRequest(context.req.raw, context.env, accountId);
+    if (!access.database) throw new Error('Account database is not available.');
+    const input = await context.req.json<{ conversationId?: string | null; message?: string }>();
+    const message = input.message?.trim() ?? '';
+    if (!message || message.length > 10_000) return failure(context, 'メッセージは 1〜10,000 文字で入力してください。');
+
+    const accountKey = await accountKeyForRequest(context.env, accountId);
+    const connection = await chatAiConnection({ database: access.database, accountKey, accountId });
+    const servers = await listChatServers({ database: access.database, accountKey, accountId });
+    const resolved = await resolveChatTools({ servers, fetch: (url, init) => fetch(url, init), executionMode: 'unattended' });
+
+    const conversationId = await ensureChatConversation({
+      database: access.database,
+      accountId,
+      conversationId: input.conversationId ?? null,
+      title: message,
+      timestamp: now(),
+    });
+    const history = await chatHistory({ database: access.database, conversationId });
+    const turn = await openChatTurn({ database: access.database, conversationId, request: message, timestamp: now() });
+
+    try {
+      const result = await runChatTurn({
+        model,
+        connection,
+        request: message,
+        history,
+        tools: resolved.tools,
+        fetch: (url, init) => fetch(url, init),
+        internal: chatInternalHandlers(access.database),
+      });
+      await closeChatTurn({
+        database: access.database,
+        turnId: turn.turnId,
+        ruleRunId: turn.ruleRunId,
+        outcome: { status: 'completed', response: result.output },
+        timestamp: now(),
+      });
+      return json(context, {
+        conversationId,
+        turnId: turn.turnId,
+        ruleRunId: turn.ruleRunId,
+        response: result.output,
+        toolCallCount: result.toolCallCount,
+        unreachableServers: resolved.failures,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Operator Chat turn failed.';
+      await closeChatTurn({
+        database: access.database,
+        turnId: turn.turnId,
+        ruleRunId: turn.ruleRunId,
+        outcome: { status: 'failed', error: detail },
+        timestamp: now(),
+      });
+      return failure(context, detail, 503);
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : 'Operator Chat turn failed.';
+    return failure(context, detail, detail === 'Authentication is required.' ? 401 : 409);
   }
 });
 
