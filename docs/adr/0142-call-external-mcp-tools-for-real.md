@@ -4,7 +4,7 @@ An external MCP tool is called during the model's turn and returns its actual re
 
 Safety for external tools therefore rests on the granted tool set rather than on planning. An Account names the servers and the individual tools each Automation may use, default deny, and the server's own `readOnlyHint` and `destructiveHint` are displayed but never relied upon, because the server declares them about itself.
 
-The Execution Mode decides which tools are bound at all. Read-only binds no external write tool, so a preview cannot post to Discord through one. Approval and unattended both bind them and both execute them during the run.
+The Execution Mode decides which tools are bound at all. Read-only binds no external tool whatsoever, so a preview cannot post to Discord through one and nothing has to judge which third-party tools write. Approval and unattended both bind them and both execute them during the run.
 
 ## Consequences
 
