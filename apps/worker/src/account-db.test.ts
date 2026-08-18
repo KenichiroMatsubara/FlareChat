@@ -140,6 +140,7 @@ describe('Account database resolver', () => {
       { name: '0019_task_role_revisions.sql' },
       { name: '0020_event_responses_and_guests.sql' },
       { name: '0021_rule_execution.sql' },
+      { name: '0022_operator_chat.sql' },
     ]);
   });
 

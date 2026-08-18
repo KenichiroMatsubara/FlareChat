@@ -155,7 +155,7 @@ describe('Schema Lifecycle', () => {
 
     expect(receipt).toMatchObject({
       kind: 'organization',
-      currentMigration: '0021_rule_execution.sql',
+      currentMigration: '0022_operator_chat.sql',
       appliedMigrations: [
         '0001_tasks.sql',
         '0002_line_destination_roster.sql',
@@ -178,6 +178,7 @@ describe('Schema Lifecycle', () => {
         '0019_task_role_revisions.sql',
         '0020_event_responses_and_guests.sql',
         '0021_rule_execution.sql',
+        '0022_operator_chat.sql',
       ],
     });
     expect(database.rows<{ display_name: string }>(
@@ -210,7 +211,7 @@ describe('Schema Lifecycle', () => {
       category: 'migration_apply_failed',
       kind: 'organization',
       currentMigration: '0000_initial.sql',
-      expectedMigration: '0021_rule_execution.sql',
+      expectedMigration: '0022_operator_chat.sql',
     });
 
     database.execute('DROP INDEX tasks_source_role_deadline_title_idx');
@@ -219,7 +220,7 @@ describe('Schema Lifecycle', () => {
       kind: 'organization',
       database: database.binding,
     })).resolves.toMatchObject({
-      currentMigration: '0021_rule_execution.sql',
+      currentMigration: '0022_operator_chat.sql',
     });
   });
 
@@ -240,7 +241,7 @@ describe('Schema Lifecycle', () => {
       category: 'checksum_mismatch',
       kind: 'organization',
       currentMigration: '0000_initial.sql',
-      expectedMigration: '0021_rule_execution.sql',
+      expectedMigration: '0022_operator_chat.sql',
     });
   });
 
@@ -256,7 +257,7 @@ describe('Schema Lifecycle', () => {
     await expect(schemaLifecycle.ensureCurrent({
       kind: 'organization',
       database: database.binding,
-    })).resolves.toMatchObject({ currentMigration: '0021_rule_execution.sql' });
+    })).resolves.toMatchObject({ currentMigration: '0022_operator_chat.sql' });
   });
 
   it('accepts the legacy Operational Task Roles checksum recorded by the local schema lifecycle', async () => {
@@ -271,7 +272,7 @@ describe('Schema Lifecycle', () => {
     await expect(schemaLifecycle.ensureCurrent({
       kind: 'organization',
       database: database.binding,
-    })).resolves.toMatchObject({ currentMigration: '0021_rule_execution.sql' });
+    })).resolves.toMatchObject({ currentMigration: '0022_operator_chat.sql' });
   });
 
   it('migrates existing Tasks into Account-owned role records and unassigns the Control identities they named', async () => {
@@ -406,8 +407,8 @@ describe('Schema Lifecycle', () => {
     ]);
 
     expect(receipts).toEqual([
-      expect.objectContaining({ currentMigration: '0021_rule_execution.sql' }),
-      expect.objectContaining({ currentMigration: '0021_rule_execution.sql' }),
+      expect.objectContaining({ currentMigration: '0022_operator_chat.sql' }),
+      expect.objectContaining({ currentMigration: '0022_operator_chat.sql' }),
     ]);
   });
 });

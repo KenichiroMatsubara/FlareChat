@@ -1989,9 +1989,11 @@ export const resumeDueRuleRuns = async (input: {
         }
         let writes = agentPorts.get(application.run.rule.id);
         if (!writes) {
+          const sourceMessageId = application.run.sourceMessageId;
+          if (!sourceMessageId) throw new Error('An Agent Rule effect needs the Source Message its run read.');
           writes = await agentWritePortForApproval({
             ...input,
-            sourceMessageId: application.run.sourceMessageId,
+            sourceMessageId,
             agentRuleId: application.run.rule.id,
           });
           agentPorts.set(application.run.rule.id, writes);

@@ -81,6 +81,7 @@ describe('canonical D1 schemas', () => {
       '0019_task_role_revisions.sql',
       '0020_event_responses_and_guests.sql',
       '0021_rule_execution.sql',
+      '0022_operator_chat.sql',
     ]);
   });
 

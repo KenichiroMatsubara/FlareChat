@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { check, index, integer, primaryKey, sqliteTable, text, unique, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const settings = sqliteTable('settings', {
   key: text('key').primaryKey(),
@@ -151,9 +151,9 @@ export const ruleRuns = sqliteTable('rule_runs', {
   ruleId: text('rule_id').references(() => rules.id, { onDelete: 'restrict' }),
   agentRuleId: text('agent_rule_id').references(() => agentRules.id, { onDelete: 'restrict' }),
   ruleRevision: integer('rule_revision').notNull(),
-  sourceMessageId: text('source_message_id').notNull().references(() => sourceMessages.id, { onDelete: 'cascade' }),
+  sourceMessageId: text('source_message_id').references(() => sourceMessages.id, { onDelete: 'cascade' }),
   executionMode: text('execution_mode', { enum: ['read_only', 'approval', 'unattended'] }).notNull(),
-  intent: text('intent', { enum: ['live', 'draft_preview'] }).notNull(),
+  intent: text('intent', { enum: ['live', 'draft_preview', 'chat'] }).notNull(),
   status: text('status', { enum: ['planning', 'read_only', 'pending_approval', 'applying', 'completed', 'rejected', 'expired', 'failed'] }).notNull(),
   plannedAt: text('planned_at'),
   expiresAt: text('expires_at'),
@@ -162,9 +162,9 @@ export const ruleRuns = sqliteTable('rule_runs', {
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
-  check('rule_runs_owner_check', sql`(${table.ruleId} is null) != (${table.agentRuleId} is null)`),
+  check('rule_runs_owner_check', sql`(${table.intent} = 'chat' and ${table.ruleId} is null and ${table.agentRuleId} is null and ${table.sourceMessageId} is null) or (${table.intent} != 'chat' and (${table.ruleId} is null) != (${table.agentRuleId} is null) and ${table.sourceMessageId} is not null)`),
   check('rule_runs_mode_check', sql`${table.executionMode} in ('read_only', 'approval', 'unattended')`),
-  check('rule_runs_intent_check', sql`${table.intent} in ('live', 'draft_preview')`),
+  check('rule_runs_intent_check', sql`${table.intent} in ('live', 'draft_preview', 'chat')`),
   check('rule_runs_status_check', sql`${table.status} in ('planning', 'read_only', 'pending_approval', 'applying', 'completed', 'rejected', 'expired', 'failed')`),
   index('rule_runs_status_idx').on(table.status, table.updatedAt),
 ]);
@@ -554,3 +554,46 @@ export const eventAttachments = sqliteTable('event_attachments', {
 ]);
 
 export type GoogleConnectionRecord = typeof googleConnections.$inferSelect;
+
+/** Remote MCP Servers this Account has connected, with a static bearer token under ADR 0078 envelope encryption. */
+export const mcpServers = sqliteTable('mcp_servers', {
+  id: text('id').primaryKey(),
+  accountId: text('account_id').notNull(),
+  name: text('name').notNull(),
+  url: text('url').notNull(),
+  tokenEnvelope: text('token_envelope'),
+  revision: text('revision', { enum: ['2026-07-28', '2025-06-18'] }),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  check('mcp_servers_revision_check', sql`${table.revision} is null or ${table.revision} in ('2026-07-28', '2025-06-18')`),
+  uniqueIndex('mcp_servers_name_idx').on(table.name),
+]);
+
+export const chatConversations = sqliteTable('chat_conversations', {
+  id: text('id').primaryKey(),
+  accountId: text('account_id').notNull(),
+  title: text('title').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  index('chat_conversations_recent_idx').on(table.updatedAt),
+]);
+
+/** One exchange of Operator Chat, recorded against the Rule Run that carried it (ADR 0146). */
+export const chatTurns = sqliteTable('chat_turns', {
+  id: text('id').primaryKey(),
+  conversationId: text('conversation_id').notNull().references(() => chatConversations.id, { onDelete: 'cascade' }),
+  ruleRunId: text('rule_run_id').notNull().references(() => ruleRuns.id, { onDelete: 'cascade' }),
+  position: integer('position').notNull(),
+  request: text('request').notNull(),
+  response: text('response'),
+  status: text('status', { enum: ['running', 'completed', 'failed'] }).notNull(),
+  error: text('error'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  check('chat_turns_status_check', sql`${table.status} in ('running', 'completed', 'failed')`),
+  unique().on(table.conversationId, table.position),
+  index('chat_turns_conversation_idx').on(table.conversationId, table.position),
+]);

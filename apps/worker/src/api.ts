@@ -1182,6 +1182,7 @@ const ruleExecutionForRequest = (input: {
           accountId: input.accountId,
         })).apply({ run, effect });
       }
+      if (!run.sourceMessageId) throw new Error('An Agent Rule effect needs the Source Message its run read.');
       const writes = await agentWritePortForApproval({
         env: input.env,
         database: input.database,
