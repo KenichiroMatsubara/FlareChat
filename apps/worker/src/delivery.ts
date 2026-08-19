@@ -9,7 +9,7 @@ export interface DeliveryAttempt {
   eventId: string | null;
   sourceMessageId: string | null;
   destination: string;
-  channel: 'calendar' | 'line' | 'email' | 'drive';
+  channel: 'calendar' | 'line' | 'email' | 'drive' | 'discord';
   outcome: 'succeeded' | 'failed' | 'pending';
   externalId: string | null;
   createdAt: string;

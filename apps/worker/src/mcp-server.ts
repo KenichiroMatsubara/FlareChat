@@ -18,7 +18,7 @@ export interface McpServerTool {
 
 const contactArgument = {
   contactId: { type: 'string', description: 'A Contact id from contacts.search.' },
-  channel: { type: 'string', enum: ['line'], description: 'Which Channel to reach the Contact on. Only LINE is served so far.' },
+  channel: { type: 'string', enum: ['line', 'discord'], description: 'Which Channel to reach the Contact on.' },
   text: { type: 'string', description: 'What to say.' },
 };
 

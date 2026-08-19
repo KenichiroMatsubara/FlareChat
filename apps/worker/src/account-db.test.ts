@@ -143,6 +143,7 @@ describe('Account database resolver', () => {
       { name: '0022_operator_chat.sql' },
       { name: '0023_access_tokens.sql' },
       { name: '0024_automations.sql' },
+      { name: '0025_discord_channel.sql' },
     ]);
   });
 

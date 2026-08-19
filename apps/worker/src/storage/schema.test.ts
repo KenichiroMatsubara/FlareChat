@@ -84,6 +84,7 @@ describe('canonical D1 schemas', () => {
       '0022_operator_chat.sql',
       '0023_access_tokens.sql',
       '0024_automations.sql',
+      '0025_discord_channel.sql',
     ]);
   });
 
@@ -148,7 +149,7 @@ describe('canonical D1 schemas', () => {
     type AccountConnectionKind = typeof connections.$inferInsert.kind;
 
     expectTypeOf<AutomationInboxKind>().toEqualTypeOf<'automation_inbox'>();
-    expectTypeOf<AccountConnectionKind>().toEqualTypeOf<'line' | 'ai'>();
+    expectTypeOf<AccountConnectionKind>().toEqualTypeOf<'line' | 'ai' | 'discord'>();
   });
 
   it('keeps handwritten D1 statements out of application persistence', () => {

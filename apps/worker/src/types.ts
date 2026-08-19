@@ -34,7 +34,7 @@ export interface AccountRow {
 
 export interface ConnectionRow {
   id: string;
-  kind: 'line' | 'ai';
+  kind: 'line' | 'ai' | 'discord';
   label: string;
   credential: string;
   status: 'active' | 'disconnected';

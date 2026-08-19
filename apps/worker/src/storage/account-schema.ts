@@ -347,14 +347,14 @@ export const exceptions = sqliteTable('exceptions', {
 
 export const connections = sqliteTable('connections', {
   id: text('id').primaryKey(),
-  kind: text('kind', { enum: ['line', 'ai'] }).notNull(),
+  kind: text('kind', { enum: ['line', 'ai', 'discord'] }).notNull(),
   label: text('label').notNull(),
   credential: text('credential').notNull(),
   status: text('status', { enum: ['active', 'disconnected'] }).notNull().default('active'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
-  check('connections_kind_check', sql`${table.kind} in ('line', 'ai')`),
+  check('connections_kind_check', sql`${table.kind} in ('line', 'ai', 'discord')`),
   check('connections_status_check', sql`${table.status} in ('active', 'disconnected')`),
 ]);
 
@@ -714,4 +714,31 @@ export const automationRuns = sqliteTable('automation_runs', {
 }, (table) => [
   check('automation_runs_status_check', sql`${table.status} in ('running', 'completed', 'failed')`),
   index('automation_runs_recent_idx').on(table.automationId, table.startedAt),
+]);
+
+/**
+ * Where a Contact is reachable on a Channel (ADR 0139). Discord lives here now;
+ * LINE still lives in its own table until the migration that dissolves it, so
+ * each Channel has exactly one source of truth rather than two.
+ */
+export const channelHandles = sqliteTable('channel_handles', {
+  id: text('id').primaryKey(),
+  contactId: text('contact_id').references(() => contacts.id, { onDelete: 'cascade' }),
+  channel: text('channel', { enum: ['discord'] }).notNull(),
+  connectionId: text('connection_id').notNull().references(() => connections.id, { onDelete: 'cascade' }),
+  externalId: text('external_id').notNull(),
+  replyTarget: text('reply_target'),
+  kind: text('kind', { enum: ['single', 'shared'] }).notNull().default('single'),
+  displayName: text('display_name').notNull().default(''),
+  source: text('source', { enum: ['inbound', 'manual'] }).notNull().default('inbound'),
+  isPrimary: integer('is_primary', { mode: 'boolean' }).notNull().default(true),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  check('channel_handles_channel_check', sql`${table.channel} in ('discord')`),
+  check('channel_handles_kind_check', sql`${table.kind} in ('single', 'shared')`),
+  check('channel_handles_source_check', sql`${table.source} in ('inbound', 'manual')`),
+  check('channel_handles_primary_check', sql`${table.isPrimary} in (0, 1)`),
+  uniqueIndex('channel_handles_identity_idx').on(table.channel, table.connectionId, table.externalId),
+  index('channel_handles_contact_idx').on(table.contactId, table.channel),
 ]);

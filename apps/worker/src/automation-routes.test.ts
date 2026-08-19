@@ -23,7 +23,7 @@ const seedPromptAndList = (app_: TestApp): void => {
   );
 };
 
-const save = (app_: TestApp, body: Record<string, unknown>): Promise<Response> =>
+const save = async (app_: TestApp, body: Record<string, unknown>): Promise<Response> =>
   app.fetch(app_.jsonRequest('/api/organizations/organization-1/automations/automation-1', body, 'PUT'), app_.environment);
 
 const valid = {

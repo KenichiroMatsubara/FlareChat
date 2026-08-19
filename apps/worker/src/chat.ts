@@ -80,8 +80,8 @@ export const CHAT_INTERNAL_TOOLS: readonly ChatToolDefinition[] = [
 
 /** Write tools the product implements itself, offered to an Automation but never bound in read-only mode. */
 export const INTERNAL_WRITE_TOOLS: readonly ChatToolDefinition[] = [
-  { name: 'channel.send', description: 'Send one message to one Contact now. A repeat of the same message is suppressed.', parameters: { type: 'object', properties: { contactId: { type: 'string' }, channel: { type: 'string', enum: ['line'] }, text: { type: 'string' } }, required: ['contactId', 'channel', 'text'], additionalProperties: false }, origin: { kind: 'internal' } },
-  { name: 'reminder.schedule', description: 'Deliver one message to one Contact at a stated time.', parameters: { type: 'object', properties: { contactId: { type: 'string' }, channel: { type: 'string', enum: ['line'] }, text: { type: 'string' }, at: { type: 'string' } }, required: ['contactId', 'channel', 'text', 'at'], additionalProperties: false }, origin: { kind: 'internal' } },
+  { name: 'channel.send', description: 'Send one message to one Contact now. A repeat of the same message is suppressed.', parameters: { type: 'object', properties: { contactId: { type: 'string' }, channel: { type: 'string', enum: ['line', 'discord'] }, text: { type: 'string' } }, required: ['contactId', 'channel', 'text'], additionalProperties: false }, origin: { kind: 'internal' } },
+  { name: 'reminder.schedule', description: 'Deliver one message to one Contact at a stated time.', parameters: { type: 'object', properties: { contactId: { type: 'string' }, channel: { type: 'string', enum: ['line', 'discord'] }, text: { type: 'string' }, at: { type: 'string' } }, required: ['contactId', 'channel', 'text', 'at'], additionalProperties: false }, origin: { kind: 'internal' } },
 ];
 
 /**
