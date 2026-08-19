@@ -684,6 +684,8 @@ export const api = {
     request(`/api/organizations/${encodeURIComponent(accountId)}/automations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   automationRuns: (accountId: string, id: string): Promise<AutomationRunView[]> =>
     request(`/api/organizations/${encodeURIComponent(accountId)}/automations/${encodeURIComponent(id)}/runs`),
+  saveDiscordConnection: (accountId: string, input: { botToken: string; applicationPublicKey: string }): Promise<{ configured: boolean; interactionsUrl: string }> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/connections/discord`, { method: 'PUT', body: JSON.stringify(input) }),
 };
 
 export interface AutomationInput {

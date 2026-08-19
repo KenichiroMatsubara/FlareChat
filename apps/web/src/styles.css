@@ -562,3 +562,9 @@ nav a.loading { opacity: .65; }
 .automation-run-time { color: var(--muted, #6b7280); font-variant-numeric: tabular-nums; }
 .automation-run-failed { color: var(--danger, #b91c1c); }
 .automation-empty { color: var(--muted, #6b7280); }
+
+/* Discord connection */
+.discord-connection { display: flex; flex-direction: column; gap: 0.6rem; padding-top: 1rem; border-top: 1px solid var(--border, #e5e7eb); }
+.discord-connection h3 { display: flex; align-items: center; gap: 0.4rem; }
+.discord-endpoint { display: flex; flex-direction: column; gap: 0.3rem; }
+.discord-endpoint input { width: 100%; font-family: ui-monospace, monospace; }

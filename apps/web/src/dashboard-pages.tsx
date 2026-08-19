@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom';
 import type { DashboardProps } from './dashboard';
 import type { GuestRegistrationRoster, RuleEffect, RuleRun } from './api';
 import { pendingKey } from './pending';
+import { DiscordConnection } from './discord-connection';
 
 /**
  * The progress an onBlur save needs: it has no button of its own to relabel, so
@@ -568,6 +569,7 @@ export const ConnectionsPage = (props: DashboardProps) => {
         onApply={props.onApplyPreset}
       />
     </>}
+    <DiscordConnection accountId={props.accountId ?? ''} />
   </section>;
 };
 
