@@ -46,6 +46,9 @@ import {
   suppressionPort,
 } from './mcp-server-store';
 import { SUPPRESSION_WINDOWS, type SuppressionWindow } from './suppression';
+import { parseSchedule, nextScheduledRun } from './schedule';
+import { CHAT_INTERNAL_TOOLS, INTERNAL_WRITE_TOOLS } from './chat';
+import { automationRuns, automations as accountAutomations, automationTools } from './storage/account-schema';
 import { accessTokens, accessTokenTools, contactListMembers, contactLists } from './storage/account-schema';
 import { mcpServers } from './storage/account-schema';
 import { createTaskWorkflow } from './tasks';
@@ -2865,6 +2868,141 @@ app.post('/api/public/organizations/:accountId/mcp', async (context) => {
     return context.json(response);
   } catch (error) {
     return rpcError(-32603, error instanceof Error ? error.message : 'The MCP Server failed.', 503);
+  }
+});
+
+
+const AUTOMATION_STATES = ['draft', 'active', 'suspended', 'archived'] as const;
+const INTERNAL_TOOL_NAMES = [...CHAT_INTERNAL_TOOLS, ...INTERNAL_WRITE_TOOLS].map((tool) => tool.name);
+
+const automationView = (row: typeof accountAutomations.$inferSelect, tools: string[]) => ({
+  id: row.id,
+  name: row.name,
+  promptId: row.promptId,
+  contactListId: row.contactListId,
+  schedule: row.schedule,
+  offsetMinutes: row.offsetMinutes,
+  executionMode: row.executionMode,
+  suppressionWindow: row.suppressionWindow,
+  state: row.state,
+  nextRunAt: row.nextRunAt,
+  lastRunAt: row.lastRunAt,
+  lastError: row.lastError,
+  tools,
+});
+
+app.get('/api/organizations/:accountId/automations', async (context) => {
+  try {
+    const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
+    if (!access.database) throw new Error('Account database is not available.');
+    const db = drizzleAccountDatabase(access.database);
+    const rows = await db.select().from(accountAutomations).orderBy(asc(accountAutomations.name)).all();
+    const grants = rows.length
+      ? await db.select().from(automationTools).where(inArray(automationTools.automationId, rows.map(({ id }) => id))).all()
+      : [];
+    return json(context, rows.map((row) => automationView(
+      row,
+      grants.flatMap((grant) => grant.automationId === row.id ? [grant.tool] : []),
+    )));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Automations could not be loaded.', 403);
+  }
+});
+
+app.get('/api/organizations/:accountId/automations/:automationId/runs', async (context) => {
+  try {
+    const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
+    if (!access.database) throw new Error('Account database is not available.');
+    const rows = await drizzleAccountDatabase(access.database).select().from(automationRuns)
+      .where(eq(automationRuns.automationId, context.req.param('automationId')))
+      .orderBy(desc(automationRuns.startedAt)).limit(20).all();
+    return json(context, rows);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Automation runs could not be loaded.', 403);
+  }
+});
+
+app.put('/api/organizations/:accountId/automations/:automationId', async (context) => {
+  try {
+    const accountId = context.req.param('accountId');
+    const automationId = context.req.param('automationId');
+    const access = await accountForRequest(context.req.raw, context.env, accountId);
+    if (!access.database) throw new Error('Account database is not available.');
+    const input = await context.req.json<{
+      name?: string; promptId?: string; contactListId?: string | null; schedule?: string;
+      offsetMinutes?: number; executionMode?: string; suppressionWindow?: string; state?: string; tools?: unknown;
+    }>();
+    const name = input.name?.trim() ?? '';
+    const promptId = input.promptId?.trim() ?? '';
+    const schedule = input.schedule?.trim() ?? '';
+    if (!name || name.length > 60) return failure(context, 'Automation 名は 1〜60 文字で入力してください。');
+    if (!promptId) return failure(context, 'Prompt を選んでください。');
+    if (!parseSchedule(schedule)) {
+      return failure(context, 'スケジュールは daily HH:MM / weekly mon HH:MM / hourly :MM の形式で入力してください。');
+    }
+    const offsetMinutes = Math.trunc(input.offsetMinutes ?? 0);
+    if (offsetMinutes < -840 || offsetMinutes > 840) return failure(context, 'タイムゾーンのオフセットが範囲外です。');
+    const executionMode = input.executionMode ?? 'unattended';
+    if (!['read_only', 'approval', 'unattended'].includes(executionMode)) return failure(context, '実行モードの指定が不正です。');
+    const suppressionWindow = input.suppressionWindow ?? 'day';
+    if (!SUPPRESSION_WINDOWS.includes(suppressionWindow as SuppressionWindow)) return failure(context, '重複抑止の窓の指定が不正です。');
+    const state = input.state ?? 'draft';
+    if (!AUTOMATION_STATES.includes(state as (typeof AUTOMATION_STATES)[number])) return failure(context, '状態の指定が不正です。');
+    const requested = Array.isArray(input.tools) ? input.tools.filter((tool): tool is string => typeof tool === 'string') : [];
+    const contactListId = input.contactListId?.trim() || null;
+    const writesGranted = requested.some((tool) => INTERNAL_WRITE_TOOLS.some((write) => write.name === tool));
+    if (writesGranted && !contactListId) {
+      return failure(context, '送信を許可する Automation には、届けてよい Contact List が必要です。');
+    }
+
+    const db = drizzleAccountDatabase(access.database);
+    const timestamp = now();
+    const nextRunAt = state === 'active'
+      ? nextScheduledRun({ schedule, offsetMinutes, after: new Date(timestamp) })
+      : null;
+    await db.insert(accountAutomations).values({
+      id: automationId,
+      accountId,
+      name,
+      promptId,
+      contactListId,
+      schedule,
+      offsetMinutes,
+      executionMode: executionMode as 'read_only' | 'approval' | 'unattended',
+      suppressionWindow: suppressionWindow as SuppressionWindow,
+      state: state as (typeof AUTOMATION_STATES)[number],
+      nextRunAt,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }).onConflictDoUpdate({
+      target: accountAutomations.id,
+      set: {
+        name, promptId, contactListId, schedule, offsetMinutes,
+        executionMode: executionMode as 'read_only' | 'approval' | 'unattended',
+        suppressionWindow: suppressionWindow as SuppressionWindow,
+        state: state as (typeof AUTOMATION_STATES)[number],
+        nextRunAt, updatedAt: timestamp,
+      },
+    }).run();
+    await db.delete(automationTools).where(eq(automationTools.automationId, automationId)).run();
+    for (const tool of requested) {
+      await db.insert(automationTools).values({ automationId, tool }).onConflictDoNothing().run();
+    }
+    return json(context, { id: automationId, name, schedule, state, nextRunAt, tools: requested, availableInternalTools: INTERNAL_TOOL_NAMES });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Automation could not be saved.', 409);
+  }
+});
+
+app.delete('/api/organizations/:accountId/automations/:automationId', async (context) => {
+  try {
+    const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
+    if (!access.database) throw new Error('Account database is not available.');
+    await drizzleAccountDatabase(access.database).delete(accountAutomations)
+      .where(eq(accountAutomations.id, context.req.param('automationId'))).run();
+    return json(context, { id: context.req.param('automationId'), deleted: true });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Automation could not be removed.', 409);
   }
 });
 

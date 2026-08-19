@@ -676,7 +676,44 @@ export const api = {
     request(`/api/organizations/${encodeURIComponent(accountId)}/access-tokens`, { method: 'POST', body: JSON.stringify(input) }),
   revokeAccessToken: (accountId: string, id: string): Promise<{ id: string }> =>
     request(`/api/organizations/${encodeURIComponent(accountId)}/access-tokens/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  automations: (accountId: string): Promise<AutomationView[]> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/automations`),
+  saveAutomation: (accountId: string, id: string, input: AutomationInput): Promise<{ id: string; nextRunAt: string | null }> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/automations/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(input) }),
+  removeAutomation: (accountId: string, id: string): Promise<{ id: string }> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/automations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  automationRuns: (accountId: string, id: string): Promise<AutomationRunView[]> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/automations/${encodeURIComponent(id)}/runs`),
 };
+
+export interface AutomationInput {
+  name: string;
+  promptId: string;
+  contactListId: string | null;
+  schedule: string;
+  offsetMinutes: number;
+  executionMode: string;
+  suppressionWindow: string;
+  state: string;
+  tools: string[];
+}
+
+export interface AutomationView extends AutomationInput {
+  id: string;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  lastError: string | null;
+}
+
+export interface AutomationRunView {
+  id: string;
+  startedAt: string;
+  finishedAt: string | null;
+  status: 'running' | 'completed' | 'failed';
+  output: string | null;
+  error: string | null;
+  toolCalls: number;
+}
 
 export interface ContactListView {
   id: string;

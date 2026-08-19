@@ -550,3 +550,15 @@ nav a.loading { opacity: .65; }
 .access-tokens { display: flex; flex-direction: column; gap: 0.4rem; list-style: none; padding: 0; }
 .access-tokens li { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
 .access-token-name { font-weight: 600; }
+
+/* Scheduled Automations */
+.automations-page { display: flex; flex-direction: column; gap: 1.25rem; }
+.automations-page .page-heading h2 { display: flex; align-items: center; gap: 0.4rem; }
+.automation-list { display: flex; flex-direction: column; gap: 0.9rem; list-style: none; padding: 0; }
+.automation-row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.automation-name { font-weight: 600; }
+.automation-runs { display: flex; flex-direction: column; gap: 0.3rem; list-style: none; padding: 0.4rem 0 0 1rem; }
+.automation-runs li { display: flex; gap: 0.75rem; flex-wrap: wrap; font-size: 0.9em; }
+.automation-run-time { color: var(--muted, #6b7280); font-variant-numeric: tabular-nums; }
+.automation-run-failed { color: var(--danger, #b91c1c); }
+.automation-empty { color: var(--muted, #6b7280); }
