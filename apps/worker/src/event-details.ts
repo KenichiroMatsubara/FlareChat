@@ -347,3 +347,14 @@ export const extractAiEventDetails = async (input: {
   const text = body.choices?.[0]?.message?.content ?? '';
   return validatedMailExtraction(text, input.taskRoles);
 };
+
+/** A safe, canonical OpenAI-compatible Base URL, or null when the value is not one. */
+export const normalizedAiBaseUrl = (value: string | undefined): string | null => {
+  try {
+    const url = new URL(value?.trim() ?? '');
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) return null;
+    return `${url.origin}${url.pathname.replace(/\/+$/u, '')}`;
+  } catch {
+    return null;
+  }
+};

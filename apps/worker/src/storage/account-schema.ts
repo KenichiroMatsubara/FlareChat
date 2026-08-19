@@ -667,3 +667,51 @@ export const suppressions = sqliteTable('suppressions', {
 }, (table) => [
   index('suppressions_expiry_idx').on(table.expiresAt),
 ]);
+
+/** A Trigger with no payload, thinking with a Prompt and acting through its Tool Grant (ADR 0140). */
+export const automations = sqliteTable('automations', {
+  id: text('id').primaryKey(),
+  accountId: text('account_id').notNull(),
+  name: text('name').notNull(),
+  promptId: text('prompt_id').notNull().references(() => prompts.id, { onDelete: 'restrict' }),
+  contactListId: text('contact_list_id').references(() => contactLists.id, { onDelete: 'restrict' }),
+  schedule: text('schedule').notNull(),
+  offsetMinutes: integer('offset_minutes').notNull().default(0),
+  executionMode: text('execution_mode', { enum: ['read_only', 'approval', 'unattended'] }).notNull().default('unattended'),
+  suppressionWindow: text('suppression_window', { enum: ['none', 'hour', 'day', 'week', 'forever'] }).notNull().default('day'),
+  state: text('state', { enum: ['draft', 'active', 'suspended', 'archived'] }).notNull().default('draft'),
+  lastRunAt: text('last_run_at'),
+  nextRunAt: text('next_run_at'),
+  lastError: text('last_error'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  check('automations_mode_check', sql`${table.executionMode} in ('read_only', 'approval', 'unattended')`),
+  check('automations_state_check', sql`${table.state} in ('draft', 'active', 'suspended', 'archived')`),
+  check('automations_window_check', sql`${table.suppressionWindow} in ('none', 'hour', 'day', 'week', 'forever')`),
+  check('automations_offset_check', sql`${table.offsetMinutes} between -840 and 840`),
+  uniqueIndex('automations_name_idx').on(table.name),
+  index('automations_due_idx').on(table.state, table.nextRunAt),
+]);
+
+export const automationTools = sqliteTable('automation_tools', {
+  automationId: text('automation_id').notNull().references(() => automations.id, { onDelete: 'cascade' }),
+  tool: text('tool').notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.automationId, table.tool] }),
+]);
+
+export const automationRuns = sqliteTable('automation_runs', {
+  id: text('id').primaryKey(),
+  automationId: text('automation_id').notNull().references(() => automations.id, { onDelete: 'cascade' }),
+  ruleRunId: text('rule_run_id').notNull().references(() => ruleRuns.id, { onDelete: 'cascade' }),
+  startedAt: text('started_at').notNull(),
+  finishedAt: text('finished_at'),
+  status: text('status', { enum: ['running', 'completed', 'failed'] }).notNull(),
+  output: text('output'),
+  error: text('error'),
+  toolCalls: integer('tool_calls').notNull().default(0),
+}, (table) => [
+  check('automation_runs_status_check', sql`${table.status} in ('running', 'completed', 'failed')`),
+  index('automation_runs_recent_idx').on(table.automationId, table.startedAt),
+]);

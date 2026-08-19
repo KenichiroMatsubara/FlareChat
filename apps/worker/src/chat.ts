@@ -78,6 +78,12 @@ export const CHAT_INTERNAL_TOOLS: readonly ChatToolDefinition[] = [
   { name: 'query_attendance', description: 'List this Account’s Attendance Registrations.', parameters: { type: 'object', properties: {}, additionalProperties: false }, origin: { kind: 'internal' } },
 ];
 
+/** Write tools the product implements itself, offered to an Automation but never bound in read-only mode. */
+export const INTERNAL_WRITE_TOOLS: readonly ChatToolDefinition[] = [
+  { name: 'channel.send', description: 'Send one message to one Contact now. A repeat of the same message is suppressed.', parameters: { type: 'object', properties: { contactId: { type: 'string' }, channel: { type: 'string', enum: ['line'] }, text: { type: 'string' } }, required: ['contactId', 'channel', 'text'], additionalProperties: false }, origin: { kind: 'internal' } },
+  { name: 'reminder.schedule', description: 'Deliver one message to one Contact at a stated time.', parameters: { type: 'object', properties: { contactId: { type: 'string' }, channel: { type: 'string', enum: ['line'] }, text: { type: 'string' }, at: { type: 'string' } }, required: ['contactId', 'channel', 'text', 'at'], additionalProperties: false }, origin: { kind: 'internal' } },
+];
+
 /**
  * Gathers the tools one run may call.
  *
@@ -93,9 +99,14 @@ export const resolveChatTools = async (input: {
   fetch: McpFetch;
   executionMode: ExecutionMode;
   grant?: readonly string[];
+  internalTools?: readonly ChatToolDefinition[];
 }): Promise<ChatToolResolution> => {
   const permitted = (name: string): boolean => !input.grant || input.grant.includes(name);
-  const tools: ChatToolDefinition[] = CHAT_INTERNAL_TOOLS.filter((tool) => permitted(tool.name));
+  const offered = input.internalTools ?? CHAT_INTERNAL_TOOLS;
+  const writeNames = new Set(INTERNAL_WRITE_TOOLS.map((tool) => tool.name));
+  const tools: ChatToolDefinition[] = offered
+    .filter((tool) => permitted(tool.name))
+    .filter((tool) => input.executionMode !== 'read_only' || !writeNames.has(tool.name));
   const failures: ChatToolResolution['failures'] = [];
   if (input.executionMode === 'read_only') return { tools, failures };
 
@@ -137,6 +148,7 @@ const wireTool = (tool: ChatToolDefinition): ChatModelRequest['tools'][number] =
 export const runChatTurn = async (input: {
   model: ChatModelPort;
   connection: { apiKey: string; baseUrl: string; model: string };
+  instructions?: string;
   request: string;
   history: readonly ChatMessage[];
   tools: readonly ChatToolDefinition[];
@@ -145,7 +157,7 @@ export const runChatTurn = async (input: {
 }): Promise<ChatTurnResult> => {
   const byName = new Map(input.tools.map((tool) => [tool.name, tool]));
   const messages: ChatMessage[] = [
-    { role: 'system', content: SYSTEM_INSTRUCTIONS },
+    { role: 'system', content: input.instructions ? `${input.instructions}\n\n${SYSTEM_INSTRUCTIONS}` : SYSTEM_INSTRUCTIONS },
     ...input.history,
     { role: 'user', content: input.request },
   ];

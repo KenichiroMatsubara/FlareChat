@@ -28,6 +28,7 @@ import accountEventResponsesAndGuestsMigration from '../migrations/organization/
 import accountRuleExecutionMigration from '../migrations/organization/0021_rule_execution.sql';
 import accountOperatorChatMigration from '../migrations/organization/0022_operator_chat.sql';
 import accountAccessTokensMigration from '../migrations/organization/0023_access_tokens.sql';
+import accountAutomationsMigration from '../migrations/organization/0024_automations.sql';
 
 type SchemaKind = 'control' | 'organization';
 
@@ -127,6 +128,7 @@ const ORGANIZATION_MIGRATIONS: readonly SchemaMigration[] = [
   { name: '0021_rule_execution.sql', sql: accountRuleExecutionMigration },
   { name: '0022_operator_chat.sql', sql: accountOperatorChatMigration },
   { name: '0023_access_tokens.sql', sql: accountAccessTokensMigration },
+  { name: '0024_automations.sql', sql: accountAutomationsMigration },
 ];
 const LEGACY_MIGRATION_CHECKSUMS = new Map<string, ReadonlySet<string>>([
   ['0001_tasks.sql', new Set(['4b2f3889191d0eafbbe45b78103db7139c7ce2b937c02cbbb6824f5131d7429f'])],

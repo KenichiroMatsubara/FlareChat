@@ -83,6 +83,7 @@ describe('canonical D1 schemas', () => {
       '0021_rule_execution.sql',
       '0022_operator_chat.sql',
       '0023_access_tokens.sql',
+      '0024_automations.sql',
     ]);
   });
 

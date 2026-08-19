@@ -20,7 +20,7 @@ import { typedListRoutes } from './routes/typed-lists';
 import { SchemaReadinessError } from './schema-lifecycle';
 import type { Bindings, ConnectionRow, SessionRow } from './types';
 import type { CipherEnvelope } from './cryptography';
-import { openAiChatCompletionsUrl, type EventDetails, type MailExtraction, type TaskDetails } from './event-details';
+import { normalizedAiBaseUrl, openAiChatCompletionsUrl, type EventDetails, type MailExtraction, type TaskDetails } from './event-details';
 import { readAgentRunTranscript } from './agent-runs';
 import { resolveChatTools, runChatTurn, type ChatModelPort } from './chat';
 import {
@@ -387,16 +387,6 @@ const connectionView = (line: AccountCredential, ai: AccountCredential) => ({
 
 export const generatedText = (response: OpenAiCompatibleResponse): string =>
   response.choices?.[0]?.message?.content?.trim() ?? '';
-
-const normalizedAiBaseUrl = (value: string | undefined): string | null => {
-  try {
-    const url = new URL(value?.trim() ?? '');
-    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) return null;
-    return `${url.origin}${url.pathname.replace(/\/+$/u, '')}`;
-  } catch {
-    return null;
-  }
-};
 
 app.get('/api/organizations/:accountId/connections', async (context) => {
   try {
