@@ -215,17 +215,19 @@ export const completeGoogleEntry = async (
         masterKeyVersion: accountKeyRecord.masterKeyVersion,
         envelope: JSON.parse(accountKeyRecord.wrappedKeyEnvelope),
       }, key, recoveryAccountId);
-      const historyId = await fetchGmailHistoryId(tokenSet.accessToken);
       const credentialEnvelope = await encrypt(
         JSON.stringify(tokenSet),
         accountKey,
         `google-connection:${recoveryAccountId}:automation-inbox`,
       );
+      // Reauthorization keeps the stored Gmail cursor. Re-anchoring it to the
+      // mailbox's current position would silently drop every message that
+      // arrived while the grant was rejected, which is precisely the stretch an
+      // Account reconnects in order to recover.
       await account.update(googleConnections).set({
         inboxAddress: identity.email,
         grantedScopes: JSON.stringify(tokenSet.scopes),
         tokenEnvelope: JSON.stringify(credentialEnvelope),
-        gmailHistoryId: historyId,
         status: 'active',
         lastError: null,
         updatedAt: timestamp,

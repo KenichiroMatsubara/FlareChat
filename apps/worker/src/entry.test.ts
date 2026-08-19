@@ -249,7 +249,7 @@ describe('application entry', () => {
     )).toEqual({ status: 'reauthentication_required', last_error: 'Token has been expired or revoked.' });
   });
 
-  it('reconnects a reauthentication-required Automation Inbox with its complete Google grant', async () => {
+  it('reconnects a reauthentication-required Automation Inbox and keeps its Gmail cursor so the outage is processed', async () => {
     fixture = await createAutomationTestApp();
     fixture.account.execute(
       "UPDATE google_connections SET google_subject = 'google-subject-1', status = 'reauthentication_required', last_error = 'Token has been expired or revoked.' WHERE id = 'inbox-1'",
@@ -299,7 +299,7 @@ describe('application entry', () => {
     )).toEqual([{
       status: 'active',
       last_error: null,
-      gmail_history_id: 'history-after-reconnect',
+      gmail_history_id: 'history-before-connection',
     }]);
   });
 

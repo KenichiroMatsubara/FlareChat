@@ -945,6 +945,13 @@ const previewMailboxTestAiRequest = async (
 const mailboxMessage = async (google: GoogleAutomationPort, accessToken: string, messageId: string): Promise<GmailMessage> =>
   google.request<GmailMessage>(accessToken, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}?format=full`);
 
+/** The mailbox's current history position, used to re-anchor a cursor Gmail no longer recognises. */
+const currentGmailHistoryId = async (google: GoogleAutomationPort, accessToken: string): Promise<string> => {
+  const profile = await google.request<{ historyId?: string }>(accessToken, 'https://gmail.googleapis.com/gmail/v1/users/me/profile');
+  if (!profile.historyId) throw new Error('Gmail history position could not be captured.');
+  return profile.historyId;
+};
+
 /**
  * Folds a subject down to the characters that carry meaning: Unicode-width
  * variants (full-width/half-width) collapse together, and any run of
@@ -2411,7 +2418,18 @@ const runAccountInbox = async (
     query.searchParams.set('startHistoryId', inbox.gmailHistoryId);
     query.searchParams.set('historyTypes', 'messageAdded');
     if (pageToken) query.searchParams.set('pageToken', pageToken);
-    const history = await dependencies.google.request<GmailHistory>(accessToken, query.toString());
+    let history: GmailHistory;
+    try {
+      history = await dependencies.google.request<GmailHistory>(accessToken, query.toString());
+    } catch (error) {
+      if (!(error instanceof GoogleApiError) || error.status !== 404 || error.url !== query.toString()) throw error;
+      // Gmail keeps mailbox history for a limited window and answers 404 once
+      // the stored cursor falls outside it. Re-anchoring to the mailbox's
+      // current position loses the messages beyond that window, but leaving the
+      // cursor in place would fail this run and every later one the same way.
+      historyId = await currentGmailHistoryId(dependencies.google, accessToken);
+      break;
+    }
     for (const entry of history.history ?? []) {
       for (const message of entry.messagesAdded ?? []) {
         const messageId = message.message?.id;
