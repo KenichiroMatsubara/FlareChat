@@ -155,7 +155,7 @@ An Account-owned model provider authorization used to derive Event Details, with
 _Avoid_: endpoint, model account
 
 **Channel**:
-A product-implemented medium on which Contacts are reachable and answer — presently Email, LINE, and Discord. A Channel supplies a signature-verified inbound endpoint, a handle namespace, a recordable delivery receipt, and structured reply controls, so only a release adds one.
+A product-implemented medium on which Contacts are reachable and answer. LINE and Discord are served; Email delivers but is not yet reached from the newer surfaces. A Channel supplies a signature-verified inbound endpoint, a handle namespace, a recordable delivery receipt, and structured reply controls, so only a release adds one. Discord arrives through its Interactions endpoint rather than its Gateway, because a Worker cannot hold a persistent connection, so it hears commands and control presses rather than every message.
 _Avoid_: provider, integration, transport, connector
 
 **MCP Server**:
@@ -169,6 +169,14 @@ _Avoid_: permission, scope, capability, allowlist, role
 **Access Token**:
 The credential an outside agent presents to reach an Account over MCP, carrying one Tool Grant and one Contact List that bounds who it may reach. It needs rate and write limits of its own, because the run ceilings that bound an Automation bound this engine's loop rather than the caller's.
 _Avoid_: API key, secret, integration, session
+
+**Automation**:
+A named Trigger, Prompt, and Tool Grant that runs unattended. It begins each run knowing nothing of its previous ones and finds its work through its tools, and it names the Contact List it may reach whenever it is granted a way to send.
+_Avoid_: rule, job, workflow, task
+
+**Schedule**:
+When a Trigger with no payload is next due, stated as a daily, weekly, or hourly time in the Account's own offset. A schedule this product cannot read is refused rather than interpreted, because one read as something else fires at the wrong hour.
+_Avoid_: cron, timer, interval, recurrence
 
 **Trigger**:
 What starts one run of an Automation. It either carries a payload, as an inbound Channel message or a Source Message does, or carries none, as a schedule does; a run with no payload finds its own work through its Tool Grant.
