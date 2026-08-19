@@ -4,6 +4,9 @@ import { CircleAlert, CircleCheck, Plug, Send } from 'lucide-react';
 
 import { api, type ChannelTestDelivery, type ChannelTestTarget, type McpServerToolResult, type McpServerToolView, type McpServerView } from './api';
 
+/** What one LINE push carries, so the GUI offers exactly what the Channel can batch. */
+const MESSAGE_LIMIT = 5;
+
 const errorText = (error: unknown, fallback: string): string =>
   error instanceof Error && error.message ? error.message : fallback;
 
@@ -13,6 +16,7 @@ const CHANNEL_LABELS: Record<string, string> = { line: 'LINE', discord: 'Discord
 export const ChannelTestOutcome = ({ delivery }: { delivery: ChannelTestDelivery }) => <p className="channel-test-ok">
   <CircleCheck size={16} />
   {CHANNEL_LABELS[delivery.channel] ?? delivery.channel} が受け付けました。宛先 {delivery.destination}
+  {delivery.messages > 1 ? `／${delivery.messages}通を${delivery.requests}リクエストで` : ''}
   {delivery.externalId ? `／識別子 ${delivery.externalId}` : ''}（{delivery.sentAt}）
 </p>;
 
@@ -27,7 +31,7 @@ export const ChannelTestPage = ({ accountId }: { accountId: string }) => {
   const [targets, setTargets] = useState<ChannelTestTarget[]>([]);
   const [contactId, setContactId] = useState('');
   const [channel, setChannel] = useState('line');
-  const [text, setText] = useState('FlareChat からのテスト送信です。');
+  const [texts, setTexts] = useState(['FlareChat からのテスト送信です。']);
   const [sending, setSending] = useState(false);
   const [delivery, setDelivery] = useState<ChannelTestDelivery | null>(null);
   const [error, setError] = useState('');
@@ -68,7 +72,7 @@ export const ChannelTestPage = ({ accountId }: { accountId: string }) => {
     setDelivery(null);
     setSending(true);
     try {
-      setDelivery(await api.sendChannelTest(accountId, { contactId, channel, text }));
+      setDelivery(await api.sendChannelTest(accountId, { contactId, channel, texts }));
     } catch (cause) {
       setError(errorText(cause, 'テスト送信に失敗しました。'));
     } finally {
@@ -119,7 +123,7 @@ export const ChannelTestPage = ({ accountId }: { accountId: string }) => {
 
     <div className="test-card">
       <h2>Channel に送る</h2>
-      <span>Contact が持っている Channel Handle を宛先にします。届いた／届かなかったという結果はそのまま表示します。</span>
+      <span>Contact が持っている Channel Handle を宛先にします。LINE は 5 通までを 1 リクエストにまとめて送るので、複数通にすればその挙動もそのまま確かめられます。届いた／届かなかったという結果はそのまま表示します。</span>
       <form className="access-form" onSubmit={(event) => { event.preventDefault(); void send(); }}>
         <label>送信先
           <select value={contactId} onChange={(event) => setContactId(event.target.value)}>
@@ -136,10 +140,24 @@ export const ChannelTestPage = ({ accountId }: { accountId: string }) => {
             </option>)}
           </select>
         </label>
-        <label>メッセージ
-          <textarea value={text} rows={3} maxLength={1000} onChange={(event) => setText(event.target.value)} />
-        </label>
-        <button type="submit" className="primary" disabled={sending || !contactId || !text.trim()}>
+        {texts.map((entry, index) => <label key={index}>
+          {texts.length > 1 ? `メッセージ ${index + 1}` : 'メッセージ'}
+          <textarea
+            value={entry}
+            rows={2}
+            maxLength={1000}
+            onChange={(event) => setTexts((current) => current.map((value, at) => at === index ? event.target.value : value))}
+          />
+        </label>)}
+        <div className="channel-test-messages">
+          {texts.length < MESSAGE_LIMIT && <button type="button" className="secondary" onClick={() => setTexts((current) => [...current, ''])}>
+            メッセージを追加（最大 {MESSAGE_LIMIT} 通）
+          </button>}
+          {texts.length > 1 && <button type="button" className="secondary" onClick={() => setTexts((current) => current.slice(0, -1))}>
+            最後の 1 通を消す
+          </button>}
+        </div>
+        <button type="submit" className="primary" disabled={sending || !contactId || !texts.some((entry) => entry.trim())}>
           <Send size={16} />{sending ? '送信中…' : 'テスト送信する'}
         </button>
       </form>

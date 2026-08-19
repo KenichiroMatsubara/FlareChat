@@ -31,6 +31,6 @@ export const reminderJobHandler = (env: Bindings): JobHandler => async ({ databa
     credentials: await channelCredentials({ database, accountKey, accountId }),
     contactId: reminder.contactId,
     channel: typeof reminder.channel === 'string' ? reminder.channel : '',
-    text: reminder.text,
+    texts: [reminder.text],
   });
 };

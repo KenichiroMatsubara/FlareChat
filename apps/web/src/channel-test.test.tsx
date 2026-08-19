@@ -9,6 +9,8 @@ const delivery = (overrides: Partial<ChannelTestDelivery> = {}): ChannelTestDeli
   channel: 'line',
   contactId: 'contact-1',
   destination: 'Uabc',
+  messages: 1,
+  requests: 1,
   externalId: 'line-request-1',
   sentAt: '2026-08-19T00:00:00.000Z',
   ...overrides,
@@ -21,6 +23,12 @@ describe('Channel Test outcome', () => {
     expect(markup).toContain('LINE');
     expect(markup).toContain('Uabc');
     expect(markup).toContain('line-request-1');
+  });
+
+  it('names the batching when several messages travelled together', () => {
+    const markup = renderToStaticMarkup(<ChannelTestOutcome delivery={delivery({ messages: 5, requests: 1 })} />);
+
+    expect(markup).toContain('5通を1リクエストで');
   });
 
   it('still says what happened when the provider returned no identifier', () => {

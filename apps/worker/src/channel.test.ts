@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { channelCredentials, contactChannels, reachableContacts, sendOnChannel } from './channel';
+import { channelCredentials, contactChannels, LINE_BATCH_LIMIT, reachableContacts, sendOnChannel, sendOnDestination, sendToDestinations } from './channel';
 import { encrypt, masterKey } from './cryptography';
 import { createMigratedTestD1, type TestD1Database } from '../test/d1';
 
@@ -91,7 +91,7 @@ describe('reaching a Contact on a Channel', () => {
       credentials: { line: 'line-token', discord: null },
       contactId: 'contact-1',
       channel: 'line',
-      text: 'こんにちは',
+      texts: ['こんにちは'],
     });
 
     expect(delivery).toEqual({
@@ -99,6 +99,8 @@ describe('reaching a Contact on a Channel', () => {
       channel: 'line',
       contactId: 'contact-1',
       destination: 'U-one',
+      messages: 1,
+      requests: 1,
       externalId: 'line-1',
     });
     expect(requests[0]?.body).toEqual({ to: 'U-one', messages: [{ type: 'text', text: 'こんにちは' }] });
@@ -116,7 +118,7 @@ describe('reaching a Contact on a Channel', () => {
       credentials: { line: null, discord: 'bot-token' },
       contactId: 'contact-1',
       channel: 'discord',
-      text: 'こんにちは',
+      texts: ['こんにちは'],
     })).rejects.toThrow(/403/u);
 
     expect(database.rows('SELECT channel, outcome FROM deliveries')).toEqual([{ channel: 'discord', outcome: 'failed' }]);
@@ -131,7 +133,7 @@ describe('reaching a Contact on a Channel', () => {
       credentials: { line: 'line-token', discord: null },
       contactId: 'contact-1',
       channel: 'sms',
-      text: 'こんにちは',
+      texts: ['こんにちは'],
     })).rejects.toThrow(/sms/u);
   });
 
@@ -186,5 +188,139 @@ describe('reaching a Contact on a Channel', () => {
 
     expect(await channelCredentials({ database: database.binding, accountKey, accountId: 'organization-1' }))
       .toEqual({ line: null, discord: null });
+  });
+});
+
+describe('batching what the provider lets us batch', () => {
+  const pushes = (): { bodies: Array<{ to: string; messages: Array<{ text: string }> }> } => {
+    const bodies: Array<{ to: string; messages: Array<{ text: string }> }> = [];
+    vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)) as { to: string; messages: Array<{ text: string }> });
+      return new Response('{}', { status: 200, headers: { 'x-line-request-id': `line-${bodies.length}` } });
+    });
+    return { bodies };
+  };
+
+  it('carries five LINE messages to one destination in a single request', async () => {
+    const database = channelDatabase();
+    const { bodies } = pushes();
+
+    const outcome = await sendOnDestination({
+      database: database.binding,
+      credentials: { line: 'line-token', discord: null },
+      channel: 'line',
+      destination: 'U-one',
+      texts: ['一', '二', '三', '四', '五'],
+    });
+
+    expect(LINE_BATCH_LIMIT).toBe(5);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]?.messages.map(({ text }) => text)).toEqual(['一', '二', '三', '四', '五']);
+    expect(outcome).toMatchObject({ delivered: true, messages: 5, requests: 1 });
+    expect(database.rows('SELECT outcome FROM deliveries')).toHaveLength(5);
+  });
+
+  it('splits a longer run into as few requests as the limit allows', async () => {
+    const database = channelDatabase();
+    const { bodies } = pushes();
+
+    const outcome = await sendOnDestination({
+      database: database.binding,
+      credentials: { line: 'line-token', discord: null },
+      channel: 'line',
+      destination: 'U-one',
+      texts: ['一', '二', '三', '四', '五', '六', '七'],
+    });
+
+    expect(bodies.map((body) => body.messages.length)).toEqual([5, 2]);
+    expect(outcome).toMatchObject({ delivered: true, messages: 7, requests: 2 });
+    expect(database.rows('SELECT outcome FROM deliveries')).toHaveLength(7);
+  });
+
+  it('sends one message per request on Discord, which has no batch call', async () => {
+    const database = channelDatabase();
+    const bodies: Array<{ content: string }> = [];
+    vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)) as { content: string });
+      return new Response(JSON.stringify({ id: `discord-${bodies.length}` }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+
+    const outcome = await sendOnDestination({
+      database: database.binding,
+      credentials: { line: null, discord: 'bot-token' },
+      channel: 'discord',
+      destination: 'channel-9',
+      texts: ['一', '二'],
+    });
+
+    expect(bodies).toEqual([{ content: '一' }, { content: '二' }]);
+    expect(outcome).toMatchObject({ delivered: true, messages: 2, requests: 2 });
+  });
+
+  it('reaches each address once, however often it was named', async () => {
+    const database = channelDatabase();
+    const { bodies } = pushes();
+
+    const outcomes = await sendToDestinations({
+      database: database.binding,
+      credentials: { line: 'line-token', discord: null },
+      channel: 'line',
+      destinations: ['U-one', 'C-group', 'U-one'],
+      texts: ['お知らせ'],
+    });
+
+    expect(bodies.map((body) => body.to).sort()).toEqual(['C-group', 'U-one']);
+    expect(outcomes).toHaveLength(2);
+  });
+
+  it('keeps a broadcast going when one address refuses, and says which did', async () => {
+    const database = channelDatabase();
+    vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { to: string };
+      return body.to === 'C-group'
+        ? new Response('bad request', { status: 400 })
+        : new Response('{}', { status: 200, headers: { 'x-line-request-id': 'line-1' } });
+    });
+
+    const outcomes = await sendToDestinations({
+      database: database.binding,
+      credentials: { line: 'line-token', discord: null },
+      channel: 'line',
+      destinations: ['U-one', 'C-group'],
+      texts: ['お知らせ'],
+    });
+
+    expect(outcomes.find((outcome) => outcome.destination === 'U-one')).toMatchObject({ delivered: true });
+    expect(outcomes.find((outcome) => outcome.destination === 'C-group')).toMatchObject({ delivered: false, error: 'LINE refused the message.' });
+    expect(database.rows('SELECT destination, outcome FROM deliveries ORDER BY destination'))
+      .toEqual([{ destination: 'C-group', outcome: 'failed' }, { destination: 'U-one', outcome: 'succeeded' }]);
+  });
+
+  it('records the intended messages as failed when the Account has no Connection', async () => {
+    const database = channelDatabase();
+
+    const outcome = await sendOnDestination({
+      database: database.binding,
+      credentials: { line: null, discord: null },
+      channel: 'line',
+      destination: 'U-one',
+      texts: ['一', '二'],
+    });
+
+    expect(outcome).toMatchObject({ delivered: false, messages: 2, requests: 0 });
+    expect(database.rows('SELECT outcome FROM deliveries')).toEqual([{ outcome: 'failed' }, { outcome: 'failed' }]);
+  });
+
+  it('throws for a caller error rather than recording a delivery nobody asked for', async () => {
+    const database = channelDatabase();
+
+    await expect(sendOnDestination({
+      database: database.binding,
+      credentials: { line: 'line-token', discord: null },
+      channel: 'line',
+      destination: 'U-one',
+      texts: ['   '],
+    })).rejects.toThrow(/something to say/u);
+    expect(database.rows('SELECT outcome FROM deliveries')).toEqual([]);
   });
 });

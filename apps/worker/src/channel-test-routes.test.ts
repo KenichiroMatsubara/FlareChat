@@ -51,7 +51,7 @@ describe('Channel Test send', () => {
     seedReachableContact(fixture, { id: 'contact-1', name: '一郎', destination: 'U-one' });
     stubLine();
 
-    const response = await sendTest(fixture, { contactId: 'contact-1', channel: 'line', text: 'テスト送信です' });
+    const response = await sendTest(fixture, { contactId: 'contact-1', channel: 'line', texts: ['テスト送信です'] });
 
     expect(response.status).toBe(200);
     const body = await response.json() as { data: { delivered: boolean; destination: string; externalId: string | null } };
@@ -67,8 +67,8 @@ describe('Channel Test send', () => {
     seedReachableContact(fixture, { id: 'contact-1', name: '一郎', destination: 'U-one' });
     stubLine();
 
-    const first = await sendTest(fixture, { contactId: 'contact-1', channel: 'line', text: '同じ文面' });
-    const second = await sendTest(fixture, { contactId: 'contact-1', channel: 'line', text: '同じ文面' });
+    const first = await sendTest(fixture, { contactId: 'contact-1', channel: 'line', texts: ['同じ文面'] });
+    const second = await sendTest(fixture, { contactId: 'contact-1', channel: 'line', texts: ['同じ文面'] });
 
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
@@ -81,7 +81,7 @@ describe('Channel Test send', () => {
     seedReachableContact(fixture, { id: 'contact-1', name: '一郎', destination: 'U-one' });
     stubLine(false);
 
-    const response = await sendTest(fixture, { contactId: 'contact-1', channel: 'line', text: 'テスト' });
+    const response = await sendTest(fixture, { contactId: 'contact-1', channel: 'line', texts: ['テスト'] });
 
     expect(response.status).toBe(409);
     const body = await response.json() as { error: { message: string } };
@@ -95,7 +95,7 @@ describe('Channel Test send', () => {
     seedReachableContact(fixture, { id: 'contact-1', name: '一郎' });
     stubLine();
 
-    const response = await sendTest(fixture, { contactId: 'contact-1', channel: 'line', text: 'テスト' });
+    const response = await sendTest(fixture, { contactId: 'contact-1', channel: 'line', texts: ['テスト'] });
 
     expect(response.status).toBe(409);
     expect((await response.json() as { error: { message: string } }).error.message).toContain('contact-1');
@@ -105,10 +105,39 @@ describe('Channel Test send', () => {
     fixture = await createAutomationTestApp();
     seedReachableContact(fixture, { id: 'contact-1', name: '一郎' });
 
-    const response = await sendTest(fixture, { contactId: 'contact-1', channel: 'line', text: 'テスト' });
+    const response = await sendTest(fixture, { contactId: 'contact-1', channel: 'line', texts: ['テスト'] });
 
     expect(response.status).toBe(409);
     expect((await response.json() as { error: { message: string } }).error.message).toContain('LINE');
+  });
+
+  it('carries up to five stated messages in one LINE request', async () => {
+    fixture = await createAutomationTestApp();
+    await connectLine(fixture);
+    seedReachableContact(fixture, { id: 'contact-1', name: '一郎', destination: 'U-one' });
+    const pushes: Array<{ messages: unknown[] }> = [];
+    vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+      pushes.push(JSON.parse(String(init.body)) as { messages: unknown[] });
+      return new Response('{}', { status: 200, headers: { 'x-line-request-id': 'line-1' } });
+    });
+
+    const response = await sendTest(fixture, { contactId: 'contact-1', channel: 'line', texts: ['一', '二', '三', '四', '五'] });
+
+    expect(response.status).toBe(200);
+    const body = await response.json() as { data: { messages: number; requests: number } };
+    expect(body.data).toMatchObject({ messages: 5, requests: 1 });
+    expect(pushes).toHaveLength(1);
+    expect(fixture.account.rows('SELECT id FROM deliveries')).toHaveLength(5);
+  });
+
+  it('refuses more messages than one request can carry', async () => {
+    fixture = await createAutomationTestApp();
+    await connectLine(fixture);
+    seedReachableContact(fixture, { id: 'contact-1', name: '一郎', destination: 'U-one' });
+
+    const response = await sendTest(fixture, { contactId: 'contact-1', channel: 'line', texts: ['一', '二', '三', '四', '五', '六'] });
+
+    expect(response.status).toBe(400);
   });
 
   it('refuses an empty message', async () => {
@@ -116,7 +145,7 @@ describe('Channel Test send', () => {
     await connectLine(fixture);
     seedReachableContact(fixture, { id: 'contact-1', name: '一郎', destination: 'U-one' });
 
-    const response = await sendTest(fixture, { contactId: 'contact-1', channel: 'line', text: '   ' });
+    const response = await sendTest(fixture, { contactId: 'contact-1', channel: 'line', texts: ['   '] });
 
     expect(response.status).toBe(400);
   });
@@ -129,7 +158,7 @@ describe('Channel Test send', () => {
     const response = await app.fetch(new Request('https://flarechat.example/api/organizations/organization-1/channel-tests', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contactId: 'contact-1', channel: 'line', text: 'テスト' }),
+      body: JSON.stringify({ contactId: 'contact-1', channel: 'line', texts: ['テスト'] }),
     }), fixture.environment);
 
     expect(response.status).toBe(401);

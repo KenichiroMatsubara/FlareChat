@@ -1,13 +1,18 @@
 /**
- * Reaching one Contact on one Channel (ADR 0143, ADR 0158).
+ * Reaching a Contact, or an address, on a Channel (ADR 0143, ADR 0158).
  *
  * Every surface that speaks to a Contact — the MCP Server an outside agent
  * calls, a scheduled reminder, an Automation run, and the Channel Test an
  * operator runs by hand — passes through here, so none of them can reach LINE by
- * a path the others do not. What a caller states is a Contact, a Channel and a
- * text; resolving the Connection, the handle, the provider request and the
- * Delivery Record is this module's work, and a refusal is reported as the
- * failure it was rather than a synthesised success (ADR 0142).
+ * a path the others do not. What a caller states is who, on which Channel, and
+ * what to say; resolving the Connection, the handle, how many provider requests
+ * that takes, and the Delivery Records is this module's work, and a refusal is
+ * reported as the failure it was rather than a synthesised success (ADR 0142).
+ *
+ * Authorization stays outside. Who may be reached is decided by the Access
+ * Token's Contact List, an Automation's Contact List, a Rule's Channel Handle
+ * List, or an authenticated operator's session before anything here is called;
+ * this module refuses only what the Channel itself refuses.
  */
 
 import { and, asc, eq, inArray, like, or } from 'drizzle-orm';
@@ -46,12 +51,34 @@ export interface ContactReach {
   channels: ChannelName[];
 }
 
-/** What one attempt to reach a Contact did. A failure throws rather than returning this. */
+/** How many messages one provider request may carry to one LINE destination. */
+export const LINE_BATCH_LIMIT = 5;
+
+/**
+ * What one address received, or did not.
+ *
+ * `messages` is what was meant to arrive and `requests` is how many provider
+ * calls carried them, so a caller can see the batching happen rather than
+ * trust that it did.
+ */
+export interface ChannelOutcome {
+  channel: ChannelName;
+  destination: string;
+  delivered: boolean;
+  messages: number;
+  requests: number;
+  externalId: string | null;
+  error: string | null;
+}
+
+/** What one Contact received. A refusal throws rather than returning this. */
 export interface ChannelDelivery {
   delivered: true;
   channel: ChannelName;
   contactId: string;
   destination: string;
+  messages: number;
+  requests: number;
   externalId: string | null;
 }
 
@@ -172,8 +199,177 @@ export const reachableContacts = async (input: {
   })));
 };
 
+const batched = <T>(values: readonly T[], size: number): T[][] => {
+  const batches: T[][] = [];
+  for (let index = 0; index < values.length; index += size) batches.push(values.slice(index, index + size));
+  return batches;
+};
+
+const stated = (texts: readonly string[]): string[] => {
+  const said = texts.map((text) => text.trim()).filter((text) => text.length > 0);
+  if (!said.length) throw new Error('A message needs something to say.');
+  return said;
+};
+
+const failedAt = async (input: {
+  database: D1Database;
+  channel: ChannelName;
+  destination: string;
+  messages: number;
+  requests: number;
+  error: string;
+  eventId?: string | null;
+  sourceMessageId?: string | null;
+}): Promise<ChannelOutcome> => {
+  for (let index = 0; index < input.messages; index += 1) {
+    await recordDeliveryAttempt(input.database, {
+      ...(input.eventId === undefined ? {} : { eventId: input.eventId }),
+      ...(input.sourceMessageId === undefined ? {} : { sourceMessageId: input.sourceMessageId }),
+      destination: input.destination,
+      channel: input.channel,
+      outcome: 'failed',
+      externalId: null,
+    });
+  }
+  return {
+    channel: input.channel,
+    destination: input.destination,
+    delivered: false,
+    messages: input.messages,
+    requests: input.requests,
+    externalId: null,
+    error: input.error,
+  };
+};
+
 /**
- * Sends one message to one Contact now, and leaves a Delivery Record either way.
+ * Sends to one address on one Channel, batching what the provider lets us batch.
+ *
+ * LINE carries up to five message objects in one push, so five messages for one
+ * destination cost one request rather than five, and a longer run is split into
+ * as few requests as the limit allows. Discord has no such call, so it is one
+ * request per message and the difference stays here rather than in every caller.
+ *
+ * A provider refusal is returned as `delivered: false` with its reason and
+ * leaves a failed Delivery Record per intended message, because a broadcast must
+ * not lose the rest of its addresses to one refusal. Only a caller error — an
+ * unknown Channel, nothing to say — throws.
+ */
+export const sendOnDestination = async (input: {
+  database: D1Database;
+  credentials: ChannelCredentials;
+  channel: string;
+  destination: string;
+  texts: readonly string[];
+  eventId?: string | null;
+  sourceMessageId?: string | null;
+  fetch?: ChannelFetch;
+}): Promise<ChannelOutcome> => {
+  if (!isChannelName(input.channel)) throw new Error(`This product does not reach an address on ${input.channel} yet.`);
+  const channel = input.channel;
+  const texts = stated(input.texts);
+  const records = {
+    ...(input.eventId === undefined ? {} : { eventId: input.eventId }),
+    ...(input.sourceMessageId === undefined ? {} : { sourceMessageId: input.sourceMessageId }),
+  };
+  const credential = input.credentials[channel];
+  if (!credential) {
+    return failedAt({
+      database: input.database,
+      channel,
+      destination: input.destination,
+      messages: texts.length,
+      requests: 0,
+      error: `This Account has no ${channel === 'line' ? 'LINE' : 'Discord'} Connection to send through.`,
+      ...records,
+    });
+  }
+  const request = input.fetch ?? ((url, init) => fetch(url, init));
+
+  if (channel === 'line') {
+    const batches = batched(texts, LINE_BATCH_LIMIT);
+    const attempts = await Promise.all(batches.map((messages) => deliverLineBatch({
+      database: input.database,
+      accessToken: credential,
+      destinationId: input.destination,
+      messages,
+      ...records,
+    })));
+    const flattened = attempts.flat();
+    const delivered = flattened.every((attempt) => attempt.outcome === 'succeeded');
+    return {
+      channel,
+      destination: input.destination,
+      delivered,
+      messages: texts.length,
+      requests: batches.length,
+      externalId: flattened.find((attempt) => attempt.externalId)?.externalId ?? null,
+      error: delivered ? null : 'LINE refused the message.',
+    };
+  }
+
+  let externalId: string | null = null;
+  for (const [index, text] of texts.entries()) {
+    try {
+      const sent = await sendDiscordMessage({ fetch: request, botToken: credential, channelId: input.destination, text });
+      externalId = externalId ?? sent.externalId;
+      await recordDeliveryAttempt(input.database, {
+        ...records,
+        destination: input.destination,
+        channel,
+        outcome: 'succeeded',
+        externalId: sent.externalId,
+      });
+    } catch (error) {
+      const failure = await failedAt({
+        database: input.database,
+        channel,
+        destination: input.destination,
+        messages: texts.length - index,
+        requests: index,
+        error: error instanceof Error ? error.message : 'Discord refused the message.',
+        ...records,
+      });
+      return { ...failure, messages: texts.length, externalId };
+    }
+  }
+  return {
+    channel,
+    destination: input.destination,
+    delivered: true,
+    messages: texts.length,
+    requests: texts.length,
+    externalId,
+    error: null,
+  };
+};
+
+/**
+ * Sends the same messages to several addresses, each address once.
+ *
+ * Two Contacts sharing one group destination, or a Channel Handle List naming
+ * the same room twice, must not make the same message arrive twice; deduplicating
+ * here means no caller has to remember to.
+ */
+export const sendToDestinations = async (input: {
+  database: D1Database;
+  credentials: ChannelCredentials;
+  channel: string;
+  destinations: readonly string[];
+  texts: readonly string[];
+  eventId?: string | null;
+  sourceMessageId?: string | null;
+  fetch?: ChannelFetch;
+}): Promise<ChannelOutcome[]> => Promise.all(
+  [...new Set(input.destinations)].map((destination) => sendOnDestination({ ...input, destination })),
+);
+
+/**
+ * Sends to one Contact on one Channel, and leaves a Delivery Record either way.
+ *
+ * A refusal throws, because the surfaces that reach a single Contact — the MCP
+ * Server, a scheduled reminder, a Channel Test — each have to report the failure
+ * to whoever asked rather than absorb it.
  *
  * Suppression is not consulted here: what a repeat means differs between an
  * Access Token, an Automation and a Channel Test, so the caller that knows the
@@ -184,41 +380,23 @@ export const sendOnChannel = async (input: {
   credentials: ChannelCredentials;
   contactId: string;
   channel: string;
-  text: string;
+  texts: readonly string[];
   fetch?: ChannelFetch;
 }): Promise<ChannelDelivery> => {
   if (!isChannelName(input.channel)) throw new Error(`This product does not reach a Contact on ${input.channel} yet.`);
   const channel = input.channel;
-  const text = input.text.trim();
-  if (!text) throw new Error('A message needs something to say.');
-  const credential = input.credentials[channel];
-  if (!credential) throw new Error(`This Account has no ${channel === 'line' ? 'LINE' : 'Discord'} Connection to send through.`);
+  const texts = stated(input.texts);
   const destination = await destinationFor({ database: input.database, contactId: input.contactId, channel });
   if (!destination) throw new Error(`Contact ${input.contactId} has no ${channel === 'line' ? 'LINE' : 'Discord'} handle to reach.`);
-  const request = input.fetch ?? ((url, init) => fetch(url, init));
-
-  if (channel === 'line') {
-    const [attempt] = await deliverLineBatch({
-      database: input.database,
-      accessToken: credential,
-      destinationId: destination,
-      messages: [text],
-    });
-    if (attempt?.outcome !== 'succeeded') throw new Error('LINE refused the message.');
-    return { delivered: true, channel, contactId: input.contactId, destination, externalId: attempt.externalId };
-  }
-
-  try {
-    const sent = await sendDiscordMessage({ fetch: request, botToken: credential, channelId: destination, text });
-    await recordDeliveryAttempt(input.database, {
-      destination,
-      channel,
-      outcome: 'succeeded',
-      externalId: sent.externalId,
-    });
-    return { delivered: true, channel, contactId: input.contactId, destination, externalId: sent.externalId };
-  } catch (error) {
-    await recordDeliveryAttempt(input.database, { destination, channel, outcome: 'failed', externalId: null });
-    throw error;
-  }
+  const outcome = await sendOnDestination({ ...input, channel, destination, texts });
+  if (!outcome.delivered) throw new Error(outcome.error ?? `${channel} refused the message.`);
+  return {
+    delivered: true,
+    channel,
+    contactId: input.contactId,
+    destination,
+    messages: outcome.messages,
+    requests: outcome.requests,
+    externalId: outcome.externalId,
+  };
 };

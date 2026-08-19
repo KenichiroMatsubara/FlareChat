@@ -135,7 +135,7 @@ export const mcpServerPorts = (input: {
       credentials: input.credentials,
       contactId,
       channel,
-      text,
+      texts: [text],
     });
     return { delivered: delivery.delivered, channel: delivery.channel, contactId: delivery.contactId };
   },

@@ -259,7 +259,7 @@ An Account-started check of one selected Automation Inbox message through the sa
 _Avoid_: Draft Rule Run, production replay
 
 **Channel Test**:
-An Account-started send of one arbitrary message to one Contact through the same Channel seam an Automation and the MCP Server send through, or one call of a registered MCP Server's tool with arguments the operator wrote. It consults no Suppression Window, because a test whose repeat silently sends nothing reports a Channel as working when it never spoke, and it leaves an ordinary Delivery Record, because a real message really left.
+An Account-started send of up to five arbitrary messages to one Contact through the same Channel seam an Automation and the MCP Server send through, or one call of a registered MCP Server's tool with arguments the operator wrote. It consults no Suppression Window, because a test whose repeat silently sends nothing reports a Channel as working when it never spoke, and it leaves an ordinary Delivery Record per message, because a real message really left. Its result names how many messages were sent and how many provider requests carried them, so the Channel's own batching is visible rather than assumed.
 _Avoid_: ping, dry run, smoke test
 
 **Run Transcript**:

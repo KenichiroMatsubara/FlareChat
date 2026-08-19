@@ -38,7 +38,7 @@ import {
 import { completeChatTurn } from './chat-model';
 import { generateAccessToken, accessTokenHash, presentedToken } from './access-token';
 import { grantedServerTools, handleMcpServerRequest, MCP_SERVER_TOOLS, type JsonRpcRequest } from './mcp-server';
-import { channelCredentials, reachableContacts, sendOnChannel } from './channel';
+import { channelCredentials, LINE_BATCH_LIMIT, reachableContacts, sendOnChannel } from './channel';
 import { callMcpTool, listMcpTools } from './mcp';
 import {
   admitAccessTokenCall,
@@ -2616,7 +2616,9 @@ app.delete('/api/organizations/:accountId/mcp-servers/:serverId', async (context
  * same seam an Automation and the MCP Server send through, so a test that
  * arrives proves the production path and not a second one written for testing.
  * Repeat suppression is not consulted, because a test whose second run silently
- * sends nothing would report the Channel as working when it never spoke.
+ * sends nothing would report the Channel as working when it never spoke. Several
+ * messages may be stated, so an operator can watch LINE's five-per-request batch
+ * happen instead of taking it on trust.
  */
 app.get('/api/organizations/:accountId/channel-tests/targets', async (context) => {
   try {
@@ -2635,12 +2637,16 @@ app.post('/api/organizations/:accountId/channel-tests', async (context) => {
     const accountId = context.req.param('accountId');
     const access = await accountForRequest(context.req.raw, context.env, accountId);
     if (!access.database) return failure(context, 'Account データベースに接続できません。', 503);
-    const input = await context.req.json<{ contactId?: string; channel?: string; text?: string }>();
+    const input = await context.req.json<{ contactId?: string; channel?: string; texts?: unknown }>();
     const contactId = input.contactId?.trim() ?? '';
     const channel = input.channel?.trim() ?? '';
-    const text = input.text ?? '';
+    const texts = Array.isArray(input.texts) ? input.texts.filter((text): text is string => typeof text === 'string') : [];
+    const said = texts.map((text) => text.trim()).filter((text) => text.length > 0);
     if (!contactId) return failure(context, '送信先の Contact を選んでください。');
-    if (!text.trim() || text.length > 1_000) return failure(context, 'テストメッセージは 1〜1,000 文字で入力してください。');
+    if (!said.length || said.length > LINE_BATCH_LIMIT) {
+      return failure(context, `テストは 1 回に 1〜${LINE_BATCH_LIMIT} 通まで送れます。`);
+    }
+    if (said.some((text) => text.length > 1_000)) return failure(context, 'テストメッセージは 1 通 1,000 文字以内で入力してください。');
     const delivery = await sendOnChannel({
       database: access.database,
       credentials: await channelCredentials({
@@ -2650,7 +2656,7 @@ app.post('/api/organizations/:accountId/channel-tests', async (context) => {
       }),
       contactId,
       channel,
-      text,
+      texts: said,
     });
     return json(context, { ...delivery, sentAt: now() });
   } catch (error) {
