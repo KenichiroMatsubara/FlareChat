@@ -1,8 +1,8 @@
 import { cloudflareControlPlane } from './cloudflare';
 import { and, isNotNull, ne } from 'drizzle-orm';
-import { controlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
-import { organizationProvisionings, organizations } from './storage/control-schema';
-import { googleConnections } from './storage/organization-schema';
+import { controlDatabase, accountDatabase as drizzleAccountDatabase } from './storage/database';
+import { accountProvisionings, accounts } from './storage/control-schema';
+import { googleConnections } from './storage/account-schema';
 import { schemaLifecycle } from './schema-lifecycle';
 
 import type { Bindings } from './types';
@@ -30,23 +30,23 @@ const initializeDatabase = async (database: D1Database): Promise<void> => {
 
 const verifyDatabase = async (database: D1Database): Promise<void> => {
   try {
-    await drizzleOrganizationDatabase(database).select({ id: googleConnections.id }).from(googleConnections).limit(1).all();
+    await drizzleAccountDatabase(database).select({ id: googleConnections.id }).from(googleConnections).limit(1).all();
   } catch {
-    throw new Error('Organization database schema verification failed.');
+    throw new Error('Account database schema verification failed.');
   }
 };
 
-export interface OrganizationDatabaseProvisioning {
+export interface AccountDatabaseProvisioning {
   databaseId: string;
   bindingName: string;
   database: D1Database;
-  /** Atomically resets and initializes this not-yet-active Organization database. */
+  /** Atomically resets and initializes this not-yet-active Account database. */
   initialize: () => Promise<void>;
   finalize: () => Promise<void>;
 }
 
-interface ProvisionOrganizationDatabaseInput {
-  organizationId: string;
+interface ProvisionAccountDatabaseInput {
+  accountId: string;
   inboxAddress: string;
   bindingName: string;
   databaseId: string | null;
@@ -57,7 +57,7 @@ const sha256 = async (value: string): Promise<string> => {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 };
 
-export const organizationDatabaseIdentity = async (
+export const accountDatabaseIdentity = async (
   inboxAddress: string,
 ): Promise<{ databaseName: string; bindingName: string }> => {
   const normalized = inboxAddress.trim().normalize('NFKC').toLowerCase();
@@ -78,12 +78,12 @@ export const organizationDatabaseIdentity = async (
 
 const localDatabaseLocation = async (
   env: Bindings,
-  input: ProvisionOrganizationDatabaseInput,
+  input: ProvisionAccountDatabaseInput,
   bindings: string[],
-): Promise<OrganizationDatabaseProvisioning> => {
+): Promise<AccountDatabaseProvisioning> => {
   if (input.databaseId?.startsWith('local:')) {
     const database = boundDatabase(env, input.bindingName);
-    if (!database) throw new Error(`Local Organization database binding ${input.bindingName} is unavailable.`);
+    if (!database) throw new Error(`Local Account database binding ${input.bindingName} is unavailable.`);
     return {
       databaseId: input.databaseId,
       bindingName: input.bindingName,
@@ -94,19 +94,19 @@ const localDatabaseLocation = async (
   }
   const control = controlDatabase(env.CONTROL_DB);
   const [activeBindings, provisioningBindings] = await Promise.all([
-    control.select({ bindingName: organizations.bindingName }).from(organizations)
-      .where(isNotNull(organizations.databaseId)).all(),
-    control.select({ bindingName: organizationProvisionings.bindingName })
-      .from(organizationProvisionings).where(and(
-      isNotNull(organizationProvisionings.databaseId),
-      ne(organizationProvisionings.organizationId, input.organizationId),
+    control.select({ bindingName: accounts.bindingName }).from(accounts)
+      .where(isNotNull(accounts.databaseId)).all(),
+    control.select({ bindingName: accountProvisionings.bindingName })
+      .from(accountProvisionings).where(and(
+      isNotNull(accountProvisionings.databaseId),
+      ne(accountProvisionings.accountId, input.accountId),
     )).all(),
   ]);
   const used = new Set([...activeBindings, ...provisioningBindings].map((row) => row.bindingName));
   const bindingName = bindings.find((name) => !used.has(name));
-  if (!bindingName) throw new Error('No local Organization database slot is available. Reset an unused local Organization or add another local D1 binding.');
+  if (!bindingName) throw new Error('No local Account database slot is available. Reset an unused local Account or add another local D1 binding.');
   const database = boundDatabase(env, bindingName);
-  if (!database) throw new Error(`Local Organization database binding ${bindingName} is unavailable.`);
+  if (!database) throw new Error(`Local Account database binding ${bindingName} is unavailable.`);
   return {
     databaseId: `local:${bindingName}`,
     bindingName,
@@ -117,17 +117,17 @@ const localDatabaseLocation = async (
 };
 
 /**
- * Allocates one isolated Organization database. Local development uses a static
+ * Allocates one isolated Account database. Local development uses a static
  * D1 binding pool; production creates and attaches a dedicated D1 database.
  */
-export const provisionOrganizationDatabase = async (
+export const provisionAccountDatabase = async (
   env: Bindings,
-  input: ProvisionOrganizationDatabaseInput,
-): Promise<OrganizationDatabaseProvisioning> => {
+  input: ProvisionAccountDatabaseInput,
+): Promise<AccountDatabaseProvisioning> => {
   const bindings = localBindings(env);
   if (bindings.length > 0) return localDatabaseLocation(env, input, bindings);
   const controlPlane = cloudflareControlPlane(env);
-  const identity = await organizationDatabaseIdentity(input.inboxAddress);
+  const identity = await accountDatabaseIdentity(input.inboxAddress);
   const databaseId = input.databaseId ?? await controlPlane.ensureDatabase(identity.databaseName);
   const database = controlPlane.openDatabase(databaseId);
   return {

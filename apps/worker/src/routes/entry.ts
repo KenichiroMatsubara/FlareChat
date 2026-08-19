@@ -3,14 +3,14 @@ import { and, eq, isNotNull } from 'drizzle-orm';
 
 import { beginGoogleEntry, completeGoogleEntry, entryConfigurationError } from '../entry';
 import { createDatabaseAccess } from '../database-access';
-import { applicationState, cancelOrganizationOnboarding, confirmOrganization, retryOrganizationProvisioning } from '../onboarding';
+import { applicationState, cancelAccountOnboarding, confirmAccount, retryAccountProvisioning } from '../onboarding';
 import { json } from '../response';
 import { failure } from '../response';
 import { createRequestContext } from './request-context';
 import { CONTROL_SCHEMA_TARGET } from '../schema-lifecycle';
 import type { Bindings } from '../types';
 import { controlDatabase } from '../storage/database';
-import { admins, organizations, sessions } from '../storage/control-schema';
+import { accountIdentities, accounts, sessions } from '../storage/control-schema';
 
 export const entryRoutes = new Hono<{ Bindings: Bindings }>();
 export const oauthRoutes = new Hono<{ Bindings: Bindings }>();
@@ -76,10 +76,10 @@ entryRoutes.post('/onboarding/confirm', async (context) => {
   if (!session) return failure(context, 'Authentication is required.', 401);
   try {
     const input = await context.req.json<{ name?: string; presetId?: string }>();
-    await confirmOrganization(context.env, session.identity_id, input.name ?? '', input.presetId);
+    await confirmAccount(context.env, session.identity_id, input.name ?? '', input.presetId);
     return json(context, { accepted: true });
   } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Organization setup could not be confirmed.', 409);
+    return failure(context, error instanceof Error ? error.message : 'Account setup could not be confirmed.', 409);
   }
 });
 
@@ -87,29 +87,29 @@ entryRoutes.post('/onboarding/retry', async (context) => {
   const session = await createRequestContext(context.req.raw, context.env).session();
   if (!session) return failure(context, 'Authentication is required.', 401);
   try {
-    await retryOrganizationProvisioning(context.env, session.identity_id);
+    await retryAccountProvisioning(context.env, session.identity_id);
     return json(context, { accepted: true });
   } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Organization provisioning could not be retried.', 409);
+    return failure(context, error instanceof Error ? error.message : 'Account provisioning could not be retried.', 409);
   }
 });
 
 entryRoutes.delete('/onboarding', async (context) => {
   const session = await createRequestContext(context.req.raw, context.env).session();
   if (!session) return failure(context, 'Authentication is required.', 401);
-  return json(context, { cancelled: await cancelOrganizationOnboarding(context.env, session.identity_id) });
+  return json(context, { cancelled: await cancelAccountOnboarding(context.env, session.identity_id) });
 });
 
 entryRoutes.get('/auth/me', async (context) => {
   const session = await createRequestContext(context.req.raw, context.env).session();
   if (!session) return failure(context, 'Authentication is required.', 401);
   const memberships = await controlDatabase(context.env.CONTROL_DB).select({
-    organizationId: admins.organizationId,
-    name: organizations.name,
-    status: organizations.status,
-  }).from(admins).innerJoin(organizations, eq(organizations.id, admins.organizationId))
-    .where(and(eq(admins.identityId, session.identity_id), eq(admins.state, 'active'), isNotNull(organizations.databaseId))).all();
-  return json(context, { email: session.email, displayName: session.display_name, organizations: memberships });
+    accountId: accountIdentities.accountId,
+    name: accounts.name,
+    status: accounts.status,
+  }).from(accountIdentities).innerJoin(accounts, eq(accounts.id, accountIdentities.accountId))
+    .where(and(eq(accountIdentities.identityId, session.identity_id), eq(accountIdentities.state, 'active'), isNotNull(accounts.databaseId))).all();
+  return json(context, { email: session.email, displayName: session.display_name, accounts: memberships });
 });
 
 entryRoutes.get('/bootstrap', async (context) => {

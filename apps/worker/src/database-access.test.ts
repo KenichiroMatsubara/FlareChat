@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import organizationInitialMigration from '../migrations/organization/0000_initial.sql';
+import accountInitialMigration from '../migrations/organization/0000_initial.sql';
 import { createTestD1Database, type TestD1Database } from '../test/d1';
 import { createDatabaseAccess } from './database-access';
 import type { Bindings } from './types';
@@ -12,10 +12,10 @@ afterEach(() => {
 });
 
 describe('Database Access', () => {
-  it('returns an Organization database only after making its schema current', async () => {
+  it('returns an Account database only after making its schema current', async () => {
     const database = createTestD1Database();
     openDatabases.push(database);
-    for (const statement of organizationInitialMigration
+    for (const statement of accountInitialMigration
       .split('--> statement-breakpoint')
       .map((value) => value.trim())
       .filter(Boolean)) {
@@ -35,7 +35,7 @@ describe('Database Access', () => {
       databaseId: 'database-example',
     });
 
-    expect(ready.schema.currentMigration).toBe('0021_rule_execution.sql');
+    expect(ready.schema.currentMigration).toBe('0025_discord_channel.sql');
     await expect(ready.raw.prepare(
       'SELECT display_name FROM line_destinations',
     ).all()).resolves.toMatchObject({ success: true });

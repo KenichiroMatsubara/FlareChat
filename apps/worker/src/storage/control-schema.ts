@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { check, index, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
-export const organizations = sqliteTable('organizations', {
+export const accounts = sqliteTable('organizations', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   status: text('status', { enum: ['provisioning', 'active', 'suspended', 'failed'] }).notNull(),
@@ -23,25 +23,25 @@ export const identities = sqliteTable('identities', {
   updatedAt: text('updated_at').notNull(),
 });
 
-export const admins = sqliteTable('admins', {
-  organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+export const accountIdentities = sqliteTable('admins', {
+  accountId: text('organization_id').notNull().references(() => accounts.id, { onDelete: 'cascade' }),
   identityId: text('identity_id').notNull().references(() => identities.id, { onDelete: 'cascade' }),
   state: text('state', { enum: ['active', 'suspended', 'removed'] }).notNull(),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
-  primaryKey({ columns: [table.organizationId, table.identityId] }),
+  primaryKey({ columns: [table.accountId, table.identityId] }),
   check('admins_state_check', sql`${table.state} in ('active', 'suspended', 'removed')`),
   index('admins_identity_idx').on(table.identityId, table.state),
 ]);
 
-/** Routes a Member's Google account to the Organization whose roster holds them. */
-export const memberLogins = sqliteTable('member_logins', {
+/** Routes a Contact's Google account to the Account whose roster holds them. */
+export const contactLogins = sqliteTable('member_logins', {
   googleSubject: text('google_subject').primaryKey(),
-  organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+  accountId: text('organization_id').notNull().references(() => accounts.id, { onDelete: 'cascade' }),
   createdAt: text('created_at').notNull(),
 }, (table) => [
-  index('member_logins_organization_idx').on(table.organizationId),
+  index('member_logins_organization_idx').on(table.accountId),
 ]);
 
 export const sessions = sqliteTable('sessions', {
@@ -55,7 +55,7 @@ export const sessions = sqliteTable('sessions', {
   index('sessions_expiry_idx').on(table.expiresAt, table.revokedAt),
 ]);
 
-export const organizationSetups = sqliteTable('organization_setups', {
+export const accountSetups = sqliteTable('organization_setups', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   inboxAddress: text('inbox_address').notNull().unique(),
@@ -71,8 +71,8 @@ export const organizationSetups = sqliteTable('organization_setups', {
   index('setups_expiry_idx').on(table.expiresAt),
 ]);
 
-export const organizationProvisionings = sqliteTable('organization_provisionings', {
-  organizationId: text('organization_id').primaryKey().references(() => organizations.id, { onDelete: 'cascade' }),
+export const accountProvisionings = sqliteTable('organization_provisionings', {
+  accountId: text('organization_id').primaryKey().references(() => accounts.id, { onDelete: 'cascade' }),
   ownerIdentityId: text('owner_identity_id').notNull().unique().references(() => identities.id, { onDelete: 'cascade' }),
   state: text('state', { enum: ['provisioning', 'failed'] }).notNull(),
   phase: text('phase', {
@@ -100,19 +100,19 @@ export const organizationProvisionings = sqliteTable('organization_provisionings
 export const automationInboxClaims = sqliteTable('automation_inbox_claims', {
   googleSubject: text('google_subject').primaryKey(),
   inboxAddress: text('inbox_address').notNull().unique(),
-  setupId: text('setup_id').unique().references(() => organizationSetups.id, { onDelete: 'cascade' }),
-  organizationId: text('organization_id').unique().references(() => organizations.id, { onDelete: 'cascade' }),
+  setupId: text('setup_id').unique().references(() => accountSetups.id, { onDelete: 'cascade' }),
+  accountId: text('organization_id').unique().references(() => accounts.id, { onDelete: 'cascade' }),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
   check(
     'automation_inbox_claims_owner_check',
-    sql`(${table.setupId} is not null and ${table.organizationId} is null) or (${table.setupId} is null and ${table.organizationId} is not null)`,
+    sql`(${table.setupId} is not null and ${table.accountId} is null) or (${table.setupId} is null and ${table.accountId} is not null)`,
   ),
 ]);
 
-export const organizationKeys = sqliteTable('organization_keys', {
-  organizationId: text('organization_id').primaryKey().references(() => organizations.id, { onDelete: 'cascade' }),
+export const accountKeys = sqliteTable('organization_keys', {
+  accountId: text('organization_id').primaryKey().references(() => accounts.id, { onDelete: 'cascade' }),
   masterKeyVersion: text('master_key_version').notNull(),
   wrappedKeyEnvelope: text('wrapped_key_envelope').notNull(),
   createdAt: text('created_at').notNull(),
@@ -134,7 +134,7 @@ export const oauthFlows = sqliteTable('oauth_flows', {
 
 export const recoveryRequests = sqliteTable('recovery_requests', {
   id: text('id').primaryKey(),
-  organizationId: text('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+  accountId: text('organization_id').notNull().references(() => accounts.id, { onDelete: 'cascade' }),
   idempotencyKey: text('idempotency_key').notNull(),
   state: text('state', { enum: ['requested', 'executing', 'completed', 'failed'] }).notNull(),
   requestedByIdentityId: text('requested_by_identity_id').notNull().references(() => identities.id),
@@ -144,8 +144,8 @@ export const recoveryRequests = sqliteTable('recovery_requests', {
   executedAt: text('executed_at'),
 }, (table) => [
   check('recovery_requests_state_check', sql`${table.state} in ('requested', 'executing', 'completed', 'failed')`),
-  uniqueIndex('recovery_requests_organization_idempotency_idx').on(table.organizationId, table.idempotencyKey),
-  index('recovery_requests_org_state_idx').on(table.organizationId, table.state, table.createdAt),
+  uniqueIndex('recovery_requests_organization_idempotency_idx').on(table.accountId, table.idempotencyKey),
+  index('recovery_requests_org_state_idx').on(table.accountId, table.state, table.createdAt),
 ]);
 
 export const schemaReleases = sqliteTable('schema_releases', {
@@ -158,7 +158,7 @@ export const schemaReleases = sqliteTable('schema_releases', {
   check('schema_releases_state_check', sql`${table.state} in ('ready', 'migrating')`),
 ]);
 
-export type OrganizationSetupRecord = typeof organizationSetups.$inferSelect;
-export type OrganizationProvisioningRecord = typeof organizationProvisionings.$inferSelect;
-export type OrganizationRecord = typeof organizations.$inferSelect;
+export type AccountSetupRecord = typeof accountSetups.$inferSelect;
+export type AccountProvisioningRecord = typeof accountProvisionings.$inferSelect;
+export type AccountRecord = typeof accounts.$inferSelect;
 export type SessionRecord = typeof sessions.$inferSelect & Pick<typeof identities.$inferSelect, 'email' | 'displayName'>;

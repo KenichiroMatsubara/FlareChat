@@ -516,3 +516,55 @@ nav a.loading { opacity: .65; }
 .portal-answer label input[type="text"],
 .portal-answer label input:not([type]) { flex: 1; }
 .portal-locked { color: var(--muted); font-size: 13px; }
+
+/* Operator Chat */
+.chat-page { display: flex; flex-direction: column; gap: 1.25rem; }
+.chat-transcript { display: flex; flex-direction: column; gap: 1rem; min-height: 8rem; }
+.chat-empty { color: var(--muted, #6b7280); }
+.chat-turn { display: flex; flex-direction: column; gap: 0.4rem; }
+.chat-request { align-self: flex-end; max-width: 46rem; padding: 0.6rem 0.9rem; border-radius: 0.9rem 0.9rem 0.2rem 0.9rem; background: var(--accent-soft, #eef2ff); white-space: pre-wrap; }
+.chat-response { align-self: flex-start; max-width: 46rem; padding: 0.6rem 0.9rem; border-radius: 0.9rem 0.9rem 0.9rem 0.2rem; background: var(--surface-muted, #f3f4f6); white-space: pre-wrap; }
+.chat-failure { display: flex; align-items: center; gap: 0.4rem; color: var(--danger, #b91c1c); }
+.chat-degraded { display: flex; align-items: center; gap: 0.4rem; color: var(--warning, #92400e); }
+.chat-composer { display: flex; flex-direction: column; gap: 0.6rem; }
+.chat-composer textarea { width: 100%; resize: vertical; }
+.chat-composer button { align-self: flex-end; display: inline-flex; align-items: center; gap: 0.4rem; }
+.chat-servers { display: flex; flex-direction: column; gap: 0.6rem; padding-top: 1rem; border-top: 1px solid var(--border, #e5e7eb); }
+.chat-servers h3 { display: flex; align-items: center; gap: 0.4rem; }
+.chat-servers ul { display: flex; flex-direction: column; gap: 0.4rem; list-style: none; padding: 0; }
+.chat-servers li { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.chat-server-name { font-weight: 600; }
+.chat-server-url { color: var(--muted, #6b7280); overflow-wrap: anywhere; }
+.chat-servers form { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: flex-end; }
+.chat-servers form label { display: flex; flex-direction: column; gap: 0.25rem; }
+
+/* Outward access */
+.access-panel { display: flex; flex-direction: column; gap: 0.75rem; padding-top: 1rem; border-top: 1px solid var(--border, #e5e7eb); }
+.access-panel h3 { display: flex; align-items: center; gap: 0.4rem; }
+.access-form { display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start; }
+.access-form label { display: flex; flex-direction: column; gap: 0.25rem; }
+.access-form fieldset { display: flex; flex-wrap: wrap; gap: 0.75rem; border: 1px solid var(--border, #e5e7eb); border-radius: 0.5rem; padding: 0.6rem 0.8rem; }
+.access-check { flex-direction: row !important; align-items: center; gap: 0.35rem; }
+.access-issued { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.8rem; border: 1px solid var(--warning, #92400e); border-radius: 0.6rem; }
+.access-issued input { width: 100%; font-family: ui-monospace, monospace; }
+.access-tokens { display: flex; flex-direction: column; gap: 0.4rem; list-style: none; padding: 0; }
+.access-tokens li { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.access-token-name { font-weight: 600; }
+
+/* Scheduled Automations */
+.automations-page { display: flex; flex-direction: column; gap: 1.25rem; }
+.automations-page .page-heading h2 { display: flex; align-items: center; gap: 0.4rem; }
+.automation-list { display: flex; flex-direction: column; gap: 0.9rem; list-style: none; padding: 0; }
+.automation-row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.automation-name { font-weight: 600; }
+.automation-runs { display: flex; flex-direction: column; gap: 0.3rem; list-style: none; padding: 0.4rem 0 0 1rem; }
+.automation-runs li { display: flex; gap: 0.75rem; flex-wrap: wrap; font-size: 0.9em; }
+.automation-run-time { color: var(--muted, #6b7280); font-variant-numeric: tabular-nums; }
+.automation-run-failed { color: var(--danger, #b91c1c); }
+.automation-empty { color: var(--muted, #6b7280); }
+
+/* Discord connection */
+.discord-connection { display: flex; flex-direction: column; gap: 0.6rem; padding-top: 1rem; border-top: 1px solid var(--border, #e5e7eb); }
+.discord-connection h3 { display: flex; align-items: center; gap: 0.4rem; }
+.discord-endpoint { display: flex; flex-direction: column; gap: 0.3rem; }
+.discord-endpoint input { width: 100%; font-family: ui-monospace, monospace; }

@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom';
 import type { DashboardProps } from './dashboard';
 import type { GuestRegistrationRoster, RuleEffect, RuleRun } from './api';
 import { pendingKey } from './pending';
+import { DiscordConnection } from './discord-connection';
 
 /**
  * The progress an onBlur save needs: it has no button of its own to relabel, so
@@ -119,7 +120,7 @@ const SecretInput = ({ value, onChange, label, placeholder }: { value: string; o
 
 /**
  * The Guest Registrations returned against a Scheduled Event. Names are shown
- * here and nowhere else: the Calendar description every invited Member reads
+ * here and nowhere else: the Calendar description every invited Contact reads
  * carries the counts by Affiliation alone.
  */
 const GuestRegistrations = (props: { rosters: GuestRegistrationRoster[] }) => {
@@ -156,7 +157,7 @@ const normalizeSearch = (value: string): string => value.normalize('NFKC').toLoc
 const destinationKindLabel = (kind: 'user' | 'group' | 'room'): string =>
   kind === 'user' ? '個人' : kind === 'group' ? 'グループ' : 'ルーム';
 
-export const MembersPage = (props: DashboardProps) => {
+export const ContactsPage = (props: DashboardProps) => {
   const [query, setQuery] = useState('');
   const [stateFilter, setStateFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [selectedLineDestinationId, setSelectedLineDestinationId] = useState('');
@@ -173,24 +174,24 @@ export const MembersPage = (props: DashboardProps) => {
   const [editState, setEditState] = useState<'active' | 'inactive'>('active');
   const [editManualDestinationId, setEditManualDestinationId] = useState('');
   const [editManualKind, setEditManualKind] = useState<'user' | 'group' | 'room'>('user');
-  const refreshing = props.isPending(pendingKey.memberRefresh);
-  const creatingMember = props.isPending(pendingKey.memberCreate);
+  const refreshing = props.isPending(pendingKey.contactRefresh);
+  const creatingContact = props.isPending(pendingKey.contactCreate);
   const registeringDestination = props.isPending(pendingKey.lineDestinationRegister);
   const unassignedDestinations = props.lineDestinations.filter((destination) =>
-    destination.status === 'discovered' && !destination.memberId);
+    destination.status === 'discovered' && !destination.contactId);
   const searchToken = normalizeSearch(query);
-  const visibleMembers = props.organizationMembers.filter((member) => {
-    if (stateFilter !== 'all' && member.state !== stateFilter) return false;
+  const visibleContacts = props.accountContacts.filter((contact) => {
+    if (stateFilter !== 'all' && contact.state !== stateFilter) return false;
     if (!searchToken) return true;
     return normalizeSearch([
-      member.name,
-      member.email,
-      ...member.tags,
-      ...member.lineDestinations.flatMap((destination) => [destination.displayName, destination.destinationId]),
+      contact.name,
+      contact.email,
+      ...contact.tags,
+      ...contact.lineDestinations.flatMap((destination) => [destination.displayName, destination.destinationId]),
     ].join(' ')).includes(searchToken);
   });
-  const withEmail = props.organizationMembers.filter((member) => member.email && member.email !== '***').length;
-  const linkedToLine = props.organizationMembers.filter((member) => member.lineDestinations.length > 0).length;
+  const withEmail = props.accountContacts.filter((contact) => contact.email && contact.email !== '***').length;
+  const linkedToLine = props.accountContacts.filter((contact) => contact.lineDestinations.length > 0).length;
   const lineConfigured = Boolean(
     props.connections?.line.channelAccessTokenConfigured && props.connections.line.channelSecretConfigured,
   );
@@ -212,9 +213,9 @@ export const MembersPage = (props: DashboardProps) => {
     setPoolDestinationId('');
     setPoolKind('user');
   };
-  const createMember = async (event: React.FormEvent): Promise<void> => {
+  const createContact = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault();
-    await props.onCreateMember({
+    await props.onCreateContact({
       name: name.trim(),
       ...(email.trim() ? { email: email.trim() } : {}),
       tags: tags.split(',').map((tag) => tag.trim()).filter(Boolean),
@@ -225,25 +226,25 @@ export const MembersPage = (props: DashboardProps) => {
     setEmail('');
     setTags('');
   };
-  const beginEdit = (member: DashboardProps['organizationMembers'][number]): void => {
-    setEditingId(member.id);
-    setEditName(member.name);
-    setEditEmail(member.email === '***' ? '' : member.email);
-    setEditTags(member.tags.join(', '));
-    setEditState(member.state);
-    const manual = member.lineDestinations.find((destination) => destination.source === 'manual');
+  const beginEdit = (contact: DashboardProps['accountContacts'][number]): void => {
+    setEditingId(contact.id);
+    setEditName(contact.name);
+    setEditEmail(contact.email === '***' ? '' : contact.email);
+    setEditTags(contact.tags.join(', '));
+    setEditState(contact.state);
+    const manual = contact.lineDestinations.find((destination) => destination.source === 'manual');
     setEditManualDestinationId('');
     setEditManualKind(manual?.kind ?? 'user');
   };
-  const saveManualLineDestination = async (memberId: string): Promise<void> => {
+  const saveManualLineDestination = async (contactId: string): Promise<void> => {
     if (!editManualDestinationId.trim()) return;
-    await props.onSetLineDestination(memberId, { destinationId: editManualDestinationId.trim(), kind: editManualKind });
+    await props.onSetLineDestination(contactId, { destinationId: editManualDestinationId.trim(), kind: editManualKind });
   };
-  const unlinkLineDestination = async (memberId: string, lineDestinationId: string): Promise<void> => {
-    await props.onUnlinkLineDestination(memberId, lineDestinationId);
+  const unlinkLineDestination = async (contactId: string, lineDestinationId: string): Promise<void> => {
+    await props.onUnlinkLineDestination(contactId, lineDestinationId);
   };
-  const saveEdit = async (memberId: string): Promise<void> => {
-    await props.onUpdateMember(memberId, {
+  const saveEdit = async (contactId: string): Promise<void> => {
+    await props.onUpdateContact(contactId, {
       name: editName.trim(),
       email: editEmail.trim(),
       tags: editTags.split(',').map((tag) => tag.trim()).filter(Boolean),
@@ -253,9 +254,9 @@ export const MembersPage = (props: DashboardProps) => {
   };
 
   return <section className="page-layout members-page">
-    <div className="page-title"><p>MEMBER ROSTER</p><h1>メンバー管理</h1><span>LINEで見つけた表示名・ユーザーIDに、氏名、メールアドレス、分類を紐付けます。</span></div>
+    <div className="page-title"><p>CONTACT ROSTER</p><h1>メンバー管理</h1><span>LINEで見つけた表示名・ユーザーIDに、氏名、メールアドレス、分類を紐付けます。</span></div>
     <section className="member-metrics">
-      <div><span className="member-metric-icon green"><UsersRound size={18} /></span><p><b>{props.organizationMembers.length}</b><small>登録メンバー</small></p></div>
+      <div><span className="member-metric-icon green"><UsersRound size={18} /></span><p><b>{props.accountContacts.length}</b><small>登録メンバー</small></p></div>
       <div><span className="member-metric-icon blue"><MessageCircle size={18} /></span><p><b>{linkedToLine}</b><small>LINE紐付け済み</small></p></div>
       <div><span className="member-metric-icon amber"><Mail size={18} /></span><p><b>{withEmail}</b><small>メール設定済み</small></p></div>
       <div><span className="member-metric-icon violet"><UserPlus size={18} /></span><p><b>{unassignedDestinations.length}</b><small>未登録のLINE</small></p></div>
@@ -265,7 +266,7 @@ export const MembersPage = (props: DashboardProps) => {
       <div className="member-onboarding-copy">
         <span className="line-mark">LINE</span>
         <div><p>LINEからメンバーを追加</p><h2>{unassignedDestinations.length ? `${unassignedDestinations.length}件のLINEアカウントが登録待ちです` : 'LINEアカウントの受信を待っています'}</h2><span>公式アカウントにメッセージが届くと、表示名とIDを自動取得します。手動でも登録できます。</span></div>
-        <button type="button" className="secondary member-refresh" onClick={props.onRefreshMembers} disabled={refreshing}><RefreshCw className={refreshing ? 'spin' : ''} size={16} />{refreshing ? '更新中…' : '更新'}</button>
+        <button type="button" className="secondary member-refresh" onClick={props.onRefreshContacts} disabled={refreshing}><RefreshCw className={refreshing ? 'spin' : ''} size={16} />{refreshing ? '更新中…' : '更新'}</button>
       </div>
       {!lineConfigured && <p className="dashboard-warning member-connection-warning">LINE Messaging APIが未設定です。<Link to="../connections">接続設定を開く</Link></p>}
 
@@ -288,25 +289,25 @@ export const MembersPage = (props: DashboardProps) => {
         <small>友だち追加前やWebhook未設定でも、既知のLINE IDを先に登録しておけます。氏名やメールは下のフォームで後から設定してください。</small>
       </div>
 
-      <form className="member-create-form" onSubmit={(event) => void createMember(event)}>
+      <form className="member-create-form" onSubmit={(event) => void createContact(event)}>
         <label className="member-line-select">LINEアカウント<select value={selectedLineDestinationId} onChange={(event) => selectLineDestination(event.target.value)}><option value="">LINEなしで登録</option>{unassignedDestinations.map((destination) => <option key={destination.id} value={destination.id}>{destination.displayName || '表示名未取得'} · {destinationKindLabel(destination.kind)} · {destination.destinationId}</option>)}</select></label>
         <label>氏名<input ref={nameInputRef} value={name} onChange={(event) => setName(event.target.value)} placeholder="例: 山田 太郎" required /></label>
         <label>メールアドレス（任意）<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="後から設定できます" /></label>
         <label>分類タグ<input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="例: 会員, 2026年度" /></label>
-        <button className="primary" disabled={creatingMember}>{creatingMember ? <RefreshCw className="spin" size={16} /> : <UserPlus size={16} />}{creatingMember ? '登録中…' : 'メンバーに追加'}</button>
+        <button className="primary" disabled={creatingContact}>{creatingContact ? <RefreshCw className="spin" size={16} /> : <UserPlus size={16} />}{creatingContact ? '登録中…' : 'メンバーに追加'}</button>
       </form>
     </section>}
 
     <section className="member-directory">
-      <div className="member-directory-heading"><div><p>MEMBER DIRECTORY</p><h2>メンバー名簿</h2></div><span>{visibleMembers.length} / {props.organizationMembers.length}件</span></div>
+      <div className="member-directory-heading"><div><p>CONTACT DIRECTORY</p><h2>メンバー名簿</h2></div><span>{visibleContacts.length} / {props.accountContacts.length}件</span></div>
       <div className="member-filters">
         <label className="member-search"><Search size={16} /><input aria-label="メンバーを検索" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="名前・メール・LINE IDで検索" /></label>
         <select aria-label="状態で絞り込み" value={stateFilter} onChange={(event) => setStateFilter(event.target.value as typeof stateFilter)}><option value="all">すべての状態</option><option value="active">有効</option><option value="inactive">無効</option></select>
       </div>
       <div className="member-list">
-        {visibleMembers.map((member) => <article key={member.id} className={`member-card ${member.state}`}>
-          <div className="member-avatar" aria-hidden="true">{member.name.trim().slice(0, 1) || '?'}</div>
-          {editingId === member.id ? <div className="member-edit-form">
+        {visibleContacts.map((contact) => <article key={contact.id} className={`member-card ${contact.state}`}>
+          <div className="member-avatar" aria-hidden="true">{contact.name.trim().slice(0, 1) || '?'}</div>
+          {editingId === contact.id ? <div className="member-edit-form">
             <div className="member-edit-grid">
               <label>氏名<input value={editName} onChange={(event) => setEditName(event.target.value)} /></label>
               <label>メールアドレス<input type="email" value={editEmail} onChange={(event) => setEditEmail(event.target.value)} /></label>
@@ -315,39 +316,39 @@ export const MembersPage = (props: DashboardProps) => {
             </div>
             <div className="member-edit-line">
               <p>LINE連携</p>
-              {member.lineDestinations.length > 0 && <div className="member-edit-line-list">
-                {member.lineDestinations.map((destination) => <div key={destination.id}>
+              {contact.lineDestinations.length > 0 && <div className="member-edit-line-list">
+                {contact.lineDestinations.map((destination) => <div key={destination.id}>
                   <span className="line-badge"><MessageCircle size={13} />{destinationKindLabel(destination.kind)}{destination.source === 'manual' ? '・手動登録' : ''}</span>
                   <code>{destination.destinationId}</code>
-                  <button type="button" className="member-line-unlink" onClick={() => void unlinkLineDestination(member.id, destination.id)} disabled={props.isPending(pendingKey.lineDestinationUnlink(destination.id))}>{props.isPending(pendingKey.lineDestinationUnlink(destination.id)) ? <><RefreshCw className="spin" size={13} />解除中…</> : <><X size={13} />解除</>}</button>
+                  <button type="button" className="member-line-unlink" onClick={() => void unlinkLineDestination(contact.id, destination.id)} disabled={props.isPending(pendingKey.lineDestinationUnlink(destination.id))}>{props.isPending(pendingKey.lineDestinationUnlink(destination.id)) ? <><RefreshCw className="spin" size={13} />解除中…</> : <><X size={13} />解除</>}</button>
                 </div>)}
               </div>}
               <div className="member-edit-line-manual">
                 <label>LINE IDを変更<input value={editManualDestinationId} onChange={(event) => setEditManualDestinationId(event.target.value)} placeholder="変更時のみ完全なIDを入力" /></label>
                 <label>種別<select value={editManualKind} onChange={(event) => setEditManualKind(event.target.value as 'user' | 'group' | 'room')}><option value="user">個人</option><option value="group">グループ</option><option value="room">ルーム</option></select></label>
-                <button type="button" className="secondary" onClick={() => void saveManualLineDestination(member.id)} disabled={props.isPending(pendingKey.lineDestinationSet(member.id)) || !editManualDestinationId.trim()}>{props.isPending(pendingKey.lineDestinationSet(member.id)) ? <><RefreshCw className="spin" size={13} />設定中…</> : '設定'}</button>
+                <button type="button" className="secondary" onClick={() => void saveManualLineDestination(contact.id)} disabled={props.isPending(pendingKey.lineDestinationSet(contact.id)) || !editManualDestinationId.trim()}>{props.isPending(pendingKey.lineDestinationSet(contact.id)) ? <><RefreshCw className="spin" size={13} />設定中…</> : '設定'}</button>
               </div>
             </div>
-            <div className="member-edit-actions"><button className="primary" onClick={() => void saveEdit(member.id)} disabled={props.isPending(pendingKey.memberUpdate(member.id))}>{props.isPending(pendingKey.memberUpdate(member.id)) ? <RefreshCw className="spin" size={15} /> : <Save size={15} />}{props.isPending(pendingKey.memberUpdate(member.id)) ? '保存中…' : '保存'}</button><button className="secondary" onClick={() => setEditingId('')} disabled={props.isPending(pendingKey.memberUpdate(member.id))}><X size={15} />キャンセル</button></div>
+            <div className="member-edit-actions"><button className="primary" onClick={() => void saveEdit(contact.id)} disabled={props.isPending(pendingKey.contactUpdate(contact.id))}>{props.isPending(pendingKey.contactUpdate(contact.id)) ? <RefreshCw className="spin" size={15} /> : <Save size={15} />}{props.isPending(pendingKey.contactUpdate(contact.id)) ? '保存中…' : '保存'}</button><button className="secondary" onClick={() => setEditingId('')} disabled={props.isPending(pendingKey.contactUpdate(contact.id))}><X size={15} />キャンセル</button></div>
           </div> : <>
             <div className="member-identity">
-              <div><h3>{member.name}</h3><span className={`member-state ${member.state}`}>{member.state === 'active' ? '有効' : '無効'}</span></div>
-              <p><Mail size={14} />{member.email || 'メール未設定'}</p>
-              <div className="member-tags">{member.tags.length ? member.tags.map((tag) => <span key={tag}>{tag}</span>) : <small>タグなし</small>}</div>
+              <div><h3>{contact.name}</h3><span className={`member-state ${contact.state}`}>{contact.state === 'active' ? '有効' : '無効'}</span></div>
+              <p><Mail size={14} />{contact.email || 'メール未設定'}</p>
+              <div className="member-tags">{contact.tags.length ? contact.tags.map((tag) => <span key={tag}>{tag}</span>) : <small>タグなし</small>}</div>
             </div>
             <div className="member-line-details">
-              {member.lineDestinations.length ? member.lineDestinations.map((destination) => <div key={destination.id}><span className="line-badge"><MessageCircle size={13} />LINE {destinationKindLabel(destination.kind)}{destination.source === 'manual' ? '・手動' : ''}</span><strong>{destination.displayName || member.name}</strong><code title="LINE IDは先頭5文字のみ表示しています">{destination.destinationId}</code></div>) : <div className="member-line-empty"><MessageCircle size={15} /><span>LINE未連携</span></div>}
+              {contact.lineDestinations.length ? contact.lineDestinations.map((destination) => <div key={destination.id}><span className="line-badge"><MessageCircle size={13} />LINE {destinationKindLabel(destination.kind)}{destination.source === 'manual' ? '・手動' : ''}</span><strong>{destination.displayName || contact.name}</strong><code title="LINE IDは先頭5文字のみ表示しています">{destination.destinationId}</code></div>) : <div className="member-line-empty"><MessageCircle size={15} /><span>LINE未連携</span></div>}
             </div>
-            {<button type="button" className="member-edit-button" onClick={() => beginEdit(member)}><Pencil size={15} />編集</button>}
+            {<button type="button" className="member-edit-button" onClick={() => beginEdit(contact)}><Pencil size={15} />編集</button>}
           </>}
         </article>)}
-        {visibleMembers.length === 0 && <div className="member-empty"><UsersRound size={28} /><h3>{props.organizationMembers.length ? '条件に一致するメンバーがいません' : 'メンバーはまだ登録されていません'}</h3><p>{props.organizationMembers.length ? '検索条件を変更してください。' : 'LINEアカウントと氏名だけで追加できます。メールアドレスやタグは後から編集できます。'}</p></div>}
+        {visibleContacts.length === 0 && <div className="member-empty"><UsersRound size={28} /><h3>{props.accountContacts.length ? '条件に一致するメンバーがいません' : 'メンバーはまだ登録されていません'}</h3><p>{props.accountContacts.length ? '検索条件を変更してください。' : 'LINEアカウントと氏名だけで追加できます。メールアドレスやタグは後から編集できます。'}</p></div>}
       </div>
     </section>
   </section>;
 };
 
-/** Lets an Admin accept or reject the role the AI proposed for each open Task. */
+/** Lets an AccountIdentity accept or reject the role the AI proposed for each open Task. */
 const TaskReassignmentReview = (props: DashboardProps) => {
   const proposals = props.taskReassignmentProposals;
   const [reviewed, setReviewed] = useState(proposals);
@@ -356,7 +357,7 @@ const TaskReassignmentReview = (props: DashboardProps) => {
     setReviewed(proposals);
     setDecisions({});
   }
-  /** A Task the AI would move is accepted until the Admin says otherwise. */
+  /** A Task the AI would move is accepted until the AccountIdentity says otherwise. */
   const accepted = proposals.filter((proposal) => decisions[proposal.taskId] ?? proposal.changed).map((proposal) => proposal.taskId);
   const changed = proposals.filter((proposal) => proposal.changed);
   const openTasks = props.taskReassignment.openTasks;
@@ -374,7 +375,7 @@ const TaskReassignmentReview = (props: DashboardProps) => {
       .map((proposal) => ({ taskId: proposal.taskId, roleId: proposal.proposedRoleId })),
   );
   const skippedTitle = (taskId: string): string =>
-    props.organizationTasks.find((task) => task.id === taskId)?.title ?? taskId;
+    props.accountTasks.find((task) => task.id === taskId)?.title ?? taskId;
   return <section className="task-reassignment" aria-busy={suggesting || applying}>
     <div className="task-reassignment-action">
       <div><strong>AIでタスクを再割り当て</strong><p>{explanation}</p></div>
@@ -429,17 +430,17 @@ const TaskRoleCard = ({ role, props }: { role: DashboardProps['taskRoles'][numbe
       <label>説明<textarea defaultValue={role.description} disabled={saving} onBlur={(change) => { const description = change.target.value.trim(); if (description && description !== role.description) void props.onUpdateTaskRole(role.id, { description }); }} /></label>
     </details>
     <label>現在の担当者<select
-      value={props.taskRoleAssignments.find((assignment) => assignment.roleId === role.id)?.memberId ?? ''}
+      value={props.taskRoleAssignments.find((assignment) => assignment.roleId === role.id)?.contactId ?? ''}
       disabled={assigning}
       onChange={(change) => { if (change.target.value) props.onAssignTaskRole(role.id, change.target.value); }}
-    ><option value="">未割り当て</option>{props.taskMembers.map((member) => <option key={member.memberId} value={member.memberId}>{member.displayName}</option>)}</select><FieldSaveState saving={assigning} saved={assigned} /></label>
+    ><option value="">未割り当て</option>{props.taskContacts.map((contact) => <option key={contact.contactId} value={contact.contactId}>{contact.displayName}</option>)}</select><FieldSaveState saving={assigning} saved={assigned} /></label>
     <button type="button" className="secondary" onClick={() => void props.onDeleteTaskRole(role.id)} disabled={removing}>{removing ? <><RefreshCw className="spin" size={13} />削除中…</> : 'roleを削除'}</button>
   </article>;
 };
 
 /** One row of the Task table: its completion and its remarks each report their own save. */
 const TaskRow = ({ task, props, today, near }: {
-  task: DashboardProps['organizationTasks'][number];
+  task: DashboardProps['accountTasks'][number];
   props: DashboardProps;
   today: string;
   near: string;
@@ -463,11 +464,11 @@ export const TasksPage = (props: DashboardProps) => {
   const [roleName, setRoleName] = useState('');
   const [roleDescription, setRoleDescription] = useState('');
   const creatingRole = props.isPending(pendingKey.taskRoleCreate);
-  const assignees = [...new Map(props.organizationTasks.flatMap((task) => task.assigneeMemberId ? [[task.assigneeMemberId, task.assigneeName] as const] : [])).entries()];
-  const events = [...new Set(props.organizationTasks.map((task) => task.sourceMessageSubject))];
-  const visible = props.organizationTasks.filter((task) => (
+  const assignees = [...new Map(props.accountTasks.flatMap((task) => task.assigneeContactId ? [[task.assigneeContactId, task.assigneeName] as const] : [])).entries()];
+  const events = [...new Set(props.accountTasks.map((task) => task.sourceMessageSubject))];
+  const visible = props.accountTasks.filter((task) => (
     !assignee
-    || (assignee === 'unassigned' ? task.assigneeRoleId === 'unassigned' : task.assigneeMemberId === assignee)
+    || (assignee === 'unassigned' ? task.assigneeRoleId === 'unassigned' : task.assigneeContactId === assignee)
   ) && (!event || task.sourceMessageSubject === event));
   const today = new Date().toISOString().slice(0, 10);
   const near = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
@@ -478,7 +479,7 @@ export const TasksPage = (props: DashboardProps) => {
     setRoleDescription('');
   };
   return <section className="page-layout tasks-page">
-    <div className="page-title"><p>ORGANIZATION TASKS</p><h1>タスク</h1><span>Source Message から抽出された期限タスクを、担当者ごとに管理します。</span></div>
+    <div className="page-title"><p>ACCOUNT TASKS</p><h1>タスク</h1><span>Source Message から抽出された期限タスクを、担当者ごとに管理します。</span></div>
     {<section className="task-role-management">
       <form onSubmit={(submit) => void createRole(submit)}><strong>Operational Task Roleを追加</strong><label>名前<input value={roleName} onChange={(change) => setRoleName(change.target.value)} maxLength={100} required disabled={creatingRole} /></label><label>説明<textarea value={roleDescription} onChange={(change) => setRoleDescription(change.target.value)} maxLength={500} required disabled={creatingRole} /></label><button className="primary" disabled={creatingRole}>{creatingRole ? <><RefreshCw className="spin" size={14} />追加中…</> : 'roleを追加'}</button></form>
       <div className="task-role-list">{props.taskRoles.map((role) => <TaskRoleCard key={role.id} role={role} props={props} />)}</div>
@@ -505,7 +506,7 @@ export const ConnectionsPage = (props: DashboardProps) => {
   const windowChanged = windowDays !== props.savedResponseWindowDays;
   const testingAi = props.isPending(pendingKey.aiTest);
   useEffect(() => () => { if (webhookCopyTimer.current) clearTimeout(webhookCopyTimer.current); }, []);
-  const settingsReady = Boolean(props.organization);
+  const settingsReady = Boolean(props.account);
   const hasAiApi = Boolean(props.connections?.ai.apiKeyConfigured);
   const hasLineAccessToken = Boolean(props.connections?.line.channelAccessTokenConfigured);
   const hasLineSecret = Boolean(props.connections?.line.channelSecretConfigured);
@@ -522,8 +523,8 @@ export const ConnectionsPage = (props: DashboardProps) => {
   const aiReady = Boolean(props.aiBaseUrl.trim() && props.aiModel.trim() && (props.aiApiKey || hasAiApi));
   const webhookUrl = props.connections?.line.webhookUrl ?? '';
   const hasConfiguration = Boolean(
-    props.organizationLists.length
-    || props.organizationRules.length
+    props.accountLists.length
+    || props.accountRules.length
     || props.taskRoles.length
     || props.prompts.length
     || props.agentRules.length,
@@ -568,6 +569,7 @@ export const ConnectionsPage = (props: DashboardProps) => {
         onApply={props.onApplyPreset}
       />
     </>}
+    <DiscordConnection accountId={props.accountId ?? ''} />
   </section>;
 };
 
@@ -579,7 +581,7 @@ export const PresetSettings = ({ presets, hasConfiguration, isPending, onApply }
 }) => {
   const [confirmed, setConfirmed] = useState(false);
   return <section className="test-card preset-settings">
-    <div><p>PRESET</p><h2>Presetをコピー</h2><span>コピー後の構成は製品更新とリンクされず、このOrganizationだけで編集できます。</span></div>
+    <div><p>PRESET</p><h2>Presetをコピー</h2><span>コピー後の構成は製品更新とリンクされず、このAccountだけで編集できます。</span></div>
     {presets.map((preset) => <article key={preset.id}>
       <strong>{preset.name}</strong><p>{preset.description}</p>
       {hasConfiguration && <label><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />既存の構成に別のコピーを追加する</label>}
@@ -602,7 +604,7 @@ const ScheduledEventSummary = ({ event }: { event: { title: string; startsAt: st
   <span>{event.title}（{formatted(event.startsAt)} 〜 {formatted(event.endsAt)}{event.location ? `・${event.location}` : ''}）</span>;
 
 /**
- * The Event Refresh exit: an Admin sees, one Scheduled Event at a time, exactly
+ * The Event Refresh exit: an AccountIdentity sees, one Scheduled Event at a time, exactly
  * what the rewrite replaces before approving it.
  */
 export const MailboxRefreshSections = (props: DashboardProps) => {
@@ -683,23 +685,23 @@ export const MailboxTestPage = (props: DashboardProps) => {
   };
   return <section className="page-layout mail-test-page">
     <div className="page-title"><p>MAILBOX TEST</p><h1>メールテスト</h1><span>実際の Automation Inbox のメールを、有効な Primary Rule と本番の抽出経路で安全に確認します。</span></div>
-    {!props.organization || !props.automation
+    {!props.account || !props.automation
       ? <section className="empty-page"><Mail size={30} /><h2>メールテストを開始できません</h2><p>Automation Inbox の Google 接続を完了してください。</p></section>
       : <>
         <section className="test-card"><div><p>1. FIND MAIL</p><h2>件名からメールを探す</h2><span>検索とプレビューではメールを処理済みにせず、Calendar や Drive にも書き込みません。</span></div><label>メール件名<input value={props.mailTestSubject} onChange={(event) => props.onMailTestSubjectChange(event.target.value)} maxLength={300} /></label><button className="primary" onClick={props.onSearchMailbox} disabled={searching}>{searching ? <><RefreshCw className="spin" size={14} />検索中…</> : 'Gmailを検索'}</button></section>
         {props.mailTestMatches.length > 0 && <section className="test-card"><div><p>2. PREPARE AI REQUEST</p><h2>AI への送信内容を確認</h2><span>対象メールを選ぶと、本番と同じ本文・添付からリクエスト本文を生成します。この時点では AI に送信しません。</span></div><div className="mail-matches">{props.mailTestMatches.map((message) => <button key={message.id} className="mail-match" onClick={() => props.onPrepareMailbox(message.id)} disabled={props.isPending(pendingKey.mailPrepare(message.id))}><strong>{message.subject}</strong><small>{message.sender || '差出人なし'}</small>{props.isPending(pendingKey.mailPrepare(message.id)) && <small className="field-state saving"><RefreshCw className="spin" size={12} />本文と添付を読み込み中…</small>}</button>)}</div></section>}
-        {props.mailTestAiRequest && <section className="test-card event-preview"><div className="ai-request-heading"><div><p>3. REVIEW OPENAI-COMPATIBLE REQUEST</p><h2>OpenAI 互換リクエスト本文</h2><span>API キーは含まれません。有効な Primary Rule の権限範囲で本番の抽出を実行できます。</span></div><button className={`secondary copy-request-button${aiRequestCopied ? ' copied' : ''}`} onClick={copyPreparedAiRequest}>{aiRequestCopied ? <CheckCircle2 size={16} /> : <Copy size={16} />}{aiRequestCopied ? 'コピーしました' : 'リクエスト全文をコピー'}</button></div><pre className="ai-request">{JSON.stringify(props.mailTestAiRequest.request, null, 2)}</pre><div className="mail-test-actions">{hasConfiguredAiApi ? <button className="primary" onClick={() => props.onPreviewMailbox(props.mailTestAiRequest!.id)} disabled={extracting}>{extracting ? <><RefreshCw className="spin" size={14} />API に送信中…</> : '設定済みの API で予定を抽出'}</button> : <p className="dashboard-warning api-configuration-prompt"><span>OpenAI 互換 API が設定されていません</span><Link to={props.organizationId ? `/organizations/${encodeURIComponent(props.organizationId)}/connections` : '../connections'}>APIを設定する</Link></p>}</div></section>}
+        {props.mailTestAiRequest && <section className="test-card event-preview"><div className="ai-request-heading"><div><p>3. REVIEW OPENAI-COMPATIBLE REQUEST</p><h2>OpenAI 互換リクエスト本文</h2><span>API キーは含まれません。有効な Primary Rule の権限範囲で本番の抽出を実行できます。</span></div><button className={`secondary copy-request-button${aiRequestCopied ? ' copied' : ''}`} onClick={copyPreparedAiRequest}>{aiRequestCopied ? <CheckCircle2 size={16} /> : <Copy size={16} />}{aiRequestCopied ? 'コピーしました' : 'リクエスト全文をコピー'}</button></div><pre className="ai-request">{JSON.stringify(props.mailTestAiRequest.request, null, 2)}</pre><div className="mail-test-actions">{hasConfiguredAiApi ? <button className="primary" onClick={() => props.onPreviewMailbox(props.mailTestAiRequest!.id)} disabled={extracting}>{extracting ? <><RefreshCw className="spin" size={14} />API に送信中…</> : '設定済みの API で予定を抽出'}</button> : <p className="dashboard-warning api-configuration-prompt"><span>OpenAI 互換 API が設定されていません</span><Link to={props.accountId ? `/organizations/${encodeURIComponent(props.accountId)}/connections` : '../connections'}>APIを設定する</Link></p>}</div></section>}
         {props.mailTestPreview && <section className="test-card event-preview"><div><p>4. CONFIRM CALENDAR WRITE</p><h2>要約・予定・タスク候補を確認</h2><span>Primary Rule {props.mailTestPreview.selectedRule.id} r{props.mailTestPreview.selectedRule.revision} で抽出しました。下の確定操作だけが Calendar と添付用 Drive に書き込みます。</span></div><h3>メールの要約</h3><p className="mail-summary">{props.mailTestPreview.summary}</p><h3>予定（{props.mailTestPreview.events.length}件）</h3>{props.mailTestPreview.events.map((event, index) => <dl key={`${event.title}-${event.startsAt}`}><dt>予定 {index + 1}</dt><dd>{event.title}</dd><dt>日時</dt><dd>{formatted(event.startsAt)} 〜 {formatted(event.endsAt)}</dd><dt>場所</dt><dd>{event.location || '指定なし'}</dd><dt>説明</dt><dd>{event.description || '指定なし'}</dd><dt>要約</dt><dd>{event.summary || '指定なし'}</dd></dl>)}<h3>期限タスク候補（{props.mailTestPreview.tasks.length}件）</h3>{props.mailTestPreview.tasks.length ? props.mailTestPreview.tasks.map((task) => <dl key={`${task.assigneeRoleId}-${task.deadline}-${task.title}`}><dt>{props.taskRoles.find((role) => role.id === task.assigneeRoleId)?.displayName ?? '未割り当て'}</dt><dd>{task.title}</dd><dt>期限</dt><dd>{task.deadline}</dd><dt>内容</dt><dd>{task.description}</dd></dl>) : <p>明示された登録・振込期限はありません。</p>}<button className="primary" onClick={props.onCreateMailboxTestEvents} disabled={creating || !props.mailTestPreview.events.length || Boolean(props.mailTestCreatedEventIds.length)}>{creating ? <RefreshCw className="spin" size={14} /> : null}{props.mailTestCreatedEventIds.length ? 'Calendar に作成済み' : creating ? 'Calendar に作成中…' : '確認した予定を Calendar に作成'}</button>{props.mailTestCreatedEventIds.length > 0 && <p className="dashboard-success"><CheckCircle2 size={17} />{props.mailTestCreatedEventIds.length}件の予定を作成しました。</p>}</section>}
       </>}
   </section>;
 };
 
 export const RuleRunsPage = (props: DashboardProps) => {
-  const settingsReady = Boolean(props.organization);
+  const settingsReady = Boolean(props.account);
   const searching = props.isPending(pendingKey.mailSearch);
   const extracting = props.isPending(pendingKey.mailPreview);
   const startingRuleRun = props.isPending(pendingKey.mailStartRuleRun);
-  const draftRules = props.organizationRules.filter((rule) => rule.state === 'draft');
+  const draftRules = props.accountRules.filter((rule) => rule.state === 'draft');
   const [selectedRuleId, setSelectedRuleId] = useState(draftRules[0]?.id ?? '');
   const hasConfiguredAiApi = Boolean(props.connections?.ai.apiKeyConfigured);
   const [aiRequestCopied, setAiRequestCopied] = useState(false);
@@ -723,7 +725,7 @@ export const RuleRunsPage = (props: DashboardProps) => {
       <div className="rules-list-title"><h2>実行履歴</h2><span>{props.ruleRuns.length}件</span></div>
       {props.ruleRuns.map((run) => {
         const ruleName = run.rule.type === 'schema'
-          ? props.organizationRules.find((rule) => rule.id === run.rule.id)?.name
+          ? props.accountRules.find((rule) => rule.id === run.rule.id)?.name
           : props.agentRules.find((rule) => rule.id === run.rule.id)?.name;
         const deciding = props.isPending(pendingKey.ruleRunDecision(run.id, 'approve')) || props.isPending(pendingKey.ruleRunDecision(run.id, 'reject'));
         return <details className="rule-run-detail" key={run.id} aria-busy={deciding}>
@@ -764,7 +766,7 @@ export const RuleRunsPage = (props: DashboardProps) => {
       <section className="test-card"><div><p>DRAFT RULE REVISION</p><h2>テストする Schema Rule を選択</h2><span>Selection Policy は AI 抽出より前に評価されます。</span></div><label>Draft Schema Rule<select value={selectedRuleId} disabled={Boolean(props.draftRulePreview)} onChange={(event) => setSelectedRuleId(event.target.value)}><option value="">選択してください</option>{draftRules.map((rule) => <option key={rule.id} value={rule.id}>{rule.name} (r{rule.revision})</option>)}</select></label></section>
       <section className="test-card"><div><p>1. FIND MAIL</p><h2>件名からメールを探す</h2><span>件名を入力してください。前後の空白や全角・半角の違いは無視されます。AI の API キーは不要です。</span></div><label>メール件名<input value={props.mailTestSubject} onChange={(event) => props.onMailTestSubjectChange(event.target.value)} maxLength={300} /></label><button className="primary" onClick={props.onSearchMailbox} disabled={searching}>{searching ? <><RefreshCw className="spin" size={14} />検索中…</> : 'Gmailを検索'}</button></section>
       {props.mailTestMatches.length > 0 && <section className="test-card"><div><p>2. PREPARE AI REQUEST</p><h2>AI への送信内容を確認</h2><span>対象メールを選ぶと、OpenAI 互換形式のリクエスト本文を生成します。この時点では AI に送信しません。</span></div><div className="mail-matches">{props.mailTestMatches.map((message) => <button key={message.id} className="mail-match" onClick={() => props.onPrepareMailbox(message.id)} disabled={props.isPending(pendingKey.mailPrepare(message.id))}><strong>{message.subject}</strong><small>{message.sender || '差出人なし'}</small>{props.isPending(pendingKey.mailPrepare(message.id)) && <small className="field-state saving"><RefreshCw className="spin" size={12} />本文と添付を読み込み中…</small>}</button>)}</div></section>}
-      {props.mailTestAiRequest && <section className="test-card event-preview"><div className="ai-request-heading"><div><p>3. REVIEW OPENAI-COMPATIBLE REQUEST</p><h2>OpenAI 互換リクエスト本文</h2><span>API キーは含まれません。送信先の model を指定すれば、任意の OpenAI 互換 API で利用できます。</span></div><button className={`secondary copy-request-button${aiRequestCopied ? ' copied' : ''}`} onClick={copyPreparedAiRequest} aria-live="polite">{aiRequestCopied ? <CheckCircle2 size={16} /> : <Copy size={16} />}{aiRequestCopied ? <span key={copyFeedbackId} className="copy-feedback">コピーしました</span> : 'リクエスト全文をコピー'}</button></div><pre className="ai-request">{JSON.stringify(props.mailTestAiRequest.request, null, 2)}</pre><div className="mail-test-actions">{hasConfiguredAiApi ? <button className="primary" onClick={sendPreparedAiRequest} disabled={extracting || !selectedRuleId}>{extracting ? <><RefreshCw className="spin" size={14} />API に送信中…</> : '設定済みの API で予定を抽出'}</button> : <p className="dashboard-warning api-configuration-prompt"><span>OpenAI 互換 API が設定されていません</span><Link to={props.organizationId ? `/organizations/${encodeURIComponent(props.organizationId)}/connections` : '../connections'}>APIを設定する</Link></p>}</div></section>}
+      {props.mailTestAiRequest && <section className="test-card event-preview"><div className="ai-request-heading"><div><p>3. REVIEW OPENAI-COMPATIBLE REQUEST</p><h2>OpenAI 互換リクエスト本文</h2><span>API キーは含まれません。送信先の model を指定すれば、任意の OpenAI 互換 API で利用できます。</span></div><button className={`secondary copy-request-button${aiRequestCopied ? ' copied' : ''}`} onClick={copyPreparedAiRequest} aria-live="polite">{aiRequestCopied ? <CheckCircle2 size={16} /> : <Copy size={16} />}{aiRequestCopied ? <span key={copyFeedbackId} className="copy-feedback">コピーしました</span> : 'リクエスト全文をコピー'}</button></div><pre className="ai-request">{JSON.stringify(props.mailTestAiRequest.request, null, 2)}</pre><div className="mail-test-actions">{hasConfiguredAiApi ? <button className="primary" onClick={sendPreparedAiRequest} disabled={extracting || !selectedRuleId}>{extracting ? <><RefreshCw className="spin" size={14} />API に送信中…</> : '設定済みの API で予定を抽出'}</button> : <p className="dashboard-warning api-configuration-prompt"><span>OpenAI 互換 API が設定されていません</span><Link to={props.accountId ? `/organizations/${encodeURIComponent(props.accountId)}/connections` : '../connections'}>APIを設定する</Link></p>}</div></section>}
       {props.draftRulePreview && <section className="test-card event-preview"><div><p>4. START DRAFT RULE RUN</p><h2>要約・予定・タスク候補を確認</h2><span>Draft Rule の Selection Policy を検証し、副作用なしの read-only Rule Run として保存します。</span></div><h3>メールの要約</h3><p className="mail-summary">{props.draftRulePreview.summary}</p><h3>予定（{props.draftRulePreview.events.length}件）</h3>{props.draftRulePreview.events.map((event, index) => <dl key={`${event.title}-${event.startsAt}`}><dt>予定 {index + 1}</dt><dd>{event.title}</dd><dt>日時</dt><dd>{formatted(event.startsAt)} 〜 {formatted(event.endsAt)}</dd><dt>場所</dt><dd>{event.location || '指定なし'}</dd><dt>説明</dt><dd>{event.description || '指定なし'}</dd><dt>要約</dt><dd>{event.summary || '指定なし'}</dd></dl>)}<h3>期限タスク候補（{props.draftRulePreview.tasks.length}件）</h3>{props.draftRulePreview.tasks.length ? props.draftRulePreview.tasks.map((task) => <dl key={`${task.assigneeRoleId}-${task.deadline}-${task.title}`}><dt>{props.taskRoles.find((role) => role.id === task.assigneeRoleId)?.displayName ?? '未割り当て'}</dt><dd>{task.title}</dd><dt>期限</dt><dd>{task.deadline}</dd><dt>内容</dt><dd>{task.description}</dd></dl>) : <p>明示された登録・振込期限はありません。</p>}<button className="primary" onClick={() => props.onStartDraftRuleRun(selectedRuleId)} disabled={startingRuleRun || !selectedRuleId || Boolean(props.mailTestRuleRunIds.length)}>{startingRuleRun ? <RefreshCw className="spin" size={14} /> : null}{props.mailTestRuleRunIds.length ? 'Draft Rule Run 作成済み' : startingRuleRun ? 'Rule Run を作成中…' : 'Draft Rule Run を開始'}</button>{props.mailTestRuleRunIds.length > 0 && <p className="dashboard-success"><CheckCircle2 size={17} />副作用なしの Rule Run を保存しました。</p>}</section>}
     </>}
   </section>;
@@ -787,7 +789,7 @@ const DestinationListChoices = ({
   onChange,
 }: {
   legend: string;
-  lists: DashboardProps['organizationLists'];
+  lists: DashboardProps['accountLists'];
   selectedIds: string[];
   onChange: (ids: string[]) => void;
 }) => <fieldset>
@@ -798,11 +800,11 @@ const DestinationListChoices = ({
 </fieldset>;
 
 const RuleDestinationEditor = ({ rule, props }: {
-  rule: DashboardProps['organizationRules'][number];
+  rule: DashboardProps['accountRules'][number];
   props: DashboardProps;
 }) => {
-  const recipientLists = props.organizationLists.filter((list) => list.kind === 'recipient');
-  const lineLists = props.organizationLists.filter((list) => list.kind === 'line');
+  const recipientLists = props.accountLists.filter((list) => list.kind === 'recipient');
+  const lineLists = props.accountLists.filter((list) => list.kind === 'line');
   const [permittedRecipientListIds, setPermittedRecipientListIds] = useState(rule.permittedRecipientListIds);
   const [permittedLineListIds, setPermittedLineListIds] = useState(rule.permittedLineListIds);
   const saving = props.isPending(pendingKey.ruleUpdate(rule.id));
@@ -844,8 +846,8 @@ const PromptEditor = ({ prompt, props }: { prompt: DashboardProps['prompts'][num
 };
 
 const AgentRuleEditor = ({ rule, props }: { rule: DashboardProps['agentRules'][number]; props: DashboardProps }) => {
-  const recipientLists = props.organizationLists.filter((list) => list.kind === 'recipient');
-  const lineLists = props.organizationLists.filter((list) => list.kind === 'line');
+  const recipientLists = props.accountLists.filter((list) => list.kind === 'recipient');
+  const lineLists = props.accountLists.filter((list) => list.kind === 'line');
   const [recipientIds, setRecipientIds] = useState(rule.permittedRecipientListIds);
   const [lineIds, setLineIds] = useState(rule.permittedLineListIds);
   const saving = props.isPending(pendingKey.agentRuleUpdate(rule.id));
@@ -874,7 +876,7 @@ const AgentRunHistory = (props: DashboardProps) => <section className="rules-lis
 </section>;
 
 export const RulesPage = (props: DashboardProps) => {
-  const settingsReady = Boolean(props.organization);
+  const settingsReady = Boolean(props.account);
   const creatingRule = props.isPending(pendingKey.ruleCreate);
   const creatingPrompt = props.isPending(pendingKey.promptCreate);
   const creatingAgentRule = props.isPending(pendingKey.agentRuleCreate);
@@ -898,8 +900,8 @@ export const RulesPage = (props: DashboardProps) => {
   const [agentExecutionMode, setAgentExecutionMode] = useState<'read_only' | 'approval' | 'unattended'>('unattended');
   const [agentRecipientListIds, setAgentRecipientListIds] = useState<string[]>([]);
   const [agentLineListIds, setAgentLineListIds] = useState<string[]>([]);
-  const recipientLists = props.organizationLists.filter((list) => list.kind === 'recipient');
-  const lineLists = props.organizationLists.filter((list) => list.kind === 'line');
+  const recipientLists = props.accountLists.filter((list) => list.kind === 'recipient');
+  const lineLists = props.accountLists.filter((list) => list.kind === 'line');
   const createRule = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault();
     const selectionPolicy = Object.fromEntries(Object.entries({ sender: ruleSender.trim(), domain: ruleDomain.trim(), keyword: ruleKeyword.trim(), label: ruleLabel.trim() }).filter(([, value]) => value));
@@ -920,8 +922,8 @@ export const RulesPage = (props: DashboardProps) => {
     <div className="page-title"><p>AUTOMATION RULES</p><h1>ルールセット</h1><span>どのメールを予定化するかを、送信者・ドメイン・キーワード・Gmailラベルで指定します。</span></div>
     {!settingsReady ? <section className="empty-page"><SlidersHorizontal size={30} /><h2>ルールを読み込めません</h2><p>Googleでログインし直した後、このページを再読み込みしてください。</p></section> : <>
       <form className="rule-builder" onSubmit={(event) => void createRule(event)}><div><p>NEW RULE</p><h2>ルールを作成</h2><span>Draft + Unattended で作成し、本番と同じ完全自動経路を効果なしでテストできます。</span></div><label>ルール名<input value={ruleName} onChange={(event) => setRuleName(event.target.value)} placeholder="例: ローターアクト行事" required /></label><div className="rule-grid"><label>送信者（完全一致）<input value={ruleSender} onChange={(event) => setRuleSender(event.target.value)} placeholder="sender@example.com" /></label><label>送信元ドメイン<input value={ruleDomain} onChange={(event) => setRuleDomain(event.target.value)} placeholder="example.com" /></label><label>本文・件名のキーワード<input value={ruleKeyword} onChange={(event) => setRuleKeyword(event.target.value)} placeholder="例: 招待行事" /></label><label>Gmailラベル<input value={ruleLabel} onChange={(event) => setRuleLabel(event.target.value)} placeholder="例: Announcements" /></label><label>優先度<input type="number" value={rulePriority} onChange={(event) => setRulePriority(event.target.value)} /></label><label>Execution Mode<select value={ruleExecutionMode} onChange={(event) => setRuleExecutionMode(event.target.value as 'read_only' | 'approval' | 'unattended')}><option value="read_only">Read only</option><option value="approval">Approval</option><option value="unattended">Unattended</option></select></label><label>作成時の状態<select value={ruleState} onChange={(event) => setRuleState(event.target.value as 'draft' | 'active')}><option value="draft">下書き</option><option value="active">有効</option></select></label></div><DestinationListChoices legend="許可されたCalendar Recipient Lists" lists={recipientLists} selectedIds={permittedRecipientListIds} onChange={setPermittedRecipientListIds} /><DestinationListChoices legend="許可されたLINE Destination Lists" lists={lineLists} selectedIds={permittedLineListIds} onChange={setPermittedLineListIds} /><fieldset><legend>割り当て可能なOperational Task Roles</legend>{props.taskRoles.map((role) => <label key={role.id}><input type="checkbox" checked={taskRoleIds.includes(role.id)} onChange={(change) => setTaskRoleIds((current) => toggledIds(current, role.id, change.target.checked))} />{role.displayName}<small>{role.description}</small></label>)}</fieldset><button className="primary" disabled={creatingRule}>{creatingRule ? <><RefreshCw className="spin" size={14} />作成中…</> : 'ルールを作成'}</button></form>
-      <section className="rules-list"><div className="rules-list-title"><h2>登録済みルール</h2><span>{props.organizationRules.length}件</span></div>{props.organizationRules.length ? props.organizationRules.map((rule) => <article key={rule.id} className="rule-row"><div><strong>{rule.name}</strong><small>優先度 {rule.priority} ・ {Object.entries(rule.selectionPolicy).map(([key, value]) => `${key}: ${String(value)}`).join(' / ') || '条件なし'}</small><small>選択Role: {props.taskRoles.filter((role) => rule.taskRoleIds.includes(role.id)).map((role) => role.displayName).join('、') || '未割り当てのみ'}</small><RuleDestinationEditor rule={rule} props={props} /></div><span className={`rule-state ${rule.state}`}>{rule.state}</span></article>) : <p className="rules-empty">まだルールはありません。</p>}</section>
-      <form className="rule-builder" onSubmit={(event) => void createPrompt(event)}><div><p>PROMPTS</p><h2>Promptを作成</h2><span>Agent Ruleが実行直前に読むOrganization固有の指示です。</span></div><label>Prompt名<input required value={promptName} onChange={(event) => setPromptName(event.target.value)} /></label><label>Instructions<textarea required value={promptInstructions} onChange={(event) => setPromptInstructions(event.target.value)} /></label><button className="primary" disabled={creatingPrompt}>{creatingPrompt ? <><RefreshCw className="spin" size={14} />作成中…</> : 'Promptを作成'}</button></form>
+      <section className="rules-list"><div className="rules-list-title"><h2>登録済みルール</h2><span>{props.accountRules.length}件</span></div>{props.accountRules.length ? props.accountRules.map((rule) => <article key={rule.id} className="rule-row"><div><strong>{rule.name}</strong><small>優先度 {rule.priority} ・ {Object.entries(rule.selectionPolicy).map(([key, value]) => `${key}: ${String(value)}`).join(' / ') || '条件なし'}</small><small>選択Role: {props.taskRoles.filter((role) => rule.taskRoleIds.includes(role.id)).map((role) => role.displayName).join('、') || '未割り当てのみ'}</small><RuleDestinationEditor rule={rule} props={props} /></div><span className={`rule-state ${rule.state}`}>{rule.state}</span></article>) : <p className="rules-empty">まだルールはありません。</p>}</section>
+      <form className="rule-builder" onSubmit={(event) => void createPrompt(event)}><div><p>PROMPTS</p><h2>Promptを作成</h2><span>Agent Ruleが実行直前に読むAccount固有の指示です。</span></div><label>Prompt名<input required value={promptName} onChange={(event) => setPromptName(event.target.value)} /></label><label>Instructions<textarea required value={promptInstructions} onChange={(event) => setPromptInstructions(event.target.value)} /></label><button className="primary" disabled={creatingPrompt}>{creatingPrompt ? <><RefreshCw className="spin" size={14} />作成中…</> : 'Promptを作成'}</button></form>
       <section className="rules-list"><div className="rules-list-title"><h2>Prompts</h2><span>{props.prompts.length}件</span></div>{props.prompts.map((prompt) => <PromptEditor key={prompt.id} prompt={prompt} props={props} />)}</section>
       <form className="rule-builder" onSubmit={(event) => void createAgentRule(event)}><div><p>AGENT RULE</p><h2>Agent Ruleを作成</h2><span>既定は Draft + Unattended です。Draft の間に write plan を効果なしで確認できます。</span></div><label>Agent Rule名<input required value={agentName} onChange={(event) => setAgentName(event.target.value)} /></label><label>Prompt<select required value={agentPromptId} onChange={(event) => setAgentPromptId(event.target.value)}><option value="">選択してください</option>{props.prompts.map((prompt) => <option key={prompt.id} value={prompt.id}>{prompt.name}</option>)}</select></label><label>送信元ドメイン<input value={agentDomain} onChange={(event) => setAgentDomain(event.target.value)} placeholder="example.com" /></label><label>Execution Mode<select value={agentExecutionMode} onChange={(event) => setAgentExecutionMode(event.target.value as 'read_only' | 'approval' | 'unattended')}><option value="read_only">Read only</option><option value="approval">Approval</option><option value="unattended">Unattended</option></select></label><label>状態<select value={agentState} onChange={(event) => setAgentState(event.target.value as 'draft' | 'active')}><option value="draft">Draft</option><option value="active">Active</option></select></label><DestinationListChoices legend="許可されたCalendar Recipient Lists" lists={recipientLists} selectedIds={agentRecipientListIds} onChange={setAgentRecipientListIds} /><DestinationListChoices legend="許可されたLINE Destination Lists" lists={lineLists} selectedIds={agentLineListIds} onChange={setAgentLineListIds} /><button className="primary" disabled={creatingAgentRule || !agentPromptId}>{creatingAgentRule ? <><RefreshCw className="spin" size={14} />作成中…</> : 'Agent Ruleを作成'}</button></form>
       <section className="rules-list"><div className="rules-list-title"><h2>Agent Rules</h2><span>{props.agentRules.length}件</span></div>{props.agentRules.map((rule) => <article className="rule-row" key={rule.id}><div><strong>{rule.name}</strong><small>Prompt: {props.prompts.find((prompt) => prompt.id === rule.promptId)?.name ?? rule.promptId} ・ {rule.executionMode} ・ revision {rule.revision}</small><AgentRuleEditor rule={rule} props={props} /></div><div className="rule-state-control"><select aria-label={`${rule.name}の状態`} value={rule.state} disabled={props.isPending(pendingKey.agentRuleUpdate(rule.id))} onChange={(event) => void props.onUpdateAgentRule(rule.id, { state: event.target.value as 'draft' | 'active' | 'suspended' | 'archived' })}><option value="draft">Draft</option><option value="active">Active</option><option value="suspended">Suspended</option><option value="archived">Archived</option></select><FieldSaveState saving={props.isPending(pendingKey.agentRuleUpdate(rule.id))} saved={props.isSettled(pendingKey.agentRuleUpdate(rule.id))} /></div></article>)}</section>

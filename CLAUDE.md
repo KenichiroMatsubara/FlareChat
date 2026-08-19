@@ -1,8 +1,12 @@
-# Mail Automation
+# FlareChat
 
 ## Product
 
-This repository contains one product: a Cloudflare-native Gmail-to-Calendar and LINE automation service with its own administration GUI. It is not a LibreChat fork and must not add chat, MongoDB, Redis, Meilisearch, or Node server dependencies.
+This repository contains one product: FlareChat, a Cloudflare-native automation platform for schedules and contacts, with its own administration GUI. An Automation runs on a Trigger, thinks with a Prompt, acts through the tools its Account granted it, and reaches Contacts on built-in Channels. The Gmail-to-Calendar-and-LINE service this began as is one configuration of that platform.
+
+It remains Cloudflare-native and is not a LibreChat port. Do not add MongoDB, Redis, Meilisearch, or Node server dependencies. Only remote HTTP or SSE MCP servers can be reached, because Workers have no child processes.
+
+The rebuild is mid-migration and ADR 0137 fixes its shape: Schema Rules are left alone while Agent Rules are strengthened until Schema Rules are redundant, so both rule types are correct until the first is deleted. ADR 0148 fixes the release order. Read `docs/adr/0137` through `docs/adr/0151` before changing the domain model — they supersede a large amount of what the earlier ADRs say about Organizations, Admins, and Members.
 
 ## Architecture
 
@@ -32,5 +36,5 @@ evidence that a separate host or service exists.
 - `npm run dev`: run Worker and GUI locally
 - `npm run build`: type-check and build all workspaces
 - `npm test`: run tests
-- `npm run db:local`: apply local Control and Organization D1 migrations
+- `npm run db:local`: apply local Control and Account D1 migrations
 - `npm run deploy`: build the GUI and deploy the Worker

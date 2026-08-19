@@ -2,13 +2,13 @@ import { shouldSendAttendanceReminder } from '@mail/domain';
 import { and, eq, isNotNull } from 'drizzle-orm';
 import { createDatabaseAccess } from './database-access';
 import type { Bindings } from './types';
-import { controlDatabase, organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
-import { organizations } from './storage/control-schema';
-import { attendance, events, jobs, lineDestinations, memberLineDestinations, members } from './storage/organization-schema';
+import { controlDatabase, accountDatabase as drizzleAccountDatabase } from './storage/database';
+import { accounts } from './storage/control-schema';
+import { attendance, events, jobs, lineDestinations, contactLineDestinations, contacts } from './storage/account-schema';
 
 interface ReminderCandidate {
   eventId: string;
-  memberId: string;
+  contactId: string;
   destination: string;
   status: 'unanswered' | 'attending' | 'not_attending';
   attendanceDeadline: string;
@@ -16,30 +16,30 @@ interface ReminderCandidate {
 
 /** Queues one durable reminder per unanswered recipient and milestone. */
 export const enqueueDueAttendanceReminders = async (database: D1Database, now: string): Promise<number> => {
-  const db = drizzleOrganizationDatabase(database);
+  const db = drizzleAccountDatabase(database);
   const rows: ReminderCandidate[] = await db.select({
     eventId: attendance.eventId,
-    memberId: attendance.memberId,
+    contactId: attendance.contactId,
     destination: lineDestinations.destinationId,
     status: attendance.status,
     attendanceDeadline: events.attendanceDeadline,
   }).from(attendance)
     .innerJoin(events, eq(events.id, attendance.eventId))
-    .innerJoin(members, eq(members.id, attendance.memberId))
-    .innerJoin(memberLineDestinations, eq(memberLineDestinations.memberId, members.id))
-    .innerJoin(lineDestinations, eq(lineDestinations.id, memberLineDestinations.lineDestinationId))
+    .innerJoin(contacts, eq(contacts.id, attendance.contactId))
+    .innerJoin(contactLineDestinations, eq(contactLineDestinations.contactId, contacts.id))
+    .innerJoin(lineDestinations, eq(lineDestinations.id, contactLineDestinations.lineDestinationId))
     .where(isNotNull(events.attendanceDeadline))
     .all() as ReminderCandidate[];
   let queued = 0;
   for (const row of rows) {
     const milestone = Math.floor((Date.parse(row.attendanceDeadline) - Date.parse(now)) / 86_400_000);
-    const idempotencyKey = `attendance-reminder:${row.eventId}:${row.memberId}:${milestone}`;
+    const idempotencyKey = `attendance-reminder:${row.eventId}:${row.contactId}:${milestone}`;
     if (!shouldSendAttendanceReminder({ status: row.status, daysUntilDeadline: milestone, alreadySent: false })) continue;
     const timestamp = now;
     const result = await db.insert(jobs).values({
       id: crypto.randomUUID(),
       kind: 'attendance_reminder',
-      payload: JSON.stringify({ eventId: row.eventId, memberId: row.memberId, destination: row.destination, milestone }),
+      payload: JSON.stringify({ eventId: row.eventId, contactId: row.contactId, destination: row.destination, milestone }),
       state: 'pending',
       attempts: 0,
       availableAt: timestamp,
@@ -52,19 +52,19 @@ export const enqueueDueAttendanceReminders = async (database: D1Database, now: s
   return queued;
 };
 
-/** Scans all active Organization databases; suspended Organizations deliberately receive no new reminder work. */
-export const enqueueDueOrganizationAttendanceReminders = async (env: Bindings, now: string): Promise<number> => {
-  const activeOrganizations = await controlDatabase(env.CONTROL_DB).select({
-    bindingName: organizations.bindingName,
-    databaseId: organizations.databaseId,
-  }).from(organizations).where(and(eq(organizations.status, 'active'), isNotNull(organizations.databaseId))).all();
+/** Scans all active Account databases; suspended Accounts deliberately receive no new reminder work. */
+export const enqueueDueAccountAttendanceReminders = async (env: Bindings, now: string): Promise<number> => {
+  const activeAccounts = await controlDatabase(env.CONTROL_DB).select({
+    bindingName: accounts.bindingName,
+    databaseId: accounts.databaseId,
+  }).from(accounts).where(and(eq(accounts.status, 'active'), isNotNull(accounts.databaseId))).all();
   let queued = 0;
   const databases = createDatabaseAccess(env);
-  for (const organization of activeOrganizations) {
+  for (const account of activeAccounts) {
     const database = await databases.open({
       kind: 'organization',
-      bindingName: organization.bindingName,
-      databaseId: organization.databaseId,
+      bindingName: account.bindingName,
+      databaseId: account.databaseId,
     });
     queued += await enqueueDueAttendanceReminders(database.raw, now);
   }

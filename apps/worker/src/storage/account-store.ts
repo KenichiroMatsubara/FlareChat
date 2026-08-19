@@ -1,7 +1,7 @@
 import { and, count, eq } from 'drizzle-orm';
 
-import type { OrganizationDatabase } from './database';
-import { events, googleConnections, sourceMessages } from './organization-schema';
+import type { AccountDatabase } from './database';
+import { events, googleConnections, sourceMessages } from './account-schema';
 
 export interface AutomationStatus {
   email: string;
@@ -15,7 +15,7 @@ export interface AutomationStatus {
   exceptions: number;
 }
 
-export interface OrganizationStore {
+export interface AccountStore {
   currentAutomation: () => Promise<AutomationStatus | null>;
   setAutomationEnabled: (enabled: boolean, updatedAt: string) => Promise<boolean>;
 }
@@ -24,7 +24,7 @@ export interface OrganizationStore {
  * Owns every Automation Inbox read/write. Its schema contains no Control D1
  * table, so identity-scoped automation queries cannot be expressed.
  */
-export const createOrganizationStore = (database: OrganizationDatabase): OrganizationStore => ({
+export const createAccountStore = (database: AccountDatabase): AccountStore => ({
   currentAutomation: async () => {
     const inbox = await database.select({
       email: googleConnections.inboxAddress,

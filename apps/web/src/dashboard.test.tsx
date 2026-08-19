@@ -21,8 +21,8 @@ const dashboardProps = (): DashboardProps => ({
   page: 'automation', automation: null, summary: null, error: '',
   isPending: () => false, isSettled: () => false, navigating: false, runningOperations: [],
   onRun: vi.fn(), onSetEnabled: vi.fn(), onLogout: vi.fn(), onReauthenticate: vi.fn(),
-  organization: { name: 'Example' }, organizationId: 'org-1',
-  organizations: [{ organizationId: 'org-1', name: 'Example', status: 'active' }],
+  account: { name: 'Example' }, accountId: 'org-1',
+  accounts: [{ accountId: 'org-1', name: 'Example', status: 'active' }],
   connections: null, lineChannelAccessToken: '', lineChannelSecret: '', aiApiKey: '', aiModel: 'test-model', aiBaseUrl: 'https://ai.example.com/v1',
   onLineChannelAccessTokenChange: vi.fn(), onLineChannelSecretChange: vi.fn(), onAiApiKeyChange: vi.fn(), onAiModelChange: vi.fn(), onAiBaseUrlChange: vi.fn(),
   onSaveLineConnection: vi.fn(), onSaveAiConnection: vi.fn(), aiTestPrompt: '', aiTestResult: '',
@@ -30,13 +30,13 @@ const dashboardProps = (): DashboardProps => ({
   mailTestPreview: null, draftRulePreview: null, mailTestCreatedEventIds: [], mailTestRuleRunIds: [],
   mailTestRefreshRequest: null, mailTestRefreshPlan: null, mailTestRefreshOutcome: null,
   onPrepareRefresh: vi.fn(), onPlanRefresh: vi.fn(), onApplyRefresh: vi.fn(), onMailTestSubjectChange: vi.fn(), onSearchMailbox: vi.fn(),
-  onPrepareMailbox: vi.fn(), onPreviewMailbox: vi.fn(), onPreviewDraftMailbox: vi.fn(), onCreateMailboxTestEvents: vi.fn(), onStartDraftRuleRun: vi.fn(), organizationRules: [],
-  organizationLists: [], onCreateRule: vi.fn(), onUpdateRule: vi.fn(), organizationTasks: [], onUpdateTask: vi.fn(), taskRoles: [], taskRoleAssignments: [], taskMembers: [], onCreateTaskRole: vi.fn(), onUpdateTaskRole: vi.fn(), onDeleteTaskRole: vi.fn(), onAssignTaskRole: vi.fn(),
+  onPrepareMailbox: vi.fn(), onPreviewMailbox: vi.fn(), onPreviewDraftMailbox: vi.fn(), onCreateMailboxTestEvents: vi.fn(), onStartDraftRuleRun: vi.fn(), accountRules: [],
+  accountLists: [], onCreateRule: vi.fn(), onUpdateRule: vi.fn(), accountTasks: [], onUpdateTask: vi.fn(), taskRoles: [], taskRoleAssignments: [], taskContacts: [], onCreateTaskRole: vi.fn(), onUpdateTaskRole: vi.fn(), onDeleteTaskRole: vi.fn(), onAssignTaskRole: vi.fn(),
   taskReassignment: { rolesChangedAt: null, reviewedAt: null, pending: false, openTasks: 0 }, taskReassignmentProposals: [], taskReassignmentSkipped: [],
   onSuggestTaskReassignments: vi.fn(), onApplyTaskReassignments: vi.fn(), onDiscardTaskReassignments: vi.fn(),
   prompts: [], agentRules: [], agentRuns: [], agentTranscript: null, ruleRuns: [], onDecideRuleRun: vi.fn(), onCreatePrompt: vi.fn(), onUpdatePrompt: vi.fn(), onDeletePrompt: vi.fn(), onCreateAgentRule: vi.fn(), onUpdateAgentRule: vi.fn(), onLoadAgentTranscript: vi.fn(),
-  organizationMembers: [], lineDestinations: [], onCreateMember: vi.fn(), onUpdateMember: vi.fn(),
-  onSetLineDestination: vi.fn(), onUnlinkLineDestination: vi.fn(), onRegisterLineDestination: vi.fn(), onRemoveLineDestination: vi.fn(), onRefreshMembers: vi.fn(),
+  accountContacts: [], lineDestinations: [], onCreateContact: vi.fn(), onUpdateContact: vi.fn(),
+  onSetLineDestination: vi.fn(), onUnlinkLineDestination: vi.fn(), onRegisterLineDestination: vi.fn(), onRemoveLineDestination: vi.fn(), onRefreshContacts: vi.fn(),
   guestRegistrations: [],
   responseWindowDays: '60', savedResponseWindowDays: 60, onResponseWindowDaysChange: vi.fn(), onSaveResponseWindowDays: vi.fn(),
   attachmentFolderPath: 'Mail Automation', savedAttachmentFolderPath: 'Mail Automation', onAttachmentFolderPathChange: vi.fn(), onSaveAttachmentFolderPath: vi.fn(),
@@ -115,19 +115,19 @@ describe('Automation Inbox processing guidance', () => {
 });
 
 describe('Operational Task Roles', () => {
-  it('offers Organization role CRUD, assignments, historical role names, and an unassigned filter', () => {
+  it('offers Account role CRUD, assignments, historical role names, and an unassigned filter', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter initialEntries={['/organizations/org-1/tasks']}>
         <Dashboard
           {...dashboardProps()}
           page="tasks"
           taskRoles={[{ id: 'role-registration', displayName: '参加登録担当', description: '出欠と申込期限を扱う' }]}
-          taskRoleAssignments={[{ roleId: 'role-registration', memberId: 'member-1', displayName: '山田' }]}
-          taskMembers={[{ memberId: 'member-1', displayName: '山田' }]}
-          organizationTasks={[{
+          taskRoleAssignments={[{ roleId: 'role-registration', contactId: 'member-1', displayName: '山田' }]}
+          taskContacts={[{ contactId: 'member-1', displayName: '山田' }]}
+          accountTasks={[{
             id: 'task-1', title: '登録状況を確認する', deadline: '2026-08-20',
             assigneeRoleId: 'role-registration', assigneeRoleName: '旧・参加登録担当',
-            assigneeMemberId: 'member-1', assigneeName: 'Owner', sourceMessageSubject: '年次行事',
+            assigneeContactId: 'member-1', assigneeName: 'Owner', sourceMessageSubject: '年次行事',
             description: '参加登録を取りまとめる', remarks: '', completed: false, completedAt: null,
           }]}
         />
@@ -143,7 +143,7 @@ describe('Operational Task Roles', () => {
     expect(html).toContain('<option value="unassigned">未割り当て</option>');
   });
 
-  it('lets an Automation Rule select the Organization role subset it may assign', () => {
+  it('lets an Automation Rule select the Account role subset it may assign', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter initialEntries={['/organizations/org-1/rules']}>
         <Dashboard
@@ -153,8 +153,8 @@ describe('Operational Task Roles', () => {
             { id: 'role-registration', displayName: '参加登録担当', description: '申込期限を扱う' },
             { id: 'role-payment', displayName: '支払担当', description: '支払期限を扱う' },
           ]}
-          organizationRules={[{
-            id: 'rule-1', organizationId: 'org-1', name: '登録案内', state: 'active', executionMode: 'unattended', revision: 1,
+          accountRules={[{
+            id: 'rule-1', accountId: 'org-1', name: '登録案内', state: 'active', executionMode: 'unattended', revision: 1,
             selectionPolicy: {}, routingPolicy: {}, taskRoleIds: ['role-registration'], priority: 0,
             permittedRecipientListIds: [], permittedLineListIds: [],
             createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z',
@@ -175,13 +175,13 @@ describe('Operational Task Roles', () => {
         <Dashboard
           {...dashboardProps()}
           page="rules"
-          organizationLists={[
-            { id: 'recipients-members', organizationId: 'org-1', kind: 'recipient', name: 'Members', description: '' },
-            { id: 'recipients-guests', organizationId: 'org-1', kind: 'recipient', name: 'Guests', description: '' },
-            { id: 'line-members', organizationId: 'org-1', kind: 'line', name: 'Member LINE', description: '' },
+          accountLists={[
+            { id: 'recipients-members', accountId: 'org-1', kind: 'recipient', name: 'Contacts', description: '' },
+            { id: 'recipients-guests', accountId: 'org-1', kind: 'recipient', name: 'Guests', description: '' },
+            { id: 'line-members', accountId: 'org-1', kind: 'line', name: 'Contact LINE', description: '' },
           ]}
-          organizationRules={[{
-            id: 'rule-1', organizationId: 'org-1', name: 'Announcements', state: 'active', executionMode: 'unattended', revision: 1,
+          accountRules={[{
+            id: 'rule-1', accountId: 'org-1', name: 'Announcements', state: 'active', executionMode: 'unattended', revision: 1,
             selectionPolicy: {}, routingPolicy: {}, taskRoleIds: [],
             permittedRecipientListIds: ['recipients-members'],
             permittedLineListIds: ['line-members'],
@@ -194,12 +194,12 @@ describe('Operational Task Roles', () => {
 
     expect(html).toContain('許可されたCalendar Recipient Lists');
     expect(html).toContain('許可されたLINE Destination Lists');
-    expect(html).toContain('Members');
+    expect(html).toContain('Contacts');
     expect(html).toContain('Guests');
-    expect(html).toContain('Member LINE');
+    expect(html).toContain('Contact LINE');
     expect(html).toContain('許可リストを編集');
-    expect(html).toContain('選択中: Members');
-    expect(html).toContain('選択中: Member LINE');
+    expect(html).toContain('選択中: Contacts');
+    expect(html).toContain('選択中: Contact LINE');
   });
 });
 
@@ -210,7 +210,7 @@ describe('Preset settings', () => {
         <Dashboard
           {...dashboardProps()}
           page="connections"
-          organizationLists={[{ id: 'existing', organizationId: 'org-1', kind: 'source', name: 'Existing', description: '' }]}
+          accountLists={[{ id: 'existing', accountId: 'org-1', kind: 'source', name: 'Existing', description: '' }]}
         />
       </MemoryRouter>,
     );
@@ -239,7 +239,7 @@ describe('Attachment Folder Path', () => {
     expect(saveFolderButton(html)).toContain('disabled=""');
   });
 
-  it('offers to save a path the Organization has changed', () => {
+  it('offers to save a path the Account has changed', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter initialEntries={['/organizations/org-1/connections']}>
         <Dashboard {...dashboardProps()} page="connections" attachmentFolderPath="会計 2026/添付" />
@@ -258,8 +258,8 @@ describe('read-only Agent Rules', () => {
         <Dashboard
           {...dashboardProps()}
           page="rules"
-          prompts={[{ id: 'prompt-1', organizationId: 'org-1', name: 'Analyst', instructions: 'Read carefully.', revision: 2, createdAt: '2026-08-01', updatedAt: '2026-08-02' }]}
-          agentRules={[{ id: 'agent-rule-1', organizationId: 'org-1', name: 'Read-only analyst', promptId: 'prompt-1', state: 'active', executionMode: 'read_only', selectionPolicy: { domain: 'example.com' }, permittedRecipientListIds: [], permittedLineListIds: [], priority: 0, revision: 1, createdAt: '2026-08-01', updatedAt: '2026-08-01' }]}
+          prompts={[{ id: 'prompt-1', accountId: 'org-1', name: 'Analyst', instructions: 'Read carefully.', revision: 2, createdAt: '2026-08-01', updatedAt: '2026-08-02' }]}
+          agentRules={[{ id: 'agent-rule-1', accountId: 'org-1', name: 'Read-only analyst', promptId: 'prompt-1', state: 'active', executionMode: 'read_only', selectionPolicy: { domain: 'example.com' }, permittedRecipientListIds: [], permittedLineListIds: [], priority: 0, revision: 1, createdAt: '2026-08-01', updatedAt: '2026-08-01' }]}
           agentRuns={[{ id: 'run-1', agentRuleId: 'agent-rule-1', agentRuleRevision: 1, promptId: 'prompt-1', promptRevision: 2, sourceMessageId: 'source-1', model: 'test-model', startedAt: '2026-08-02', completedAt: '2026-08-02', outcome: 'succeeded', toolCallCount: 1, tokens: 42, expiresAt: '2026-10-31' }]}
           agentTranscript={{ runId: 'run-1', source: { subject: 'Confidential notice', body: 'Source transcript body', attachments: [] }, finalOutput: 'No action required.', messages: [], error: null }}
         />
@@ -286,14 +286,14 @@ describe('member roster', () => {
           {...dashboardProps()}
           page="members"
           connections={{
-            organizationId: 'org-1',
-            organizationName: 'Example',
+            accountId: 'org-1',
+            accountName: 'Example',
             ai: { apiKeyConfigured: false, model: '', baseUrl: '' },
             line: { channelAccessTokenConfigured: true, channelSecretConfigured: true, webhookUrl: 'https://app.example.com/api/public/organizations/org-1/line/webhook' },
           }}
-          organizationMembers={[{
+          accountContacts={[{
             id: 'recipient-1',
-            organizationId: 'org-1',
+            accountId: 'org-1',
             name: '山田 太郎',
             email: 'taro@example.com',
             state: 'active',
@@ -317,7 +317,7 @@ describe('member roster', () => {
             status: 'discovered',
             source: 'webhook',
             discoveredAt: '2026-07-30T00:00:00.000Z',
-            memberId: null,
+            contactId: null,
           }]}
         />
       </MemoryRouter>,
@@ -343,12 +343,12 @@ describe('member roster', () => {
           {...dashboardProps()}
           page="members"
           connections={{
-            organizationId: 'org-1',
-            organizationName: 'Example',
+            accountId: 'org-1',
+            accountName: 'Example',
             ai: { apiKeyConfigured: false, model: '', baseUrl: '' },
             line: { channelAccessTokenConfigured: true, channelSecretConfigured: true, webhookUrl: 'https://app.example.com/api/public/organizations/org-1/line/webhook' },
           }}
-          organizationMembers={[]}
+          accountContacts={[]}
           lineDestinations={[
             {
               id: 'line-webhook',
@@ -358,7 +358,7 @@ describe('member roster', () => {
               status: 'discovered',
               source: 'webhook',
               discoveredAt: '2026-07-30T00:00:00.000Z',
-              memberId: null,
+              contactId: null,
             },
             {
               id: 'line-manual-pending',
@@ -368,7 +368,7 @@ describe('member roster', () => {
               status: 'discovered',
               source: 'manual',
               discoveredAt: '2026-07-30T00:00:00.000Z',
-              memberId: null,
+              contactId: null,
             },
           ]}
         />
@@ -389,14 +389,14 @@ describe('member roster', () => {
           {...dashboardProps()}
           page="members"
           connections={{
-            organizationId: 'org-1',
-            organizationName: 'Example',
+            accountId: 'org-1',
+            accountName: 'Example',
             ai: { apiKeyConfigured: false, model: '', baseUrl: '' },
             line: { channelAccessTokenConfigured: true, channelSecretConfigured: true, webhookUrl: 'https://app.example.com/api/public/organizations/org-1/line/webhook' },
           }}
-          organizationMembers={[{
+          accountContacts={[{
             id: 'recipient-1',
-            organizationId: 'org-1',
+            accountId: 'org-1',
             name: '手動 花子',
             email: 'manual@example.com',
             state: 'active',
@@ -542,8 +542,8 @@ describe('mailbox test prerequisites', () => {
             exceptions: 0,
           }}
           connections={{
-            organizationId: 'org-1',
-            organizationName: 'Example',
+            accountId: 'org-1',
+            accountName: 'Example',
             ai: {
               apiKeyConfigured: true,
               model: 'test-model',
@@ -636,8 +636,8 @@ describe('mailbox test prerequisites', () => {
           {...dashboardProps()}
           page="connections"
           connections={{
-            organizationId: 'org-1',
-            organizationName: 'Example',
+            accountId: 'org-1',
+            accountName: 'Example',
             ai: { apiKeyConfigured: false, model: '', baseUrl: '' },
             line: {
               channelAccessTokenConfigured: true,
@@ -761,8 +761,8 @@ describe('operation progress', () => {
 
   it('never lends one Prompt’s progress to another control', () => {
     const prompts = [
-      { id: 'prompt-1', organizationId: 'org-1', name: '案内', instructions: '読む', revision: 1, createdAt: '', updatedAt: '' },
-      { id: 'prompt-2', organizationId: 'org-1', name: '請求', instructions: '読む', revision: 1, createdAt: '', updatedAt: '' },
+      { id: 'prompt-1', accountId: 'org-1', name: '案内', instructions: '読む', revision: 1, createdAt: '', updatedAt: '' },
+      { id: 'prompt-2', accountId: 'org-1', name: '請求', instructions: '読む', revision: 1, createdAt: '', updatedAt: '' },
     ];
     const html = dashboard({ prompts, isPending: pendingOnly(pendingKey.promptUpdate('prompt-1')) }, 'rules', 'rules');
 
@@ -840,7 +840,7 @@ describe('operation progress', () => {
 
   it('reports a saved AI connection after the save finishes', () => {
     const connections = {
-      organizationId: 'org-1', organizationName: 'Example',
+      accountId: 'org-1', accountName: 'Example',
       line: { channelAccessTokenConfigured: false, channelSecretConfigured: false, webhookUrl: 'https://app.example.com/hook' },
       ai: { apiKeyConfigured: true, model: 'test-model', baseUrl: 'https://ai.example.com/v1' },
     };
@@ -854,11 +854,11 @@ describe('operation progress', () => {
   it('reports the Task whose row is being written, not the whole table', () => {
     const task = (id: string, title: string) => ({
       id, title, deadline: '2026-08-20', assigneeRoleId: 'role-1', assigneeRoleName: '会計担当',
-      assigneeMemberId: 'member-1', assigneeName: '山田', sourceMessageSubject: '総会案内',
+      assigneeContactId: 'member-1', assigneeName: '山田', sourceMessageSubject: '総会案内',
       description: '', remarks: '', completed: false, completedAt: null,
     });
     const html = dashboard({
-      organizationTasks: [task('task-1', '参加費を支払う'), task('task-2', '出欠を回答する')],
+      accountTasks: [task('task-1', '参加費を支払う'), task('task-2', '出欠を回答する')],
       isPending: pendingOnly(pendingKey.taskUpdate('task-1')),
     }, 'tasks', 'tasks');
 
@@ -873,9 +873,9 @@ describe('operation progress', () => {
     }, 'tasks', 'tasks');
     const skipped = dashboard({
       taskReassignmentSkipped: ['task-1'],
-      organizationTasks: [{
+      accountTasks: [{
         id: 'task-1', title: '参加費を支払う', deadline: '2026-08-20', assigneeRoleId: 'role-1', assigneeRoleName: '会計担当',
-        assigneeMemberId: null, assigneeName: '未割り当て', sourceMessageSubject: '総会案内',
+        assigneeContactId: null, assigneeName: '未割り当て', sourceMessageSubject: '総会案内',
         description: '', remarks: '', completed: false, completedAt: null,
       }],
     }, 'tasks', 'tasks');
@@ -914,13 +914,13 @@ describe('operation progress', () => {
   });
 
   it('reports the member whose card is being saved and the roster refresh separately', () => {
-    const member = (id: string, name: string) => ({
-      id, organizationId: 'org-1', name, email: '', state: 'active' as const, tags: [],
+    const contact = (id: string, name: string) => ({
+      id, accountId: 'org-1', name, email: '', state: 'active' as const, tags: [],
       createdAt: '', updatedAt: '', lineDestinations: [],
     });
     const html = dashboard({
-      organizationMembers: [member('member-1', '山田'), member('member-2', '鈴木')],
-      isPending: pendingOnly(pendingKey.memberRefresh),
+      accountContacts: [contact('member-1', '山田'), contact('member-2', '鈴木')],
+      isPending: pendingOnly(pendingKey.contactRefresh),
     }, 'members', 'members');
 
     expect(html).toContain('更新中…');

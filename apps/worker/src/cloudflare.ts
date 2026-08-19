@@ -120,7 +120,7 @@ export const cloudflareControlPlane = (
       { sql, params },
     );
     const query = result[0];
-    if (!query?.success) throw new Error('Organization D1 query failed.');
+    if (!query?.success) throw new Error('Account D1 query failed.');
     return query;
   };
 
@@ -133,7 +133,7 @@ export const cloudflareControlPlane = (
       'POST',
       { batch: queries },
     );
-    if (results.some((result) => !result.success)) throw new Error('Organization D1 batch failed.');
+    if (results.some((result) => !result.success)) throw new Error('Account D1 batch failed.');
     return results;
   };
 
@@ -174,7 +174,7 @@ export const cloudflareControlPlane = (
     batch: async <T>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> => {
       const queries = statements.map((statement) => {
         const query = (statement as unknown as { [REMOTE_QUERY]?: RemoteQuery })[REMOTE_QUERY];
-        if (!query) throw new Error('Remote Organization D1 received an unsupported prepared statement.');
+        if (!query) throw new Error('Remote Account D1 received an unsupported prepared statement.');
         return query;
       });
       const results = await queryDatabaseBatch<T>(databaseId, queries);
@@ -276,7 +276,7 @@ export const cloudflareControlPlane = (
         await new Promise((resolve) => setTimeout(resolve, BINDING_DEPLOYMENT_POLL_MS));
       }
     }
-    throw new Error(`Organization database binding ${bindingName} was not deployed.`);
+    throw new Error(`Account database binding ${bindingName} was not deployed.`);
   };
 
   return {

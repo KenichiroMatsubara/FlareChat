@@ -1,11 +1,12 @@
 import { and, asc, desc, eq } from 'drizzle-orm';
 
-import { organizationDatabase as drizzleOrganizationDatabase } from './storage/database';
-import { ruleEffects, ruleRuns, sourceMessages } from './storage/organization-schema';
+import { accountDatabase as drizzleAccountDatabase } from './storage/database';
+import { ruleEffects, ruleRuns, sourceMessages } from './storage/account-schema';
 
 export type ExecutionMode = 'read_only' | 'approval' | 'unattended';
-export type RuleReference = { type: 'schema' | 'agent'; id: string; revision: number };
-export type RuleExecutionIntent = { kind: 'live' } | { kind: 'draft_preview'; ruleRevisionId: string };
+/** A Rule Run belongs to a Schema Rule, an Agent Rule, or to Operator Chat, which has neither (ADR 0146). */
+export type RuleReference = { type: 'schema' | 'agent' | 'chat'; id: string; revision: number };
+export type RuleExecutionIntent = { kind: 'live' } | { kind: 'draft_preview'; ruleRevisionId: string } | { kind: 'chat' };
 
 export interface PlannedRuleEffect {
   key: string;
@@ -25,7 +26,7 @@ export interface RuleExecutionPlanner {
 }
 
 export interface RuleEffectApplication {
-  run: { id: string; rule: RuleReference; sourceMessageId: string };
+  run: { id: string; rule: RuleReference; sourceMessageId: string | null };
   effect: { id: string; key: string; kind: string; arguments: Record<string, unknown>; idempotencyKey: string };
 }
 
@@ -64,12 +65,12 @@ export interface RuleEffectView {
 export interface RuleRunView {
   id: string;
   rule: RuleReference;
-  sourceMessageId: string;
+  sourceMessageId: string | null;
   sourceMessage: {
     subject: string;
     sender: string;
     receivedAt: string;
-  };
+  } | null;
   executionMode: ExecutionMode;
   intent: RuleExecutionIntent['kind'];
   status: 'planning' | 'read_only' | 'pending_approval' | 'applying' | 'completed' | 'rejected' | 'expired' | 'failed';
@@ -88,7 +89,7 @@ interface RuleExecutionDependencies {
 const parsed = (value: string | null): unknown | null => value === null ? null : JSON.parse(value) as unknown;
 
 export const createRuleExecution = (dependencies: RuleExecutionDependencies) => {
-  const database = drizzleOrganizationDatabase(dependencies.database);
+  const database = drizzleAccountDatabase(dependencies.database);
   const currentTime = dependencies.now ?? (() => new Date());
   const nextId = dependencies.id ?? (() => crypto.randomUUID());
   const approvalExpiry = (date: Date): string => new Date(date.getTime() + 7 * 86_400_000).toISOString();
@@ -106,21 +107,25 @@ export const createRuleExecution = (dependencies: RuleExecutionDependencies) => 
   const view = async (runId: string): Promise<RuleRunView> => {
     const run = await database.select().from(ruleRuns).where(eq(ruleRuns.id, runId)).get();
     if (!run) throw new Error('Rule Run was not found.');
-    const sourceMessage = await database.select({
-      subject: sourceMessages.subject,
-      sender: sourceMessages.sender,
-      receivedAt: sourceMessages.receivedAt,
-    }).from(sourceMessages).where(eq(sourceMessages.id, run.sourceMessageId)).get();
-    if (!sourceMessage) throw new Error('Rule Run Source Message was not found.');
+    const sourceMessage = run.sourceMessageId
+      ? await database.select({
+        subject: sourceMessages.subject,
+        sender: sourceMessages.sender,
+        receivedAt: sourceMessages.receivedAt,
+      }).from(sourceMessages).where(eq(sourceMessages.id, run.sourceMessageId)).get()
+      : null;
+    if (run.sourceMessageId && !sourceMessage) throw new Error('Rule Run Source Message was not found.');
     const effects = await database.select().from(ruleEffects).where(eq(ruleEffects.ruleRunId, runId)).orderBy(asc(ruleEffects.createdAt)).all();
     const rule: RuleReference = run.ruleId
       ? { type: 'schema', id: run.ruleId, revision: run.ruleRevision }
-      : { type: 'agent', id: run.agentRuleId ?? '', revision: run.ruleRevision };
+      : run.agentRuleId
+        ? { type: 'agent', id: run.agentRuleId, revision: run.ruleRevision }
+        : { type: 'chat', id: run.id, revision: run.ruleRevision };
     return {
       id: run.id,
       rule,
       sourceMessageId: run.sourceMessageId,
-      sourceMessage,
+      sourceMessage: sourceMessage ?? null,
       executionMode: run.executionMode,
       intent: run.intent,
       status: run.status,
@@ -139,7 +144,7 @@ export const createRuleExecution = (dependencies: RuleExecutionDependencies) => 
     };
   };
 
-  const applyRun = async (runId: string, rule: RuleReference, sourceMessageId: string): Promise<RuleRunView> => {
+  const applyRun = async (runId: string, rule: RuleReference, sourceMessageId: string | null): Promise<RuleRunView> => {
     const timestamp = currentTime().toISOString();
     await database.update(ruleRuns).set({ status: 'applying', updatedAt: timestamp }).where(eq(ruleRuns.id, runId)).run();
     const planned = await database.select().from(ruleEffects).where(eq(ruleEffects.ruleRunId, runId)).orderBy(asc(ruleEffects.createdAt)).all();

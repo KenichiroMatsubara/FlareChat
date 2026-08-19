@@ -85,7 +85,7 @@ const toStudioDatabases = (paths: string[], prefix: string): StudioDatabase[] =>
   path,
 }));
 
-/** Finds recognizable Control and Organization D1 databases in a local state directory. */
+/** Finds recognizable Control and Account D1 databases in a local state directory. */
 export const findStudioDatabasesIn = (directory: string): StudioDatabase[] => {
   const candidates = readdirSync(directory)
     .filter((file) => file.endsWith('.sqlite') && file !== 'metadata.sqlite')
@@ -97,15 +97,15 @@ export const findStudioDatabasesIn = (directory: string): StudioDatabase[] => {
       || left.path.localeCompare(right.path)
     ));
 
-  let organizationNumber = 0;
+  let accountNumber = 0;
   return candidates.map((candidate) => {
     if (candidate.kind === 'control') {
       return { id: 'control', name: 'Control D1', path: candidate.path };
     }
-    organizationNumber += 1;
+    accountNumber += 1;
     return {
-      id: `organization-${organizationNumber}`,
-      name: `Organization D1 ${organizationNumber}`,
+      id: `organization-${accountNumber}`,
+      name: `Account D1 ${accountNumber}`,
       path: candidate.path,
     };
   });

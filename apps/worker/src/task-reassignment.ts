@@ -11,12 +11,12 @@ export interface TaskAssignmentProposal {
   currentRoleName: string;
   proposedRoleId: string;
   proposedRoleName: string;
-  /** The model's Japanese justification, shown to the Admin who accepts or rejects it. */
+  /** The model's Japanese justification, shown to the AccountIdentity who accepts or rejects it. */
   reason: string;
   changed: boolean;
 }
 
-/** Bounds one review to a request an Organization can afford to repeat. */
+/** Bounds one review to a request an Account can afford to repeat. */
 export const TASK_REASSIGNMENT_LIMIT = 100;
 
 interface OpenAiCompatibleResponse {
@@ -81,7 +81,7 @@ ${roles.map((role) => `${role.id}: ${role.displayName} — ${role.description}`)
   };
 };
 
-/** Accepts only proposals that name an open Task and a role the Organization defines. */
+/** Accepts only proposals that name an open Task and a role the Account defines. */
 export const validatedTaskReassignments = (
   text: string,
   input: { tasks: TaskView[]; roles: TaskRoleDescription[] },

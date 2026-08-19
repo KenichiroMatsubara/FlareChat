@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { claimDueJobs } from './jobs';
 import { enqueueDueTaskReminders } from './task-reminders';
 import { createMigratedTestD1, type TestD1Database } from '../test/d1';
-import { seedMember } from '../test/seed';
+import { seedContact } from '../test/seed';
 
 const openDatabases: TestD1Database[] = [];
 
@@ -18,7 +18,7 @@ const databaseWithTask = (input: {
 }): TestD1Database => {
   const database = createMigratedTestD1('organization');
   openDatabases.push(database);
-  seedMember(database, { id: 'member-1', name: '山田花子', lineDestinationId: 'Umember-1' });
+  seedContact(database, { id: 'member-1', name: '山田花子', lineDestinationId: 'Umember-1' });
   database.execute(
     `INSERT INTO source_messages (id, gmail_message_id, gmail_history_id, sender, subject, received_at, state)
      VALUES ('source-1', 'gmail-1', 'history-1', 'sender@example.com', '年次行事', '2026-08-01', 'processed')`,
@@ -55,7 +55,7 @@ describe('Task deadline reminders', () => {
       });
       expect(JSON.parse(reminders[0]!.payload)).toMatchObject({
         taskId: 'task-1',
-        memberId: 'member-1',
+        contactId: 'member-1',
         destination: 'Umember-1',
         milestone,
       });

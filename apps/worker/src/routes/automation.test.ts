@@ -7,8 +7,8 @@ let fixture: TestApp | undefined;
 
 afterEach(() => fixture?.close());
 
-describe('Organization Automation routes', () => {
-  it('reads Automation Inbox behavior for the authenticated Organization', async () => {
+describe('Account Automation routes', () => {
+  it('reads Automation Inbox behavior for the authenticated Account', async () => {
     fixture = createTestApp();
 
     const response = await automationRoutes.fetch(
@@ -24,7 +24,7 @@ describe('Organization Automation routes', () => {
 
   it('reports an Inbox that needs reauthentication so the dashboard can offer recovery', async () => {
     fixture = createTestApp();
-    fixture.organization.execute(
+    fixture.account.execute(
       "UPDATE google_connections SET status = 'reauthentication_required', last_error = 'Token has been expired or revoked.' WHERE kind = 'automation_inbox'",
     );
 
@@ -44,7 +44,7 @@ describe('Organization Automation routes', () => {
 
   it('does not enable Automation until an AI Connection is configured', async () => {
     fixture = createTestApp();
-    fixture.organization.execute("UPDATE google_connections SET enabled = 0 WHERE kind = 'automation_inbox'");
+    fixture.account.execute("UPDATE google_connections SET enabled = 0 WHERE kind = 'automation_inbox'");
 
     const response = await automationRoutes.fetch(
       fixture.jsonRequest('/organizations/organization-1/automation/enabled', { enabled: true }),
@@ -57,7 +57,7 @@ describe('Organization Automation routes', () => {
     });
   });
 
-  it('answers the product default Attachment Folder Path until an Organization saves its own', async () => {
+  it('answers the product default Attachment Folder Path until an Account saves its own', async () => {
     fixture = createTestApp();
 
     const initial = await automationRoutes.fetch(
@@ -75,7 +75,7 @@ describe('Organization Automation routes', () => {
     await expect(saved.json()).resolves.toMatchObject({ data: { path: '会計 2026/添付' } });
   });
 
-  it('answers the default Event Response Window until an Organization sets its own', async () => {
+  it('answers the default Event Response Window until an Account sets its own', async () => {
     fixture = createTestApp();
 
     const initial = await automationRoutes.fetch(

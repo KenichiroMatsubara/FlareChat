@@ -13,10 +13,10 @@ afterEach(() => {
 describe('Rule Execution', () => {
   it('retries a transient planning failure before freezing any Rule Run', async () => {
     fixture = createTestApp();
-    fixture.organization.execute(
+    fixture.account.execute(
       "INSERT INTO rules (id, organization_id, name, status, execution_mode, selection_policy, routing_policy, priority, created_at, updated_at) VALUES ('rule-plan', 'organization-1', 'Plan', 'active', 'unattended', '{}', '{}', 0, '2026-08-06', '2026-08-06')",
     );
-    fixture.organization.execute(
+    fixture.account.execute(
       "INSERT INTO source_messages (id, gmail_message_id, gmail_history_id, sender, subject, received_at, state) VALUES ('source-plan', 'gmail-plan', 'history-1', 'sender@example.com', '例会', '2026-08-06', 'processing')",
     );
     let attempts = 0;
@@ -25,23 +25,23 @@ describe('Rule Execution', () => {
       if (attempts < 3) throw new TransientRulePlanningError('AI temporarily unavailable');
       return [{ rule: { type: 'schema' as const, id: 'rule-plan', revision: 1 }, executionMode: 'unattended' as const, effects: [] }];
     });
-    const execution = createRuleExecution({ database: fixture.organization.binding, planner: { plan: planner }, effects: { apply: vi.fn() }, id: () => 'run-plan' });
+    const execution = createRuleExecution({ database: fixture.account.binding, planner: { plan: planner }, effects: { apply: vi.fn() }, id: () => 'run-plan' });
 
     await expect(execution.start({ sourceMessageId: 'source-plan', intent: { kind: 'live' } }))
       .resolves.toMatchObject([{ id: 'run-plan', status: 'completed' }]);
     expect(planner).toHaveBeenCalledTimes(3);
-    expect(fixture.organization.rows('SELECT id FROM rule_runs')).toHaveLength(1);
+    expect(fixture.account.rows('SELECT id FROM rule_runs')).toHaveLength(1);
   });
 
   it('plans and applies an unattended Schema Rule Run from one live Source Message', async () => {
     fixture = createTestApp();
-    fixture.organization.execute(
+    fixture.account.execute(
       `INSERT INTO rules
         (id, organization_id, name, status, execution_mode, selection_policy, routing_policy, priority, created_at, updated_at)
        VALUES (?, ?, ?, 'active', 'unattended', '{}', '{}', 0, ?, ?)`,
       'rule-1', 'organization-1', 'Meetings', '2026-08-06T00:00:00.000Z', '2026-08-06T00:00:00.000Z',
     );
-    fixture.organization.execute(
+    fixture.account.execute(
       `INSERT INTO source_messages
         (id, gmail_message_id, gmail_history_id, sender, subject, received_at, state)
        VALUES (?, ?, ?, ?, ?, ?, 'processing')`,
@@ -49,7 +49,7 @@ describe('Rule Execution', () => {
     );
     const apply = vi.fn().mockResolvedValue({ externalId: 'calendar-1' });
     const execution = createRuleExecution({
-      database: fixture.organization.binding,
+      database: fixture.account.binding,
       planner: {
         plan: vi.fn().mockResolvedValue([{
           rule: { type: 'schema', id: 'rule-1', revision: 1 },
@@ -90,13 +90,13 @@ describe('Rule Execution', () => {
 
   it('retains a read-only plan without applying any Rule Effect', async () => {
     fixture = createTestApp();
-    fixture.organization.execute(
+    fixture.account.execute(
       `INSERT INTO rules
         (id, organization_id, name, status, execution_mode, selection_policy, routing_policy, priority, created_at, updated_at)
        VALUES (?, ?, ?, 'active', 'read_only', '{}', '{}', 0, ?, ?)`,
       'rule-read', 'organization-1', 'Shadow', '2026-08-06T00:00:00.000Z', '2026-08-06T00:00:00.000Z',
     );
-    fixture.organization.execute(
+    fixture.account.execute(
       `INSERT INTO source_messages
         (id, gmail_message_id, gmail_history_id, sender, subject, received_at, state)
        VALUES (?, ?, ?, ?, ?, ?, 'processing')`,
@@ -104,7 +104,7 @@ describe('Rule Execution', () => {
     );
     const apply = vi.fn();
     const execution = createRuleExecution({
-      database: fixture.organization.binding,
+      database: fixture.account.binding,
       planner: { plan: vi.fn().mockResolvedValue([{
         rule: { type: 'schema', id: 'rule-read', revision: 1 },
         executionMode: 'read_only',
@@ -125,13 +125,13 @@ describe('Rule Execution', () => {
 
   it('holds one approval batch for seven days and applies it without replanning', async () => {
     fixture = createTestApp();
-    fixture.organization.execute(
+    fixture.account.execute(
       `INSERT INTO rules
         (id, organization_id, name, status, execution_mode, selection_policy, routing_policy, priority, created_at, updated_at)
        VALUES (?, ?, ?, 'active', 'approval', '{}', '{}', 0, ?, ?)`,
       'rule-approval', 'organization-1', 'Reviewed', '2026-08-06T00:00:00.000Z', '2026-08-06T00:00:00.000Z',
     );
-    fixture.organization.execute(
+    fixture.account.execute(
       `INSERT INTO source_messages
         (id, gmail_message_id, gmail_history_id, sender, subject, received_at, state)
        VALUES (?, ?, ?, ?, ?, ?, 'processing')`,
@@ -147,7 +147,7 @@ describe('Rule Execution', () => {
     }]);
     const apply = vi.fn().mockResolvedValue({ ok: true });
     const execution = createRuleExecution({
-      database: fixture.organization.binding,
+      database: fixture.account.binding,
       planner: { plan: planner },
       effects: { apply },
       now: () => new Date('2026-08-06T02:00:00.000Z'),
@@ -178,13 +178,13 @@ describe('Rule Execution', () => {
 
   it('resumes transient failures without resending successful independent effects', async () => {
     fixture = createTestApp();
-    fixture.organization.execute(
+    fixture.account.execute(
       `INSERT INTO rules
         (id, organization_id, name, status, execution_mode, selection_policy, routing_policy, priority, created_at, updated_at)
        VALUES (?, ?, ?, 'active', 'unattended', '{}', '{}', 0, ?, ?)`,
       'rule-retry', 'organization-1', 'Retry', '2026-08-06T00:00:00.000Z', '2026-08-06T00:00:00.000Z',
     );
-    fixture.organization.execute(
+    fixture.account.execute(
       `INSERT INTO source_messages
         (id, gmail_message_id, gmail_history_id, sender, subject, received_at, state)
        VALUES (?, ?, ?, ?, ?, ?, 'processing')`,
@@ -200,7 +200,7 @@ describe('Rule Execution', () => {
       return { ok: true };
     });
     const execution = createRuleExecution({
-      database: fixture.organization.binding,
+      database: fixture.account.binding,
       planner: { plan: vi.fn().mockResolvedValue([{
         rule: { type: 'schema', id: 'rule-retry', revision: 1 },
         executionMode: 'unattended',

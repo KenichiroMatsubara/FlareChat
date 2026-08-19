@@ -49,9 +49,9 @@ export interface CalendarAttendee {
 }
 
 /**
- * Adds the active Member roster to a Scheduled Event's attendees without
- * disturbing anyone already on it. An attendee Google already lists — Member
- * or not — rides through untouched, response status included; only Members
+ * Adds the active Contact roster to a Scheduled Event's attendees without
+ * disturbing anyone already on it. An attendee Google already lists — Contact
+ * or not — rides through untouched, response status included; only Contacts
  * missing from that list are appended, each starting from Google's default
  * needsAction. `added` names how many were appended, so the caller can decide
  * whether this write is news to anyone.
@@ -71,7 +71,7 @@ export const invitedAttendees = (
 export const REFRESH_WINDOW_DAYS = 7;
 /**
  * The search reaches further than the correspondence window so that a stale
- * duplicate from a badly extracted date stays visible to the Admin, without ever
+ * duplicate from a badly extracted date stays visible to the AccountIdentity, without ever
  * becoming a write target.
  */
 export const REFRESH_SEARCH_DAYS = 180;
@@ -187,7 +187,7 @@ const correspondenceEvent = (event: CalendarEventFields): Record<string, string>
 /**
  * Builds the complete correspondence request without sending it. The prompt is
  * product-defined: a mistaken correspondence overwrites the wrong meeting, so it
- * is not an Organization-editable Prompt.
+ * is not an Account-editable Prompt.
  */
 export const buildEventCorrespondenceRequest = (input: {
   candidates: EventDetails[];
@@ -272,7 +272,7 @@ export const validatedEventCorrespondences = (
   }
 };
 
-/** One row of the proposed Event Refresh, as the Admin reviews it before approving. */
+/** One row of the proposed Event Refresh, as the AccountIdentity reviews it before approving. */
 export interface RefreshPlanEntry {
   candidateIndex: number;
   candidate: EventDetails;
@@ -289,7 +289,7 @@ export interface RefreshPlan {
 }
 
 /**
- * Turns the AI's proposal into the plan the Admin approves. The window is applied
+ * Turns the AI's proposal into the plan the AccountIdentity approves. The window is applied
  * here, after the AI has spoken, so a confident but distant match still cannot
  * carry attendees onto another meeting.
  */

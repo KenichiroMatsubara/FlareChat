@@ -41,7 +41,7 @@ describe('Preset catalog', () => {
 });
 
 describe('Preset application', () => {
-  it('copies the complete Preset configuration into an empty Organization', async () => {
+  it('copies the complete Preset configuration into an empty Account', async () => {
     const fixture = createTestApp();
     try {
       const applied = await app.fetch(fixture.jsonRequest(

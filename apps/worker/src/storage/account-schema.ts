@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { check, index, integer, primaryKey, sqliteTable, text, unique, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const settings = sqliteTable('settings', {
   key: text('key').primaryKey(),
@@ -9,7 +9,7 @@ export const settings = sqliteTable('settings', {
 
 export const lists = sqliteTable('lists', {
   id: text('id').primaryKey(),
-  organizationId: text('organization_id').notNull(),
+  accountId: text('organization_id').notNull(),
   kind: text('kind', { enum: ['source', 'recipient', 'line'] }).notNull(),
   name: text('name').notNull(),
   description: text('description').notNull().default(''),
@@ -33,7 +33,7 @@ export const listItems = sqliteTable('list_items', {
 
 export const rules = sqliteTable('rules', {
   id: text('id').primaryKey(),
-  organizationId: text('organization_id').notNull(),
+  accountId: text('organization_id').notNull(),
   name: text('name').notNull(),
   status: text('status', { enum: ['draft', 'active', 'suspended', 'archived'] }).notNull(),
   executionMode: text('execution_mode', { enum: ['read_only', 'approval', 'unattended'] }).notNull().default('unattended'),
@@ -71,14 +71,15 @@ export const rulePermittedLineLists = sqliteTable('rule_permitted_line_lists', {
 
 export const prompts = sqliteTable('prompts', {
   id: text('id').primaryKey(),
-  organizationId: text('organization_id').notNull(),
+  accountId: text('organization_id').notNull(),
   name: text('name').notNull(),
   instructions: text('instructions').notNull(),
   currentRevision: integer('current_revision').notNull().default(1),
+  published: integer('published', { mode: 'boolean' }).notNull().default(false),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
-  uniqueIndex('prompts_organization_name_idx').on(table.organizationId, table.name),
+  uniqueIndex('prompts_organization_name_idx').on(table.accountId, table.name),
 ]);
 
 export const promptRevisions = sqliteTable('prompt_revisions', {
@@ -92,7 +93,7 @@ export const promptRevisions = sqliteTable('prompt_revisions', {
 
 export const agentRules = sqliteTable('agent_rules', {
   id: text('id').primaryKey(),
-  organizationId: text('organization_id').notNull(),
+  accountId: text('organization_id').notNull(),
   name: text('name').notNull(),
   status: text('status', { enum: ['draft', 'active', 'suspended', 'archived'] }).notNull(),
   executionMode: text('execution_mode', { enum: ['read_only', 'approval', 'unattended'] }).notNull().default('unattended'),
@@ -151,9 +152,9 @@ export const ruleRuns = sqliteTable('rule_runs', {
   ruleId: text('rule_id').references(() => rules.id, { onDelete: 'restrict' }),
   agentRuleId: text('agent_rule_id').references(() => agentRules.id, { onDelete: 'restrict' }),
   ruleRevision: integer('rule_revision').notNull(),
-  sourceMessageId: text('source_message_id').notNull().references(() => sourceMessages.id, { onDelete: 'cascade' }),
+  sourceMessageId: text('source_message_id').references(() => sourceMessages.id, { onDelete: 'cascade' }),
   executionMode: text('execution_mode', { enum: ['read_only', 'approval', 'unattended'] }).notNull(),
-  intent: text('intent', { enum: ['live', 'draft_preview'] }).notNull(),
+  intent: text('intent', { enum: ['live', 'draft_preview', 'chat'] }).notNull(),
   status: text('status', { enum: ['planning', 'read_only', 'pending_approval', 'applying', 'completed', 'rejected', 'expired', 'failed'] }).notNull(),
   plannedAt: text('planned_at'),
   expiresAt: text('expires_at'),
@@ -162,9 +163,9 @@ export const ruleRuns = sqliteTable('rule_runs', {
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
-  check('rule_runs_owner_check', sql`(${table.ruleId} is null) != (${table.agentRuleId} is null)`),
+  check('rule_runs_owner_check', sql`(${table.intent} = 'chat' and ${table.ruleId} is null and ${table.agentRuleId} is null and ${table.sourceMessageId} is null) or (${table.intent} != 'chat' and (${table.ruleId} is null) != (${table.agentRuleId} is null) and ${table.sourceMessageId} is not null)`),
   check('rule_runs_mode_check', sql`${table.executionMode} in ('read_only', 'approval', 'unattended')`),
-  check('rule_runs_intent_check', sql`${table.intent} in ('live', 'draft_preview')`),
+  check('rule_runs_intent_check', sql`${table.intent} in ('live', 'draft_preview', 'chat')`),
   check('rule_runs_status_check', sql`${table.status} in ('planning', 'read_only', 'pending_approval', 'applying', 'completed', 'rejected', 'expired', 'failed')`),
   index('rule_runs_status_idx').on(table.status, table.updatedAt),
 ]);
@@ -246,7 +247,7 @@ export const proposedActions = sqliteTable('proposed_actions', {
 
 export const events = sqliteTable('events', {
   id: text('id').primaryKey(),
-  organizationId: text('organization_id').notNull(),
+  accountId: text('organization_id').notNull(),
   ruleId: text('rule_id').references(() => rules.id),
   agentRuleId: text('agent_rule_id').references(() => agentRules.id),
   sourceMessageId: text('source_message_id').references(() => sourceMessages.id),
@@ -287,7 +288,7 @@ export const eventOverrides = sqliteTable('event_overrides', {
 ]);
 
 /**
- * One declared attendance by somebody who is not a Member. Keyed by the Event
+ * One declared attendance by somebody who is not a Contact. Keyed by the Event
  * Response that declared it so reprocessing and correction replace a party's
  * rows rather than accumulate beside them.
  */
@@ -306,12 +307,12 @@ export const guestRegistrations = sqliteTable('guest_registrations', {
 
 export const attendance = sqliteTable('attendance', {
   eventId: text('event_id').notNull().references(() => events.id, { onDelete: 'cascade' }),
-  memberId: text('member_id').notNull().references(() => members.id, { onDelete: 'cascade' }),
+  contactId: text('member_id').notNull().references(() => contacts.id, { onDelete: 'cascade' }),
   status: text('status', { enum: ['unanswered', 'attending', 'not_attending'] }).notNull().default('unanswered'),
   comment: text('comment').notNull().default(''),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
-  primaryKey({ columns: [table.eventId, table.memberId] }),
+  primaryKey({ columns: [table.eventId, table.contactId] }),
   check('attendance_status_check', sql`${table.status} in ('unanswered', 'attending', 'not_attending')`),
 ]);
 
@@ -346,14 +347,14 @@ export const exceptions = sqliteTable('exceptions', {
 
 export const connections = sqliteTable('connections', {
   id: text('id').primaryKey(),
-  kind: text('kind', { enum: ['line', 'ai'] }).notNull(),
+  kind: text('kind', { enum: ['line', 'ai', 'discord'] }).notNull(),
   label: text('label').notNull(),
   credential: text('credential').notNull(),
   status: text('status', { enum: ['active', 'disconnected'] }).notNull().default('active'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
-  check('connections_kind_check', sql`${table.kind} in ('line', 'ai')`),
+  check('connections_kind_check', sql`${table.kind} in ('line', 'ai', 'discord')`),
   check('connections_status_check', sql`${table.status} in ('active', 'disconnected')`),
 ]);
 
@@ -404,7 +405,7 @@ export const automationWarnings = sqliteTable('automation_warnings', {
   index('automation_warnings_source_idx').on(table.sourceMessageId, table.createdAt),
 ]);
 
-/** An Organization-defined responsibility used to route extracted Tasks. */
+/** An Account-defined responsibility used to route extracted Tasks. */
 export const operationalTaskRoles = sqliteTable('operational_task_roles', {
   id: text('id').primaryKey(),
   displayName: text('display_name').notNull(),
@@ -413,18 +414,18 @@ export const operationalTaskRoles = sqliteTable('operational_task_roles', {
   updatedAt: text('updated_at').notNull(),
 });
 
-/** An Organization-local projection of the active member assigned an Operational Task Role. */
+/** An Account-local projection of the active contact assigned an Operational Task Role. */
 export const taskRoleAssignments = sqliteTable('task_role_assignments', {
   roleId: text('role_id').primaryKey().references(() => operationalTaskRoles.id, { onDelete: 'cascade' }),
-  memberId: text('member_id').notNull().references(() => members.id, { onDelete: 'cascade' }),
+  contactId: text('member_id').notNull().references(() => contacts.id, { onDelete: 'cascade' }),
   displayName: text('display_name').notNull(),
   assignedAt: text('assigned_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 });
 
 /**
- * When the Organization's Operational Task Role set last changed, and when an
- * Admin last reviewed the open Tasks against it. One row, keyed `current`.
+ * When the Account's Operational Task Role set last changed, and when an
+ * AccountIdentity last reviewed the open Tasks against it. One row, keyed `current`.
  */
 export const taskRoleRevisions = sqliteTable('task_role_revisions', {
   id: text('id').primaryKey(),
@@ -436,14 +437,14 @@ export const taskRoleRevisions = sqliteTable('task_role_revisions', {
 
 export const tasks = sqliteTable('tasks', {
   id: text('id').primaryKey(),
-  organizationId: text('organization_id').notNull(),
+  accountId: text('organization_id').notNull(),
   sourceMessageId: text('source_message_id').notNull().references(() => sourceMessages.id),
   sourceMessageSubject: text('source_message_subject').notNull(),
   title: text('title').notNull(),
   deadline: text('deadline').notNull(),
   assigneeRoleId: text('assignee_role_id').notNull(),
   assigneeRoleName: text('assignee_role_name').notNull(),
-  assigneeMemberId: text('assignee_member_id'),
+  assigneeContactId: text('assignee_member_id'),
   assigneeName: text('assignee_name').notNull().default('未割り当て'),
   description: text('description').notNull(),
   remarks: text('remarks').notNull().default(''),
@@ -455,7 +456,7 @@ export const tasks = sqliteTable('tasks', {
   check('tasks_completed_check', sql`${table.completed} in (0, 1)`),
   uniqueIndex('tasks_source_role_deadline_title_idx').on(table.sourceMessageId, table.assigneeRoleId, table.deadline, table.title),
   index('tasks_order_idx').on(table.completed, table.deadline),
-  index('tasks_assignee_idx').on(table.assigneeMemberId),
+  index('tasks_assignee_idx').on(table.assigneeContactId),
 ]);
 
 export const deliveryArchives = sqliteTable('delivery_archives', {
@@ -466,9 +467,9 @@ export const deliveryArchives = sqliteTable('delivery_archives', {
   createdAt: text('created_at').notNull(),
 });
 
-export const members = sqliteTable('members', {
+export const contacts = sqliteTable('members', {
   id: text('id').primaryKey(),
-  organizationId: text('organization_id').notNull(),
+  accountId: text('organization_id').notNull(),
   name: text('name').notNull(),
   email: text('email').notNull(),
   state: text('state', { enum: ['active', 'inactive'] }).notNull().default('active'),
@@ -484,12 +485,12 @@ export const members = sqliteTable('members', {
 
 export const eventRecipients = sqliteTable('event_recipients', {
   eventId: text('event_id').notNull().references(() => events.id, { onDelete: 'cascade' }),
-  memberId: text('member_id').notNull().references(() => members.id),
+  contactId: text('member_id').notNull().references(() => contacts.id),
   nameSnapshot: text('name_snapshot').notNull(),
   emailSnapshot: text('email_snapshot').notNull(),
   createdAt: text('created_at').notNull(),
 }, (table) => [
-  primaryKey({ columns: [table.eventId, table.memberId] }),
+  primaryKey({ columns: [table.eventId, table.contactId] }),
 ]);
 
 export const lineDestinations = sqliteTable('line_destinations', {
@@ -508,31 +509,31 @@ export const lineDestinations = sqliteTable('line_destinations', {
   uniqueIndex('line_destinations_connection_destination_idx').on(table.connectionId, table.destinationId),
 ]);
 
-export const memberLinkTokens = sqliteTable('member_link_tokens', {
+export const contactLinkTokens = sqliteTable('member_link_tokens', {
   token: text('token').primaryKey(),
-  memberId: text('member_id').notNull().references(() => members.id, { onDelete: 'cascade' }),
+  contactId: text('member_id').notNull().references(() => contacts.id, { onDelete: 'cascade' }),
   expiresAt: text('expires_at').notNull(),
   usedAt: text('used_at'),
   createdAt: text('created_at').notNull(),
 });
 
-/** The single-use link that first brings a Member into the Member Portal. */
+/** The single-use link that first brings a Contact into the Contact Portal. */
 export const portalInvitations = sqliteTable('portal_invitations', {
   token: text('token').primaryKey(),
-  memberId: text('member_id').notNull().references(() => members.id, { onDelete: 'cascade' }),
+  contactId: text('member_id').notNull().references(() => contacts.id, { onDelete: 'cascade' }),
   expiresAt: text('expires_at').notNull(),
   usedAt: text('used_at'),
   createdAt: text('created_at').notNull(),
 }, (table) => [
-  index('portal_invitations_member_idx').on(table.memberId, table.usedAt),
+  index('portal_invitations_member_idx').on(table.contactId, table.usedAt),
 ]);
 
-export const memberLineDestinations = sqliteTable('member_line_destinations', {
-  memberId: text('member_id').notNull().references(() => members.id, { onDelete: 'cascade' }),
+export const contactLineDestinations = sqliteTable('member_line_destinations', {
+  contactId: text('member_id').notNull().references(() => contacts.id, { onDelete: 'cascade' }),
   lineDestinationId: text('line_destination_id').notNull().references(() => lineDestinations.id, { onDelete: 'cascade' }),
   createdAt: text('created_at').notNull(),
 }, (table) => [
-  primaryKey({ columns: [table.memberId, table.lineDestinationId] }),
+  primaryKey({ columns: [table.contactId, table.lineDestinationId] }),
   uniqueIndex('member_line_destinations_destination_unique').on(table.lineDestinationId),
 ]);
 
@@ -554,3 +555,190 @@ export const eventAttachments = sqliteTable('event_attachments', {
 ]);
 
 export type GoogleConnectionRecord = typeof googleConnections.$inferSelect;
+
+/** Remote MCP Servers this Account has connected, with a static bearer token under ADR 0078 envelope encryption. */
+export const mcpServers = sqliteTable('mcp_servers', {
+  id: text('id').primaryKey(),
+  accountId: text('account_id').notNull(),
+  name: text('name').notNull(),
+  url: text('url').notNull(),
+  tokenEnvelope: text('token_envelope'),
+  revision: text('revision', { enum: ['2026-07-28', '2025-06-18'] }),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  check('mcp_servers_revision_check', sql`${table.revision} is null or ${table.revision} in ('2026-07-28', '2025-06-18')`),
+  uniqueIndex('mcp_servers_name_idx').on(table.name),
+]);
+
+export const chatConversations = sqliteTable('chat_conversations', {
+  id: text('id').primaryKey(),
+  accountId: text('account_id').notNull(),
+  title: text('title').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  index('chat_conversations_recent_idx').on(table.updatedAt),
+]);
+
+/** One exchange of Operator Chat, recorded against the Rule Run that carried it (ADR 0146). */
+export const chatTurns = sqliteTable('chat_turns', {
+  id: text('id').primaryKey(),
+  conversationId: text('conversation_id').notNull().references(() => chatConversations.id, { onDelete: 'cascade' }),
+  ruleRunId: text('rule_run_id').notNull().references(() => ruleRuns.id, { onDelete: 'cascade' }),
+  position: integer('position').notNull(),
+  request: text('request').notNull(),
+  response: text('response'),
+  status: text('status', { enum: ['running', 'completed', 'failed'] }).notNull(),
+  error: text('error'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  check('chat_turns_status_check', sql`${table.status} in ('running', 'completed', 'failed')`),
+  unique().on(table.conversationId, table.position),
+  index('chat_turns_conversation_idx').on(table.conversationId, table.position),
+]);
+
+/** A named set of Contacts (ADR 0147). Delivery resolves each Contact's handle from the Channel it sends on. */
+export const contactLists = sqliteTable('contact_lists', {
+  id: text('id').primaryKey(),
+  accountId: text('account_id').notNull(),
+  name: text('name').notNull(),
+  description: text('description').notNull().default(''),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  uniqueIndex('contact_lists_name_idx').on(table.name),
+]);
+
+export const contactListMembers = sqliteTable('contact_list_members', {
+  listId: text('list_id').notNull().references(() => contactLists.id, { onDelete: 'cascade' }),
+  contactId: text('contact_id').notNull().references(() => contacts.id, { onDelete: 'cascade' }),
+}, (table) => [
+  primaryKey({ columns: [table.listId, table.contactId] }),
+]);
+
+/** The credential an outside agent presents, carrying one Tool Grant and one Contact List bound (ADR 0152). */
+export const accessTokens = sqliteTable('access_tokens', {
+  id: text('id').primaryKey(),
+  accountId: text('account_id').notNull(),
+  name: text('name').notNull(),
+  tokenHash: text('token_hash').notNull(),
+  contactListId: text('contact_list_id').notNull().references(() => contactLists.id, { onDelete: 'restrict' }),
+  suppressionWindow: text('suppression_window', { enum: ['none', 'hour', 'day', 'week', 'forever'] }).notNull().default('day'),
+  callsPerHour: integer('calls_per_hour').notNull().default(60),
+  writesPerDay: integer('writes_per_day').notNull().default(100),
+  lastUsedAt: text('last_used_at'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  check('access_tokens_window_check', sql`${table.suppressionWindow} in ('none', 'hour', 'day', 'week', 'forever')`),
+  check('access_tokens_calls_check', sql`${table.callsPerHour} > 0`),
+  check('access_tokens_writes_check', sql`${table.writesPerDay} > 0`),
+  uniqueIndex('access_tokens_hash_idx').on(table.tokenHash),
+]);
+
+export const accessTokenTools = sqliteTable('access_token_tools', {
+  tokenId: text('token_id').notNull().references(() => accessTokens.id, { onDelete: 'cascade' }),
+  tool: text('tool').notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.tokenId, table.tool] }),
+]);
+
+/** One admitted call, kept so a Token's own rate and write limits can be counted (ADR 0152). */
+export const accessTokenCalls = sqliteTable('access_token_calls', {
+  id: text('id').primaryKey(),
+  tokenId: text('token_id').notNull().references(() => accessTokens.id, { onDelete: 'cascade' }),
+  tool: text('tool').notNull(),
+  isWrite: integer('is_write', { mode: 'boolean' }).notNull().default(false),
+  createdAt: text('created_at').notNull(),
+}, (table) => [
+  check('access_token_calls_write_check', sql`${table.isWrite} in (0, 1)`),
+  index('access_token_calls_window_idx').on(table.tokenId, table.createdAt),
+]);
+
+/** One effect already performed, holding its repeat until the declared window passes (ADR 0141). */
+export const suppressions = sqliteTable('suppressions', {
+  key: text('key').primaryKey(),
+  scope: text('scope').notNull(),
+  tool: text('tool').notNull(),
+  recordedAt: text('recorded_at').notNull(),
+  expiresAt: text('expires_at'),
+}, (table) => [
+  index('suppressions_expiry_idx').on(table.expiresAt),
+]);
+
+/** A Trigger with no payload, thinking with a Prompt and acting through its Tool Grant (ADR 0140). */
+export const automations = sqliteTable('automations', {
+  id: text('id').primaryKey(),
+  accountId: text('account_id').notNull(),
+  name: text('name').notNull(),
+  promptId: text('prompt_id').notNull().references(() => prompts.id, { onDelete: 'restrict' }),
+  contactListId: text('contact_list_id').references(() => contactLists.id, { onDelete: 'restrict' }),
+  schedule: text('schedule').notNull(),
+  offsetMinutes: integer('offset_minutes').notNull().default(0),
+  executionMode: text('execution_mode', { enum: ['read_only', 'approval', 'unattended'] }).notNull().default('unattended'),
+  suppressionWindow: text('suppression_window', { enum: ['none', 'hour', 'day', 'week', 'forever'] }).notNull().default('day'),
+  state: text('state', { enum: ['draft', 'active', 'suspended', 'archived'] }).notNull().default('draft'),
+  lastRunAt: text('last_run_at'),
+  nextRunAt: text('next_run_at'),
+  lastError: text('last_error'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  check('automations_mode_check', sql`${table.executionMode} in ('read_only', 'approval', 'unattended')`),
+  check('automations_state_check', sql`${table.state} in ('draft', 'active', 'suspended', 'archived')`),
+  check('automations_window_check', sql`${table.suppressionWindow} in ('none', 'hour', 'day', 'week', 'forever')`),
+  check('automations_offset_check', sql`${table.offsetMinutes} between -840 and 840`),
+  uniqueIndex('automations_name_idx').on(table.name),
+  index('automations_due_idx').on(table.state, table.nextRunAt),
+]);
+
+export const automationTools = sqliteTable('automation_tools', {
+  automationId: text('automation_id').notNull().references(() => automations.id, { onDelete: 'cascade' }),
+  tool: text('tool').notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.automationId, table.tool] }),
+]);
+
+export const automationRuns = sqliteTable('automation_runs', {
+  id: text('id').primaryKey(),
+  automationId: text('automation_id').notNull().references(() => automations.id, { onDelete: 'cascade' }),
+  ruleRunId: text('rule_run_id').notNull().references(() => ruleRuns.id, { onDelete: 'cascade' }),
+  startedAt: text('started_at').notNull(),
+  finishedAt: text('finished_at'),
+  status: text('status', { enum: ['running', 'completed', 'failed'] }).notNull(),
+  output: text('output'),
+  error: text('error'),
+  toolCalls: integer('tool_calls').notNull().default(0),
+}, (table) => [
+  check('automation_runs_status_check', sql`${table.status} in ('running', 'completed', 'failed')`),
+  index('automation_runs_recent_idx').on(table.automationId, table.startedAt),
+]);
+
+/**
+ * Where a Contact is reachable on a Channel (ADR 0139). Discord lives here now;
+ * LINE still lives in its own table until the migration that dissolves it, so
+ * each Channel has exactly one source of truth rather than two.
+ */
+export const channelHandles = sqliteTable('channel_handles', {
+  id: text('id').primaryKey(),
+  contactId: text('contact_id').references(() => contacts.id, { onDelete: 'cascade' }),
+  channel: text('channel', { enum: ['discord'] }).notNull(),
+  connectionId: text('connection_id').notNull().references(() => connections.id, { onDelete: 'cascade' }),
+  externalId: text('external_id').notNull(),
+  replyTarget: text('reply_target'),
+  kind: text('kind', { enum: ['single', 'shared'] }).notNull().default('single'),
+  displayName: text('display_name').notNull().default(''),
+  source: text('source', { enum: ['inbound', 'manual'] }).notNull().default('inbound'),
+  isPrimary: integer('is_primary', { mode: 'boolean' }).notNull().default(true),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  check('channel_handles_channel_check', sql`${table.channel} in ('discord')`),
+  check('channel_handles_kind_check', sql`${table.kind} in ('single', 'shared')`),
+  check('channel_handles_source_check', sql`${table.source} in ('inbound', 'manual')`),
+  check('channel_handles_primary_check', sql`${table.isPrimary} in (0, 1)`),
+  uniqueIndex('channel_handles_identity_idx').on(table.channel, table.connectionId, table.externalId),
+  index('channel_handles_contact_idx').on(table.contactId, table.channel),
+]);

@@ -14,7 +14,7 @@ afterEach(() => {
   control = undefined;
 });
 
-describe('single-authorization Organization setup', () => {
+describe('single-authorization Account setup', () => {
   it('uses the granted Google identity as both Automation Inbox and initial Owner identity', async () => {
     control = createMigratedTestD1('control');
     const environment = {
@@ -83,7 +83,7 @@ describe('single-authorization Organization setup', () => {
       data: {
         email: 'owner@example.com',
         displayName: 'Example Owner',
-        organizations: [],
+        accounts: [],
       },
     });
   });

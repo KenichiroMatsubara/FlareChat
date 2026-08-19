@@ -3,21 +3,21 @@ import { DEFAULT_RESPONSE_WINDOW_DAYS } from '@mail/domain';
 
 import type { EventDetails } from './event-details';
 import type { CalendarEventFields, DesiredCalendarFields } from './event-refresh';
-import { settings } from './storage/organization-schema';
-import type { OrganizationDatabase } from './storage/database';
+import { settings } from './storage/account-schema';
+import type { AccountDatabase } from './storage/database';
 
 export const RESPONSE_WINDOW_DAYS_SETTING = 'response_window_days';
 
-/** The Event Response window this Organization configured, falling back to the product default. */
-export const organizationResponseWindowDays = async (database: OrganizationDatabase): Promise<number> => {
+/** The Event Response window this Account configured, falling back to the product default. */
+export const accountResponseWindowDays = async (database: AccountDatabase): Promise<number> => {
   const stored = await database.select({ value: settings.value }).from(settings)
     .where(eq(settings.key, RESPONSE_WINDOW_DAYS_SETTING)).get();
   const days = Number(stored?.value);
   return Number.isInteger(days) && days > 0 ? days : DEFAULT_RESPONSE_WINDOW_DAYS;
 };
 
-export const saveOrganizationResponseWindowDays = async (
-  database: OrganizationDatabase,
+export const saveAccountResponseWindowDays = async (
+  database: AccountDatabase,
   days: number,
   updatedAt: string,
 ): Promise<void> => {

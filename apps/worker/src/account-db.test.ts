@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { organizationDatabaseIdentity, provisionOrganizationDatabase } from './organization-db';
+import { accountDatabaseIdentity, provisionAccountDatabase } from './account-db';
 import { claimDueJobs, enqueueJob } from './jobs';
 import type { Bindings } from './types';
 import {
@@ -9,7 +9,7 @@ import {
   createTestD1Database,
   type TestD1Database,
 } from '../test/d1';
-import { seedOrganizationRoute } from '../test/seed';
+import { seedAccountRoute } from '../test/seed';
 
 const openDatabases: TestD1Database[] = [];
 
@@ -40,10 +40,10 @@ const localEnvironment = (): {
   };
 };
 
-describe('Organization database resolver', () => {
+describe('Account database resolver', () => {
   it('derives a readable FlareChat database identity from the Automation Inbox', async () => {
-    const first = await organizationDatabaseIdentity(' Okazaki.RAC+Ops@Gmail.com ');
-    const second = await organizationDatabaseIdentity('okazaki.rac+ops@gmail.com');
+    const first = await accountDatabaseIdentity(' Okazaki.RAC+Ops@Gmail.com ');
+    const second = await accountDatabaseIdentity('okazaki.rac+ops@gmail.com');
 
     expect(first).toEqual(second);
     expect(first.databaseName).toMatch(
@@ -52,13 +52,13 @@ describe('Organization database resolver', () => {
     expect(first.bindingName).toMatch(/^ORG_[A-F0-9]{24}$/u);
   });
 
-  it('allocates a local Organization database without contacting Cloudflare', async () => {
+  it('allocates a local Account database without contacting Cloudflare', async () => {
     const { environment, first } = localEnvironment();
     const cloudflare = vi.fn();
     vi.stubGlobal('fetch', cloudflare);
 
-    const location = await provisionOrganizationDatabase(environment, {
-      organizationId: 'organization-1',
+    const location = await provisionAccountDatabase(environment, {
+      accountId: 'organization-1',
       inboxAddress: 'first@example.com',
       bindingName: 'ORG_ORGANIZATION1',
       databaseId: null,
@@ -72,22 +72,22 @@ describe('Organization database resolver', () => {
     expect(cloudflare).not.toHaveBeenCalled();
   });
 
-  it('keeps different Organizations durable in different local databases', async () => {
+  it('keeps different Accounts durable in different local databases', async () => {
     const { control, environment } = localEnvironment();
-    const first = await provisionOrganizationDatabase(environment, {
-      organizationId: 'organization-1',
+    const first = await provisionAccountDatabase(environment, {
+      accountId: 'organization-1',
       inboxAddress: 'first@example.com',
       bindingName: 'ORG_ORGANIZATION1',
       databaseId: null,
     });
     applyTestMigrations(openDatabases[1]!, 'organization');
-    seedOrganizationRoute(control, {
+    seedAccountRoute(control, {
       id: 'organization-1',
       bindingName: first.bindingName,
       databaseId: first.databaseId,
     });
-    const second = await provisionOrganizationDatabase(environment, {
-      organizationId: 'organization-2',
+    const second = await provisionAccountDatabase(environment, {
+      accountId: 'organization-2',
       inboxAddress: 'second@example.com',
       bindingName: 'ORG_ORGANIZATION2',
       databaseId: null,
@@ -106,10 +106,10 @@ describe('Organization database resolver', () => {
     ]);
   });
 
-  it('records the schema versions it installs for a new local Organization database', async () => {
+  it('records the schema versions it installs for a new local Account database', async () => {
     const { environment, first } = localEnvironment();
-    const provisioned = await provisionOrganizationDatabase(environment, {
-      organizationId: 'organization-1',
+    const provisioned = await provisionAccountDatabase(environment, {
+      accountId: 'organization-1',
       inboxAddress: 'first@example.com',
       bindingName: 'ORG_ORGANIZATION1',
       databaseId: null,
@@ -140,6 +140,10 @@ describe('Organization database resolver', () => {
       { name: '0019_task_role_revisions.sql' },
       { name: '0020_event_responses_and_guests.sql' },
       { name: '0021_rule_execution.sql' },
+      { name: '0022_operator_chat.sql' },
+      { name: '0023_access_tokens.sql' },
+      { name: '0024_automations.sql' },
+      { name: '0025_discord_channel.sql' },
     ]);
   });
 
@@ -190,8 +194,8 @@ describe('Organization database resolver', () => {
       CLOUDFLARE_API_TOKEN: 'token-1',
     } as unknown as Bindings;
 
-    const provisioned = await provisionOrganizationDatabase(environment, {
-      organizationId: 'organization-1',
+    const provisioned = await provisionAccountDatabase(environment, {
+      accountId: 'organization-1',
       inboxAddress: 'first@example.com',
       bindingName: 'ORG_ORGANIZATION1',
       databaseId: 'database-1',

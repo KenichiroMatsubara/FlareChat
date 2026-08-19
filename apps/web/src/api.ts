@@ -70,21 +70,21 @@ export interface AutomationSummary {
   exceptions: number;
 }
 
-export type MemberAttendanceStatus = 'unanswered' | 'attending' | 'not_attending';
+export type ContactAttendanceStatus = 'unanswered' | 'attending' | 'not_attending';
 
-export interface MemberPortalEvent {
+export interface ContactPortalEvent {
   eventId: string;
   title: string;
   startsAt: string;
   endsAt: string;
   location: string;
   registrationDeadline: string | null;
-  status: MemberAttendanceStatus;
+  status: ContactAttendanceStatus;
   comment: string;
   open: boolean;
 }
 
-export interface MemberPortalTask {
+export interface ContactPortalTask {
   taskId: string;
   title: string;
   deadline: string;
@@ -97,15 +97,15 @@ export interface MemberPortalTask {
   mine: boolean;
 }
 
-export interface MemberPortal {
-  organization: { organizationId: string; name: string };
-  member: { memberId: string; name: string };
-  events: MemberPortalEvent[];
-  tasks: MemberPortalTask[];
+export interface ContactPortal {
+  account: { accountId: string; name: string };
+  contact: { contactId: string; name: string };
+  events: ContactPortalEvent[];
+  tasks: ContactPortalTask[];
 }
 
-export interface OrganizationMembership {
-  organizationId: string;
+export interface AccountMembership {
+  accountId: string;
   name: string;
   status: string;
 }
@@ -113,12 +113,12 @@ export interface OrganizationMembership {
 export interface AuthMe {
   email: string;
   displayName: string;
-  organizations: OrganizationMembership[];
+  accounts: AccountMembership[];
 }
 
-export interface OrganizationConnections {
-  organizationId: string;
-  organizationName: string;
+export interface AccountConnections {
+  accountId: string;
+  accountName: string;
   line: {
     channelAccessTokenConfigured: boolean;
     channelSecretConfigured: boolean;
@@ -131,7 +131,7 @@ export interface OrganizationConnections {
   };
 }
 
-export interface OrganizationDashboard {
+export interface AccountDashboard {
   activeRules: number;
   upcomingEvents: number;
   pendingJobs: number;
@@ -139,7 +139,7 @@ export interface OrganizationDashboard {
   lastSyncedAt: string | null;
 }
 
-/** The Guest Registrations on one Scheduled Event, as an Admin reviews the roster. */
+/** The Guest Registrations on one Scheduled Event, as an AccountIdentity reviews the roster. */
 export interface GuestRegistrationRoster {
   eventId: string;
   title: string;
@@ -149,9 +149,9 @@ export interface GuestRegistrationRoster {
   guests: Array<{ name: string; affiliation: string; attending: boolean }>;
 }
 
-export interface OrganizationRule {
+export interface AccountRule {
   id: string;
-  organizationId: string;
+  accountId: string;
   name: string;
   state: 'draft' | 'active' | 'suspended' | 'archived';
   executionMode: 'read_only' | 'approval' | 'unattended';
@@ -166,7 +166,7 @@ export interface OrganizationRule {
   updatedAt: string;
 }
 
-export interface OrganizationRuleInput {
+export interface AccountRuleInput {
   name: string;
   state: 'draft' | 'active';
   executionMode?: 'read_only' | 'approval' | 'unattended';
@@ -178,9 +178,9 @@ export interface OrganizationRuleInput {
   priority?: number;
 }
 
-export interface OrganizationPrompt {
+export interface AccountPrompt {
   id: string;
-  organizationId: string;
+  accountId: string;
   name: string;
   instructions: string;
   revision: number;
@@ -188,9 +188,9 @@ export interface OrganizationPrompt {
   updatedAt: string;
 }
 
-export interface OrganizationAgentRule {
+export interface AccountAgentRule {
   id: string;
-  organizationId: string;
+  accountId: string;
   name: string;
   state: 'draft' | 'active' | 'suspended' | 'archived';
   executionMode: 'read_only' | 'approval' | 'unattended';
@@ -252,9 +252,9 @@ export interface RuleRun {
   effects: RuleEffect[];
 }
 
-export interface OrganizationTypedList {
+export interface AccountTypedList {
   id: string;
-  organizationId: string;
+  accountId: string;
   kind: 'source' | 'recipient' | 'line';
   name: string;
   description: string;
@@ -315,11 +315,11 @@ export interface MailboxTestPreview extends MailboxTestMatch {
   expiresAt: string;
 }
 
-export interface OrganizationTask {
-  id: string; title: string; deadline: string; assigneeRoleId: string; assigneeRoleName: string; assigneeMemberId: string | null; assigneeName: string; sourceMessageSubject: string; description: string; remarks: string; completed: boolean; completedAt: string | null;
+export interface AccountTask {
+  id: string; title: string; deadline: string; assigneeRoleId: string; assigneeRoleName: string; assigneeContactId: string | null; assigneeName: string; sourceMessageSubject: string; description: string; remarks: string; completed: boolean; completedAt: string | null;
 }
 
-export interface MemberLineDestination {
+export interface ContactLineDestination {
   id: string;
   destinationId: string;
   displayName: string;
@@ -328,31 +328,31 @@ export interface MemberLineDestination {
   source: 'webhook' | 'manual';
 }
 
-export interface OrganizationMember {
+export interface AccountContact {
   id: string;
-  organizationId: string;
+  accountId: string;
   name: string;
   email: string;
   state: 'active' | 'inactive';
   tags: string[];
   createdAt: string;
   updatedAt: string;
-  lineDestinations: MemberLineDestination[];
+  lineDestinations: ContactLineDestination[];
 }
 
-export interface OrganizationLineDestination extends MemberLineDestination {
+export interface AccountLineDestination extends ContactLineDestination {
   discoveredAt: string;
-  memberId: string | null;
+  contactId: string | null;
 }
 
-export interface OrganizationMemberInput {
+export interface AccountContactInput {
   name: string;
   email?: string;
   tags?: string[];
   lineDestinationId?: string;
 }
 
-export interface MemberLineDestinationInput {
+export interface ContactLineDestinationInput {
   destinationId: string;
   kind?: 'user' | 'group' | 'room';
   displayName?: string;
@@ -380,8 +380,8 @@ export interface TaskAssignmentProposal {
 }
 
 export interface OperationalTaskRole { id: string; displayName: string; description: string; }
-export interface TaskRoleAssignment { roleId: string; memberId: string; displayName: string; }
-export interface TaskRoleConfiguration { members: Array<{ memberId: string; displayName: string }>; roles: OperationalTaskRole[]; assignments: TaskRoleAssignment[]; }
+export interface TaskRoleAssignment { roleId: string; contactId: string; displayName: string; }
+export interface TaskRoleConfiguration { contacts: Array<{ contactId: string; displayName: string }>; roles: OperationalTaskRole[]; assignments: TaskRoleAssignment[]; }
 
 /** The OpenAI-compatible JSON body prepared for review; credentials are never included. */
 export interface MailboxTestAiRequest extends MailboxTestMatch {
@@ -471,8 +471,8 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   return body.data;
 };
 
-const currentAutomation = async (organizationId: string): Promise<AutomationStatus | null> => {
-  const response = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/automation`, { credentials: 'include' });
+const currentAutomation = async (accountId: string): Promise<AutomationStatus | null> => {
+  const response = await fetch(`/api/organizations/${encodeURIComponent(accountId)}/automation`, { credentials: 'include' });
   if (response.status === 401) return null;
   const body = await responseBody<AutomationStatus | null>(response);
   if (!response.ok) throw new Error(body?.error?.message ?? '状態を取得できませんでした。');
@@ -485,173 +485,294 @@ export const api = {
   beginGoogleEntry: (intent: 'login' | 'organization_setup'): Promise<{ authorizationUrl: string }> =>
     request('/api/entry/google', { method: 'POST', body: JSON.stringify({ intent }) }),
 
-  joinMemberPortal: (organizationId: string, token: string): Promise<{ memberId: string; name: string }> =>
-    request(`/api/member-links/${encodeURIComponent(organizationId)}/${encodeURIComponent(token)}`, { method: 'POST', body: '{}' }),
+  joinContactPortal: (accountId: string, token: string): Promise<{ contactId: string; name: string }> =>
+    request(`/api/member-links/${encodeURIComponent(accountId)}/${encodeURIComponent(token)}`, { method: 'POST', body: '{}' }),
 
-  memberPortal: (): Promise<MemberPortal> => request('/api/portal'),
+  contactPortal: (): Promise<ContactPortal> => request('/api/portal'),
 
-  registerMemberAttendance: (eventId: string, input: { status: MemberAttendanceStatus; comment: string }): Promise<{ eventId: string }> =>
+  registerContactAttendance: (eventId: string, input: { status: ContactAttendanceStatus; comment: string }): Promise<{ eventId: string }> =>
     request(`/api/portal/events/${encodeURIComponent(eventId)}/attendance`, { method: 'PUT', body: JSON.stringify(input) }),
 
-  updateMemberTask: (taskId: string, input: { completed?: boolean; remarks?: string }): Promise<{ taskId: string }> =>
+  updateContactTask: (taskId: string, input: { completed?: boolean; remarks?: string }): Promise<{ taskId: string }> =>
     request(`/api/portal/tasks/${encodeURIComponent(taskId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
-  reauthorizeAutomationInbox: (organizationId: string): Promise<{ authorizationUrl: string }> =>
-    request(`/api/organizations/${encodeURIComponent(organizationId)}/automation/reauthorize`, { method: 'POST' }),
+  reauthorizeAutomationInbox: (accountId: string): Promise<{ authorizationUrl: string }> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/automation/reauthorize`, { method: 'POST' }),
   presets: (): Promise<PresetSummary[]> => request('/api/presets'),
   confirmOnboarding: (name: string, presetId?: string): Promise<{ accepted: boolean }> =>
     request('/api/onboarding/confirm', { method: 'POST', body: JSON.stringify({ name, ...(presetId ? { presetId } : {}) }) }),
   retryOnboarding: (): Promise<{ accepted: boolean }> => request('/api/onboarding/retry', { method: 'POST' }),
   cancelOnboarding: (): Promise<{ cancelled: boolean }> => request('/api/onboarding', { method: 'DELETE' }),
   currentAutomation,
-  organizationDashboard: (organizationId: string): Promise<OrganizationDashboard> => request(`/api/organizations/${encodeURIComponent(organizationId)}/dashboard`),
-  organizationGuestRegistrations: (organizationId: string): Promise<GuestRegistrationRoster[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/guest-registrations`),
-  organizationRules: (organizationId: string): Promise<OrganizationRule[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules`),
-  organizationPrompts: (organizationId: string): Promise<OrganizationPrompt[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/prompts`),
-  organizationAgentRules: (organizationId: string): Promise<OrganizationAgentRule[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-rules`),
-  organizationAgentRuns: (organizationId: string): Promise<AgentRunIndex[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-runs`),
-  agentRunTranscript: (organizationId: string, runId: string): Promise<AgentRunTranscript> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-runs/${encodeURIComponent(runId)}/transcript`),
-  organizationLists: (organizationId: string): Promise<OrganizationTypedList[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/lists`),
-  applyOrganizationPreset: (organizationId: string, presetId: string, conflictPolicy?: 'duplicate'): Promise<PresetApplicationSummary> => request(`/api/organizations/${encodeURIComponent(organizationId)}/presets/${encodeURIComponent(presetId)}/apply`, {
+  accountDashboard: (accountId: string): Promise<AccountDashboard> => request(`/api/organizations/${encodeURIComponent(accountId)}/dashboard`),
+  accountGuestRegistrations: (accountId: string): Promise<GuestRegistrationRoster[]> => request(`/api/organizations/${encodeURIComponent(accountId)}/guest-registrations`),
+  accountRules: (accountId: string): Promise<AccountRule[]> => request(`/api/organizations/${encodeURIComponent(accountId)}/rules`),
+  accountPrompts: (accountId: string): Promise<AccountPrompt[]> => request(`/api/organizations/${encodeURIComponent(accountId)}/prompts`),
+  accountAgentRules: (accountId: string): Promise<AccountAgentRule[]> => request(`/api/organizations/${encodeURIComponent(accountId)}/agent-rules`),
+  accountAgentRuns: (accountId: string): Promise<AgentRunIndex[]> => request(`/api/organizations/${encodeURIComponent(accountId)}/agent-runs`),
+  agentRunTranscript: (accountId: string, runId: string): Promise<AgentRunTranscript> => request(`/api/organizations/${encodeURIComponent(accountId)}/agent-runs/${encodeURIComponent(runId)}/transcript`),
+  accountLists: (accountId: string): Promise<AccountTypedList[]> => request(`/api/organizations/${encodeURIComponent(accountId)}/lists`),
+  applyAccountPreset: (accountId: string, presetId: string, conflictPolicy?: 'duplicate'): Promise<PresetApplicationSummary> => request(`/api/organizations/${encodeURIComponent(accountId)}/presets/${encodeURIComponent(presetId)}/apply`, {
     method: 'POST',
     body: JSON.stringify(conflictPolicy ? { conflictPolicy } : {}),
   }),
-  organizationDeliveryAudit: (organizationId: string): Promise<DeliveryAuditRecord[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/audit/deliveries`),
-  organizationTasks: (organizationId: string): Promise<OrganizationTask[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/tasks`),
-  organizationAttachmentFolder: (organizationId: string): Promise<{ path: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/attachment-folder`),
+  accountDeliveryAudit: (accountId: string): Promise<DeliveryAuditRecord[]> => request(`/api/organizations/${encodeURIComponent(accountId)}/audit/deliveries`),
+  accountTasks: (accountId: string): Promise<AccountTask[]> => request(`/api/organizations/${encodeURIComponent(accountId)}/tasks`),
+  accountAttachmentFolder: (accountId: string): Promise<{ path: string }> => request(`/api/organizations/${encodeURIComponent(accountId)}/attachment-folder`),
 
-  saveOrganizationAttachmentFolder: (organizationId: string, path: string): Promise<{ path: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/attachment-folder`, {
+  saveAccountAttachmentFolder: (accountId: string, path: string): Promise<{ path: string }> => request(`/api/organizations/${encodeURIComponent(accountId)}/attachment-folder`, {
     method: 'PUT',
     body: JSON.stringify({ path }),
   }),
 
-  organizationResponseWindow: (organizationId: string): Promise<{ days: number }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/response-window`),
+  accountResponseWindow: (accountId: string): Promise<{ days: number }> => request(`/api/organizations/${encodeURIComponent(accountId)}/response-window`),
 
-  saveOrganizationResponseWindow: (organizationId: string, days: number): Promise<{ days: number }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/response-window`, {
+  saveAccountResponseWindow: (accountId: string, days: number): Promise<{ days: number }> => request(`/api/organizations/${encodeURIComponent(accountId)}/response-window`, {
     method: 'PUT',
     body: JSON.stringify({ days }),
   }),
 
-  organizationMembers: (organizationId: string): Promise<OrganizationMember[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/members`),
-  organizationLineDestinations: (organizationId: string): Promise<OrganizationLineDestination[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/line-destinations`),
-  createOrganizationMember: (organizationId: string, input: OrganizationMemberInput): Promise<OrganizationMember> => request(`/api/organizations/${encodeURIComponent(organizationId)}/members`, {
+  accountContacts: (accountId: string): Promise<AccountContact[]> => request(`/api/organizations/${encodeURIComponent(accountId)}/members`),
+  accountLineDestinations: (accountId: string): Promise<AccountLineDestination[]> => request(`/api/organizations/${encodeURIComponent(accountId)}/line-destinations`),
+  createAccountContact: (accountId: string, input: AccountContactInput): Promise<AccountContact> => request(`/api/organizations/${encodeURIComponent(accountId)}/members`, {
     method: 'POST',
     body: JSON.stringify(input),
   }),
-  updateOrganizationMember: (
-    organizationId: string,
-    memberId: string,
-    input: Partial<Pick<OrganizationMember, 'name' | 'email' | 'tags' | 'state'>>,
-  ): Promise<Partial<OrganizationMember> & { id: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(memberId)}`, {
+  updateAccountContact: (
+    accountId: string,
+    contactId: string,
+    input: Partial<Pick<AccountContact, 'name' | 'email' | 'tags' | 'state'>>,
+  ): Promise<Partial<AccountContact> & { id: string }> => request(`/api/organizations/${encodeURIComponent(accountId)}/members/${encodeURIComponent(contactId)}`, {
     method: 'PATCH',
     body: JSON.stringify(input),
   }),
-  setMemberLineDestination: (
-    organizationId: string,
-    memberId: string,
-    input: MemberLineDestinationInput,
-  ): Promise<MemberLineDestination> => request(`/api/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(memberId)}/line-destination`, {
+  setContactLineDestination: (
+    accountId: string,
+    contactId: string,
+    input: ContactLineDestinationInput,
+  ): Promise<ContactLineDestination> => request(`/api/organizations/${encodeURIComponent(accountId)}/members/${encodeURIComponent(contactId)}/line-destination`, {
     method: 'PUT',
     body: JSON.stringify(input),
   }),
-  removeMemberLineDestination: (
-    organizationId: string,
-    memberId: string,
+  removeContactLineDestination: (
+    accountId: string,
+    contactId: string,
     lineDestinationId: string,
-  ): Promise<{ id: string; unlinked: boolean }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(memberId)}/line-destination/${encodeURIComponent(lineDestinationId)}`, {
+  ): Promise<{ id: string; unlinked: boolean }> => request(`/api/organizations/${encodeURIComponent(accountId)}/members/${encodeURIComponent(contactId)}/line-destination/${encodeURIComponent(lineDestinationId)}`, {
     method: 'DELETE',
   }),
   registerLineDestination: (
-    organizationId: string,
-    input: MemberLineDestinationInput,
-  ): Promise<OrganizationLineDestination> => request(`/api/organizations/${encodeURIComponent(organizationId)}/line-destinations`, {
+    accountId: string,
+    input: ContactLineDestinationInput,
+  ): Promise<AccountLineDestination> => request(`/api/organizations/${encodeURIComponent(accountId)}/line-destinations`, {
     method: 'POST',
     body: JSON.stringify(input),
   }),
   removeLineDestination: (
-    organizationId: string,
+    accountId: string,
     lineDestinationId: string,
-  ): Promise<{ id: string; removed: boolean }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/line-destinations/${encodeURIComponent(lineDestinationId)}`, {
+  ): Promise<{ id: string; removed: boolean }> => request(`/api/organizations/${encodeURIComponent(accountId)}/line-destinations/${encodeURIComponent(lineDestinationId)}`, {
     method: 'DELETE',
   }),
-  organizationTaskRoles: (organizationId: string): Promise<TaskRoleConfiguration> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles`),
-  createOrganizationTaskRole: (organizationId: string, input: { displayName: string; description: string }): Promise<OperationalTaskRole> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles`, { method: 'POST', body: JSON.stringify(input) }),
-  updateOrganizationTaskRole: (organizationId: string, roleId: string, input: { displayName?: string; description?: string }): Promise<OperationalTaskRole> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles/${encodeURIComponent(roleId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
-  removeOrganizationTaskRole: (organizationId: string, roleId: string): Promise<{ id: string; removed: boolean }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles/${encodeURIComponent(roleId)}`, { method: 'DELETE' }),
-  assignOrganizationTaskRole: (organizationId: string, roleId: string, memberId: string): Promise<TaskRoleAssignment> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-roles/${encodeURIComponent(roleId)}/assignment`, { method: 'PUT', body: JSON.stringify({ memberId }) }),
-  updateOrganizationTask: (organizationId: string, taskId: string, input: { completed?: boolean; remarks?: string }): Promise<OrganizationTask> => request(`/api/organizations/${encodeURIComponent(organizationId)}/tasks/${encodeURIComponent(taskId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
-  organizationTaskReassignment: (organizationId: string): Promise<TaskReassignmentReview> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-reassignments`),
-  suggestOrganizationTaskReassignments: (organizationId: string): Promise<{ proposals: TaskAssignmentProposal[]; review: TaskReassignmentReview }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-reassignments/suggestions`, { method: 'POST', body: JSON.stringify({}) }),
-  applyOrganizationTaskReassignments: (organizationId: string, assignments: Array<{ taskId: string; roleId: string }>): Promise<{ tasks: OrganizationTask[]; skipped: string[]; review: TaskReassignmentReview }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/task-reassignments`, { method: 'POST', body: JSON.stringify({ assignments }) }),
-  createOrganizationRule: (organizationId: string, input: OrganizationRuleInput): Promise<OrganizationRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules`, {
+  accountTaskRoles: (accountId: string): Promise<TaskRoleConfiguration> => request(`/api/organizations/${encodeURIComponent(accountId)}/task-roles`),
+  createAccountTaskRole: (accountId: string, input: { displayName: string; description: string }): Promise<OperationalTaskRole> => request(`/api/organizations/${encodeURIComponent(accountId)}/task-roles`, { method: 'POST', body: JSON.stringify(input) }),
+  updateAccountTaskRole: (accountId: string, roleId: string, input: { displayName?: string; description?: string }): Promise<OperationalTaskRole> => request(`/api/organizations/${encodeURIComponent(accountId)}/task-roles/${encodeURIComponent(roleId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  removeAccountTaskRole: (accountId: string, roleId: string): Promise<{ id: string; removed: boolean }> => request(`/api/organizations/${encodeURIComponent(accountId)}/task-roles/${encodeURIComponent(roleId)}`, { method: 'DELETE' }),
+  assignAccountTaskRole: (accountId: string, roleId: string, contactId: string): Promise<TaskRoleAssignment> => request(`/api/organizations/${encodeURIComponent(accountId)}/task-roles/${encodeURIComponent(roleId)}/assignment`, { method: 'PUT', body: JSON.stringify({ contactId }) }),
+  updateAccountTask: (accountId: string, taskId: string, input: { completed?: boolean; remarks?: string }): Promise<AccountTask> => request(`/api/organizations/${encodeURIComponent(accountId)}/tasks/${encodeURIComponent(taskId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  accountTaskReassignment: (accountId: string): Promise<TaskReassignmentReview> => request(`/api/organizations/${encodeURIComponent(accountId)}/task-reassignments`),
+  suggestAccountTaskReassignments: (accountId: string): Promise<{ proposals: TaskAssignmentProposal[]; review: TaskReassignmentReview }> => request(`/api/organizations/${encodeURIComponent(accountId)}/task-reassignments/suggestions`, { method: 'POST', body: JSON.stringify({}) }),
+  applyAccountTaskReassignments: (accountId: string, assignments: Array<{ taskId: string; roleId: string }>): Promise<{ tasks: AccountTask[]; skipped: string[]; review: TaskReassignmentReview }> => request(`/api/organizations/${encodeURIComponent(accountId)}/task-reassignments`, { method: 'POST', body: JSON.stringify({ assignments }) }),
+  createAccountRule: (accountId: string, input: AccountRuleInput): Promise<AccountRule> => request(`/api/organizations/${encodeURIComponent(accountId)}/rules`, {
     method: 'POST',
     body: JSON.stringify(input),
   }),
-  updateOrganizationRule: (organizationId: string, ruleId: string, input: Partial<Pick<OrganizationRule, 'state' | 'executionMode' | 'permittedRecipientListIds' | 'permittedLineListIds'>>): Promise<Partial<OrganizationRule> & { id: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rules/${encodeURIComponent(ruleId)}`, {
+  updateAccountRule: (accountId: string, ruleId: string, input: Partial<Pick<AccountRule, 'state' | 'executionMode' | 'permittedRecipientListIds' | 'permittedLineListIds'>>): Promise<Partial<AccountRule> & { id: string }> => request(`/api/organizations/${encodeURIComponent(accountId)}/rules/${encodeURIComponent(ruleId)}`, {
     method: 'PATCH',
     body: JSON.stringify(input),
   }),
-  createOrganizationPrompt: (organizationId: string, input: { name: string; instructions: string }): Promise<OrganizationPrompt> => request(`/api/organizations/${encodeURIComponent(organizationId)}/prompts`, { method: 'POST', body: JSON.stringify(input) }),
-  updateOrganizationPrompt: (organizationId: string, promptId: string, input: { name?: string; instructions?: string }): Promise<Partial<OrganizationPrompt> & { id: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/prompts/${encodeURIComponent(promptId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
-  removeOrganizationPrompt: (organizationId: string, promptId: string): Promise<{ id: string; removed: boolean }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/prompts/${encodeURIComponent(promptId)}`, { method: 'DELETE' }),
-  createOrganizationAgentRule: (organizationId: string, input: { name: string; promptId: string; state: 'draft' | 'active'; executionMode?: 'read_only' | 'approval' | 'unattended'; selectionPolicy: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[]; priority?: number }): Promise<OrganizationAgentRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-rules`, { method: 'POST', body: JSON.stringify(input) }),
-  updateOrganizationAgentRule: (organizationId: string, agentRuleId: string, input: { state?: 'draft' | 'active' | 'suspended' | 'archived'; executionMode?: 'read_only' | 'approval' | 'unattended'; promptId?: string; selectionPolicy?: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[] }): Promise<OrganizationAgentRule> => request(`/api/organizations/${encodeURIComponent(organizationId)}/agent-rules/${encodeURIComponent(agentRuleId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
-  organizationRuleRuns: (organizationId: string): Promise<RuleRun[]> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rule-runs`),
-  decideRuleRun: (organizationId: string, runId: string, decision: 'approve' | 'reject'): Promise<RuleRun> => request(`/api/organizations/${encodeURIComponent(organizationId)}/rule-runs/${encodeURIComponent(runId)}/decision`, { method: 'POST', body: JSON.stringify({ decision }) }),
-  organizationConnections: (organizationId: string): Promise<OrganizationConnections> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections`),
-  saveOrganizationLineConnection: (organizationId: string, input: {
+  createAccountPrompt: (accountId: string, input: { name: string; instructions: string }): Promise<AccountPrompt> => request(`/api/organizations/${encodeURIComponent(accountId)}/prompts`, { method: 'POST', body: JSON.stringify(input) }),
+  updateAccountPrompt: (accountId: string, promptId: string, input: { name?: string; instructions?: string }): Promise<Partial<AccountPrompt> & { id: string }> => request(`/api/organizations/${encodeURIComponent(accountId)}/prompts/${encodeURIComponent(promptId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  removeAccountPrompt: (accountId: string, promptId: string): Promise<{ id: string; removed: boolean }> => request(`/api/organizations/${encodeURIComponent(accountId)}/prompts/${encodeURIComponent(promptId)}`, { method: 'DELETE' }),
+  createAccountAgentRule: (accountId: string, input: { name: string; promptId: string; state: 'draft' | 'active'; executionMode?: 'read_only' | 'approval' | 'unattended'; selectionPolicy: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[]; priority?: number }): Promise<AccountAgentRule> => request(`/api/organizations/${encodeURIComponent(accountId)}/agent-rules`, { method: 'POST', body: JSON.stringify(input) }),
+  updateAccountAgentRule: (accountId: string, agentRuleId: string, input: { state?: 'draft' | 'active' | 'suspended' | 'archived'; executionMode?: 'read_only' | 'approval' | 'unattended'; promptId?: string; selectionPolicy?: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[] }): Promise<AccountAgentRule> => request(`/api/organizations/${encodeURIComponent(accountId)}/agent-rules/${encodeURIComponent(agentRuleId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  accountRuleRuns: (accountId: string): Promise<RuleRun[]> => request(`/api/organizations/${encodeURIComponent(accountId)}/rule-runs`),
+  decideRuleRun: (accountId: string, runId: string, decision: 'approve' | 'reject'): Promise<RuleRun> => request(`/api/organizations/${encodeURIComponent(accountId)}/rule-runs/${encodeURIComponent(runId)}/decision`, { method: 'POST', body: JSON.stringify({ decision }) }),
+  accountConnections: (accountId: string): Promise<AccountConnections> => request(`/api/organizations/${encodeURIComponent(accountId)}/connections`),
+  saveAccountLineConnection: (accountId: string, input: {
     channelAccessToken?: string | undefined;
     channelSecret?: string | undefined;
-  }): Promise<OrganizationConnections['line']> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections/line`, {
+  }): Promise<AccountConnections['line']> => request(`/api/organizations/${encodeURIComponent(accountId)}/connections/line`, {
     method: 'PUT',
     body: JSON.stringify(input),
   }),
-  saveOrganizationAiConnection: (organizationId: string, input: {
+  saveAccountAiConnection: (accountId: string, input: {
     apiKey?: string | undefined;
     model?: string | undefined;
     baseUrl?: string | undefined;
-  }): Promise<OrganizationConnections['ai']> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections/ai`, {
+  }): Promise<AccountConnections['ai']> => request(`/api/organizations/${encodeURIComponent(accountId)}/connections/ai`, {
     method: 'PUT',
     body: JSON.stringify(input),
   }),
-  testAiConnection: (organizationId: string, prompt: string): Promise<{ text: string; model: string }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/connections/ai/test`, {
+  testAiConnection: (accountId: string, prompt: string): Promise<{ text: string; model: string }> => request(`/api/organizations/${encodeURIComponent(accountId)}/connections/ai/test`, {
     method: 'POST',
     body: JSON.stringify({ prompt }),
   }),
-  searchMailboxForTest: (organizationId: string, subject: string): Promise<{ messages: MailboxTestMatch[] }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/search`, {
+  searchMailboxForTest: (accountId: string, subject: string): Promise<{ messages: MailboxTestMatch[] }> => request(`/api/organizations/${encodeURIComponent(accountId)}/mail-tests/search`, {
     method: 'POST',
     body: JSON.stringify({ subject }),
   }),
-  prepareMailboxTestAiRequest: (organizationId: string, messageId: string): Promise<MailboxTestAiRequest> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/${encodeURIComponent(messageId)}/ai-request`, {
+  prepareMailboxTestAiRequest: (accountId: string, messageId: string): Promise<MailboxTestAiRequest> => request(`/api/organizations/${encodeURIComponent(accountId)}/mail-tests/${encodeURIComponent(messageId)}/ai-request`, {
     method: 'POST',
   }),
-  previewMailboxTestEvent: (organizationId: string, messageId: string): Promise<MailboxTestPreview> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/${encodeURIComponent(messageId)}/preview`, {
+  previewMailboxTestEvent: (accountId: string, messageId: string): Promise<MailboxTestPreview> => request(`/api/organizations/${encodeURIComponent(accountId)}/mail-tests/${encodeURIComponent(messageId)}/preview`, {
     method: 'POST',
   }),
-  previewDraftRuleEvent: (organizationId: string, messageId: string, ruleId: string): Promise<MailboxTestPreview> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/${encodeURIComponent(messageId)}/draft-preview`, {
+  previewDraftRuleEvent: (accountId: string, messageId: string, ruleId: string): Promise<MailboxTestPreview> => request(`/api/organizations/${encodeURIComponent(accountId)}/mail-tests/${encodeURIComponent(messageId)}/draft-preview`, {
     method: 'POST',
     body: JSON.stringify({ ruleId }),
   }),
-  createMailboxTestCalendarEvents: (organizationId: string, confirmationToken: string): Promise<{ eventIds: string[] }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/calendar`, {
+  createMailboxTestCalendarEvents: (accountId: string, confirmationToken: string): Promise<{ eventIds: string[] }> => request(`/api/organizations/${encodeURIComponent(accountId)}/mail-tests/calendar`, {
     method: 'POST',
     body: JSON.stringify({ confirmationToken }),
   }),
-  startMailboxTestRuleRun: (organizationId: string, confirmationToken: string, ruleId: string): Promise<RuleRun> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/rule-run`, {
+  startMailboxTestRuleRun: (accountId: string, confirmationToken: string, ruleId: string): Promise<RuleRun> => request(`/api/organizations/${encodeURIComponent(accountId)}/mail-tests/rule-run`, {
     method: 'POST',
     body: JSON.stringify({ confirmationToken, ruleId }),
   }),
-  prepareMailboxTestRefreshRequest: (organizationId: string, messageId: string, confirmationToken: string): Promise<MailboxTestRefreshRequest> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/${encodeURIComponent(messageId)}/refresh-request`, {
+  prepareMailboxTestRefreshRequest: (accountId: string, messageId: string, confirmationToken: string): Promise<MailboxTestRefreshRequest> => request(`/api/organizations/${encodeURIComponent(accountId)}/mail-tests/${encodeURIComponent(messageId)}/refresh-request`, {
     method: 'POST',
     body: JSON.stringify({ confirmationToken }),
   }),
-  planMailboxTestRefresh: (organizationId: string, messageId: string, confirmationToken: string): Promise<MailboxTestRefreshPlan> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/${encodeURIComponent(messageId)}/refresh-plan`, {
+  planMailboxTestRefresh: (accountId: string, messageId: string, confirmationToken: string): Promise<MailboxTestRefreshPlan> => request(`/api/organizations/${encodeURIComponent(accountId)}/mail-tests/${encodeURIComponent(messageId)}/refresh-plan`, {
     method: 'POST',
     body: JSON.stringify({ confirmationToken }),
   }),
-  applyMailboxTestRefresh: (organizationId: string, confirmationToken: string, candidateIndexes: number[]): Promise<MailboxTestRefreshOutcome> => request(`/api/organizations/${encodeURIComponent(organizationId)}/mail-tests/refresh`, {
+  applyMailboxTestRefresh: (accountId: string, confirmationToken: string, candidateIndexes: number[]): Promise<MailboxTestRefreshOutcome> => request(`/api/organizations/${encodeURIComponent(accountId)}/mail-tests/refresh`, {
     method: 'POST',
     body: JSON.stringify({ confirmationToken, candidateIndexes }),
   }),
-  runAutomation: (organizationId: string): Promise<AutomationSummary> => request(`/api/organizations/${encodeURIComponent(organizationId)}/automation/run`, { method: 'POST' }),
-  setEnabled: (organizationId: string, enabled: boolean): Promise<{ enabled: boolean }> => request(`/api/organizations/${encodeURIComponent(organizationId)}/automation/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }),
+  runAutomation: (accountId: string): Promise<AutomationSummary> => request(`/api/organizations/${encodeURIComponent(accountId)}/automation/run`, { method: 'POST' }),
+  setEnabled: (accountId: string, enabled: boolean): Promise<{ enabled: boolean }> => request(`/api/organizations/${encodeURIComponent(accountId)}/automation/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }),
   logout: (): Promise<{ loggedOut: boolean }> => request('/api/auth/logout', { method: 'POST' }),
+  mcpServers: (accountId: string): Promise<McpServerView[]> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/mcp-servers`),
+  saveMcpServer: (accountId: string, id: string, input: { name: string; url: string; token: string | null }): Promise<{ id: string }> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/mcp-servers/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(input) }),
+  removeMcpServer: (accountId: string, id: string): Promise<{ id: string }> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/mcp-servers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  chatConversations: (accountId: string): Promise<ChatConversationView[]> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/chat`),
+  chatTurns: (accountId: string, conversationId: string): Promise<ChatTurnView[]> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/chat/${encodeURIComponent(conversationId)}`),
+  sendChatMessage: (accountId: string, input: { conversationId: string | null; message: string }): Promise<ChatReply> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/chat`, { method: 'POST', body: JSON.stringify(input) }),
+  contactLists: (accountId: string): Promise<ContactListView[]> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/contact-lists`),
+  saveContactList: (accountId: string, id: string, input: { name: string; contactIds: string[] }): Promise<{ id: string }> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/contact-lists/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(input) }),
+  accessTokens: (accountId: string): Promise<AccessTokenView[]> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/access-tokens`),
+  issueAccessToken: (accountId: string, input: { name: string; contactListId: string; tools: string[]; suppressionWindow: string }): Promise<IssuedAccessToken> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/access-tokens`, { method: 'POST', body: JSON.stringify(input) }),
+  revokeAccessToken: (accountId: string, id: string): Promise<{ id: string }> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/access-tokens/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  automations: (accountId: string): Promise<AutomationView[]> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/automations`),
+  saveAutomation: (accountId: string, id: string, input: AutomationInput): Promise<{ id: string; nextRunAt: string | null }> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/automations/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(input) }),
+  removeAutomation: (accountId: string, id: string): Promise<{ id: string }> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/automations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  automationRuns: (accountId: string, id: string): Promise<AutomationRunView[]> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/automations/${encodeURIComponent(id)}/runs`),
+  saveDiscordConnection: (accountId: string, input: { botToken: string; applicationPublicKey: string }): Promise<{ configured: boolean; interactionsUrl: string }> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/connections/discord`, { method: 'PUT', body: JSON.stringify(input) }),
 };
+
+export interface AutomationInput {
+  name: string;
+  promptId: string;
+  contactListId: string | null;
+  schedule: string;
+  offsetMinutes: number;
+  executionMode: string;
+  suppressionWindow: string;
+  state: string;
+  tools: string[];
+}
+
+export interface AutomationView extends AutomationInput {
+  id: string;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  lastError: string | null;
+}
+
+export interface AutomationRunView {
+  id: string;
+  startedAt: string;
+  finishedAt: string | null;
+  status: 'running' | 'completed' | 'failed';
+  output: string | null;
+  error: string | null;
+  toolCalls: number;
+}
+
+export interface ContactListView {
+  id: string;
+  name: string;
+  description: string;
+  contactIds: string[];
+}
+
+export interface AccessTokenView {
+  id: string;
+  name: string;
+  contactListId: string;
+  suppressionWindow: string;
+  callsPerHour: number;
+  writesPerDay: number;
+  lastUsedAt: string | null;
+  tools: string[];
+}
+
+export interface IssuedAccessToken {
+  id: string;
+  name: string;
+  tools: string[];
+  token: string;
+  url: string;
+}
+
+export interface McpServerView {
+  id: string;
+  name: string;
+  url: string;
+  revision: string | null;
+  authenticated: boolean;
+  updatedAt: string;
+}
+
+export interface ChatConversationView {
+  id: string;
+  title: string;
+  updatedAt: string;
+}
+
+export interface ChatTurnView {
+  id: string;
+  position: number;
+  request: string;
+  response: string | null;
+  status: 'running' | 'completed' | 'failed';
+  error: string | null;
+  ruleRunId: string;
+}
+
+export interface ChatReply {
+  conversationId: string;
+  turnId: string;
+  ruleRunId: string;
+  response: string;
+  toolCallCount: number;
+  unreachableServers: Array<{ server: string; error: string }>;
+}

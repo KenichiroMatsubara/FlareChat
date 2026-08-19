@@ -20,7 +20,7 @@ const databaseAtMilestone = (
   seedScheduledEvent(database, { id: `event-${daysUntilDeadline}`, attendanceDeadline: deadline });
   seedAttendanceRegistration(database, {
     eventId: `event-${daysUntilDeadline}`,
-    memberId: `recipient-${daysUntilDeadline}`,
+    contactId: `recipient-${daysUntilDeadline}`,
     destination: `${daysUntilDeadline}@example.com`,
   });
   return {
@@ -55,12 +55,12 @@ describe('Attendance reminder scheduling', () => {
     seedScheduledEvent(database, { id: 'event-1', attendanceDeadline: '2026-08-03T00:00:00.000Z' });
     seedAttendanceRegistration(database, {
       eventId: 'event-1',
-      memberId: 'unanswered',
+      contactId: 'unanswered',
       destination: 'unanswered@example.com',
     });
     seedAttendanceRegistration(database, {
       eventId: 'event-1',
-      memberId: 'attending',
+      contactId: 'attending',
       destination: 'attending@example.com',
       status: 'attending',
     });

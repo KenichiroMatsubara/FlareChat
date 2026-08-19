@@ -6,7 +6,7 @@ export interface CipherEnvelope {
   ciphertext: string;
 }
 
-export interface WrappedOrganizationKey {
+export interface WrappedAccountKey {
   masterKeyVersion: string;
   envelope: CipherEnvelope;
 }
@@ -55,21 +55,21 @@ export const masterKey = async (base64UrlKey: string): Promise<CryptoKey> => {
   return importAesKey(raw);
 };
 
-export const createOrganizationKey = async (
+export const createAccountKey = async (
   key: CryptoKey,
   masterKeyVersion: string,
-  organizationId: string,
-): Promise<WrappedOrganizationKey> => {
+  accountId: string,
+): Promise<WrappedAccountKey> => {
   const raw = fromBase64Url(randomToken(32));
-  const envelope = await encrypt(toBase64Url(raw), key, `organization-key:${organizationId}`);
+  const envelope = await encrypt(toBase64Url(raw), key, `organization-key:${accountId}`);
   return { masterKeyVersion, envelope };
 };
 
-export const unwrapOrganizationKey = async (
-  wrapped: WrappedOrganizationKey,
+export const unwrapAccountKey = async (
+  wrapped: WrappedAccountKey,
   key: CryptoKey,
-  organizationId: string,
+  accountId: string,
 ): Promise<CryptoKey> => {
-  const raw = fromBase64Url(await decrypt(wrapped.envelope, key, `organization-key:${organizationId}`));
+  const raw = fromBase64Url(await decrypt(wrapped.envelope, key, `organization-key:${accountId}`));
   return importAesKey(raw);
 };

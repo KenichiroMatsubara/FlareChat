@@ -4,13 +4,13 @@ import type { AppState, ProvisioningPhase } from '@mail/domain';
 import type { AuthMe } from './api';
 
 /** Uses the authenticated Google profile as the only setup-name default. */
-export const defaultOrganizationName = (member: AuthMe | null): string => member?.displayName.trim() || '';
+export const defaultAccountName = (contact: AuthMe | null): string => contact?.displayName.trim() || '';
 
-export const shouldShowOrganizationLoading = (
-  member: AuthMe | null,
-  organizationId: string,
+export const shouldShowAccountLoading = (
+  contact: AuthMe | null,
+  accountId: string,
   loading: boolean,
-): boolean => Boolean(member?.organizations.length && (!organizationId || loading));
+): boolean => Boolean(contact?.accounts.length && (!accountId || loading));
 
 export const setupPhaseLabel = (phase: ProvisioningPhase | null): string => {
   if (!phase) return '準備を開始しています';
@@ -36,8 +36,8 @@ export const SignedOutEntry = ({
   <p className="eyebrow">GOOGLE IDENTITY</p><h1>Mail Automationを開く</h1>
   <p className="setup-copy">どちらか一方を選んでください。この選択自体はGoogle認証ではなく、選んだ導線でだけOAuthを1回行います。</p>
   {error && <p className="setup-error">{error}</p>}
-  <button className="primary" onClick={() => onSelect('organization_setup')} disabled={busy}>{busy ? 'Googleへ接続中…' : '新しいOrganizationを作る'}</button>
-  <button className="secondary google-login entry-login" onClick={() => onSelect('login')} disabled={busy}><ShieldCheck size={18} />既存Organizationへログイン</button>
+  <button className="primary" onClick={() => onSelect('organization_setup')} disabled={busy}>{busy ? 'Googleへ接続中…' : '新しいAccountを作る'}</button>
+  <button className="secondary google-login entry-login" onClick={() => onSelect('login')} disabled={busy}><ShieldCheck size={18} />既存Accountへログイン</button>
 </section></main>;
 
 export const appStateKind = (state: AppState): AppState['kind'] => state.kind;

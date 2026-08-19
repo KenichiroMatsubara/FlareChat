@@ -9,14 +9,14 @@ import {
   decodedBody,
   receivedAtOf,
   runEnabledAutomations,
-  runOrganizationAutomation,
+  runAccountAutomation,
   selectActiveRule,
   sourceAttachments,
   sourceAttachmentSizes,
 } from './automation';
 import { createAutomationTestApp, type AutomationTestApp } from '../test/automation';
-import { encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
-import { createMemoryR2, seedAttendanceRegistration, seedMember, seedScheduledEvent } from '../test/seed';
+import { encrypt, masterKey, unwrapAccountKey } from './cryptography';
+import { createMemoryR2, seedAttendanceRegistration, seedContact, seedScheduledEvent } from '../test/seed';
 import { AGENT_TOKEN_CEILING, MAX_AGENT_TOOL_CALLS } from './agent-runs';
 import { GoogleApiError } from './automation/providers';
 
@@ -112,10 +112,10 @@ describe('Source Message processing primitives', () => {
   });
 });
 
-describe('Organization Automation Inbox scheduling', () => {
+describe('Account Automation Inbox scheduling', () => {
   it('ignores a message sent by the Automation Inbox and still advances Gmail history', async () => {
     fixture = await createAutomationTestApp({ ai: true });
-    seedMember(fixture.organization, { id: 'member-1', name: '一郎', email: 'member@example.com' });
+    seedContact(fixture.account, { id: 'member-1', name: '一郎', email: 'member@example.com' });
     const requests: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       requests.push(url);
@@ -144,15 +144,15 @@ describe('Organization Automation Inbox scheduling', () => {
       return Response.json({ id: 'calendar-event-that-must-not-exist' });
     }));
 
-    await expect(runOrganizationAutomation(
+    await expect(runAccountAutomation(
       fixture.environment,
       'organization-1',
-      fixture.organization.binding,
+      fixture.account.binding,
     )).resolves.toEqual({ scanned: 0, created: 0, skipped: 0, exceptions: 0 });
 
     expect(requests.some((url) => url.includes('ai.example.com') || url.includes('/calendar/'))).toBe(false);
-    expect(fixture.organization.rows('SELECT * FROM source_messages')).toEqual([]);
-    expect(fixture.organization.row<{ gmail_history_id: string }>(
+    expect(fixture.account.rows('SELECT * FROM source_messages')).toEqual([]);
+    expect(fixture.account.row<{ gmail_history_id: string }>(
       "SELECT gmail_history_id FROM google_connections WHERE kind = 'automation_inbox'",
     )).toEqual({ gmail_history_id: 'history-after-sent-reply' });
   });
@@ -188,23 +188,23 @@ describe('Organization Automation Inbox scheduling', () => {
       throw new Error(`Unexpected request: ${url}`);
     }));
 
-    await expect(runOrganizationAutomation(
+    await expect(runAccountAutomation(
       fixture.environment,
       'organization-1',
-      fixture.organization.binding,
+      fixture.account.binding,
     )).resolves.toEqual({ scanned: 0, created: 0, skipped: 0, exceptions: 0 });
 
     expect(requests.some((url) => url.includes('ai.example.com'))).toBe(false);
     expect(requests.some((url) => url.includes('/labels') || url.includes('/modify'))).toBe(false);
-    expect(fixture.organization.rows('SELECT * FROM source_messages')).toEqual([]);
-    expect(fixture.organization.row<{ gmail_history_id: string }>(
+    expect(fixture.account.rows('SELECT * FROM source_messages')).toEqual([]);
+    expect(fixture.account.row<{ gmail_history_id: string }>(
       "SELECT gmail_history_id FROM google_connections WHERE kind = 'automation_inbox'",
     )).toEqual({ gmail_history_id: 'history-after-ignored-mail' });
   });
 
-  it('repairs a rule-less Organization with a catch-all Schema Rule and sends ordinary mail through AI', async () => {
+  it('repairs a rule-less Account with a catch-all Schema Rule and sends ordinary mail through AI', async () => {
     fixture = await createAutomationTestApp({ ai: true });
-    fixture.organization.execute('DELETE FROM rules');
+    fixture.account.execute('DELETE FROM rules');
     const requests: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       requests.push(url);
@@ -227,21 +227,21 @@ describe('Organization Automation Inbox scheduling', () => {
       return Response.json({ id: 'calendar-event-rule-repair' });
     }));
 
-    await expect(runOrganizationAutomation(
+    await expect(runAccountAutomation(
       fixture.environment,
       'organization-1',
-      fixture.organization.binding,
+      fixture.account.binding,
     )).resolves.toEqual({ scanned: 1, created: 1, skipped: 0, exceptions: 0 });
 
     expect(requests.some((url) => url.includes('ai.example.com'))).toBe(true);
-    expect(fixture.organization.rows<{ name: string; status: string }>('SELECT name, status FROM rules')).toEqual([
+    expect(fixture.account.rows<{ name: string; status: string }>('SELECT name, status FROM rules')).toEqual([
       { name: 'All incoming mail', status: 'active' },
     ]);
   });
 
   it('keeps selective rules while adding a lower-priority catch-all for otherwise unmatched mail', async () => {
     fixture = await createAutomationTestApp({ ai: true });
-    fixture.organization.execute("UPDATE rules SET selection_policy = '{\"sender\":\"trusted@example.com\"}' WHERE id = 'rule-1'");
+    fixture.account.execute("UPDATE rules SET selection_policy = '{\"sender\":\"trusted@example.com\"}' WHERE id = 'rule-1'");
     const requests: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       requests.push(url);
@@ -258,13 +258,13 @@ describe('Organization Automation Inbox scheduling', () => {
       throw new Error(`Unexpected request: ${url}`);
     }));
 
-    await expect(runOrganizationAutomation(
+    await expect(runAccountAutomation(
       fixture.environment,
       'organization-1',
-      fixture.organization.binding,
+      fixture.account.binding,
     )).resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 0 });
     expect(requests.some((url) => url.includes('ai.example.com'))).toBe(true);
-    expect(fixture.organization.rows<{ name: string; priority: number }>(
+    expect(fixture.account.rows<{ name: string; priority: number }>(
       'SELECT name, priority FROM rules ORDER BY priority DESC',
     )).toEqual([
       { name: 'All dated Source Messages', priority: 0 },
@@ -274,7 +274,7 @@ describe('Organization Automation Inbox scheduling', () => {
 
   it('reprocesses messages that legacy Automation previously marked as skipped', async () => {
     fixture = await createAutomationTestApp({ ai: true });
-    fixture.organization.execute(
+    fixture.account.execute(
       `INSERT INTO source_messages
         (id, gmail_message_id, gmail_history_id, sender, subject, received_at, processed_at, state)
        VALUES (?, ?, ?, ?, ?, ?, ?, 'skipped')`,
@@ -297,15 +297,15 @@ describe('Organization Automation Inbox scheduling', () => {
       throw new Error(`Unexpected request: ${url}`);
     }));
 
-    await expect(runOrganizationAutomation(
+    await expect(runAccountAutomation(
       fixture.environment,
       'organization-1',
-      fixture.organization.binding,
+      fixture.account.binding,
     )).resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 0 });
-    expect(fixture.organization.row<{ state: string }>(
+    expect(fixture.account.row<{ state: string }>(
       "SELECT state FROM source_messages WHERE id = 'source-previously-skipped'",
     )).toEqual({ state: 'processed' });
-    const baseline = fixture.organization.row<{ value: string }>(
+    const baseline = fixture.account.row<{ value: string }>(
       "SELECT value FROM settings WHERE key = 'baseline-schema-rule:v1'",
     );
     expect(JSON.parse(baseline?.value ?? '{}')).toMatchObject({ repairSkipped: false });
@@ -324,15 +324,15 @@ describe('Organization Automation Inbox scheduling', () => {
       return Response.json({ id: 'calendar-event-should-not-exist' });
     }));
 
-    await expect(runOrganizationAutomation(
+    await expect(runAccountAutomation(
       fixture.environment,
       'organization-1',
-      fixture.organization.binding,
+      fixture.account.binding,
     )).rejects.toThrow('自動化を実行する前に OpenAI 互換 API を設定してください。');
     await runEnabledAutomations(fixture.environment);
     expect(requests).toEqual([]);
-    expect(fixture.organization.rows('SELECT * FROM source_messages')).toEqual([]);
-    expect(fixture.organization.row<{ status: string; last_error: string }>(
+    expect(fixture.account.rows('SELECT * FROM source_messages')).toEqual([]);
+    expect(fixture.account.row<{ status: string; last_error: string }>(
       "SELECT status, last_error FROM google_connections WHERE kind = 'automation_inbox'",
     )).toEqual({
       status: 'active',
@@ -362,19 +362,19 @@ describe('Organization Automation Inbox scheduling', () => {
       throw new Error(`Unexpected request: ${url}`);
     }));
 
-    await expect(runOrganizationAutomation(
+    await expect(runAccountAutomation(
       fixture.environment,
       'organization-1',
-      fixture.organization.binding,
+      fixture.account.binding,
     )).resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 0 });
-    expect(fixture.organization.row<{ gmail_history_id: string }>(
+    expect(fixture.account.row<{ gmail_history_id: string }>(
       "SELECT gmail_history_id FROM google_connections WHERE kind = 'automation_inbox'",
     )).toEqual({ gmail_history_id: 'history-after-deleted-message' });
   });
 
   it('executes an unattended Agent Rule LINE write once and records a failed delivery without retry work', async () => {
     fixture = await createAutomationTestApp({ ai: true, lineSecret: 'line-secret' });
-    fixture.organization.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");
+    fixture.account.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");
     const lineList = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', { kind: 'line', name: 'Writers' }), fixture.environment);
     const lineListId = (await lineList.json() as { data: { id: string } }).data.id;
     await app.fetch(fixture.jsonRequest(`/api/organizations/organization-1/lists/${lineListId}/items`, { value: 'line-user-1', label: 'Writer' }), fixture.environment);
@@ -398,24 +398,24 @@ describe('Organization Automation Inbox scheduling', () => {
       agent: { complete },
     });
 
-    await expect(automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding }))
+    await expect(automation.runAccount({ accountId: 'organization-1', database: fixture.account.binding }))
       .resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 0 });
     expect(linePush).toHaveBeenCalledTimes(1);
-    expect(fixture.organization.rows<{ destination: string; outcome: string }>('SELECT destination, outcome FROM deliveries')).toEqual([{ destination: 'line-user-1', outcome: 'failed' }]);
-    expect(fixture.organization.rows('SELECT * FROM jobs')).toHaveLength(0);
-    const run = fixture.organization.row<{ id: string }>('SELECT id FROM agent_runs')!;
+    expect(fixture.account.rows<{ destination: string; outcome: string }>('SELECT destination, outcome FROM deliveries')).toEqual([{ destination: 'line-user-1', outcome: 'failed' }]);
+    expect(fixture.account.rows('SELECT * FROM jobs')).toHaveLength(0);
+    const run = fixture.account.row<{ id: string }>('SELECT id FROM agent_runs')!;
     const transcript = await app.fetch(fixture.request(`/api/organizations/organization-1/agent-runs/${run.id}/transcript`), fixture.environment);
     const transcriptText = await transcript.text();
     expect(transcriptText).toContain('line-user-1');
     expect(transcriptText).toContain('planned');
-    await expect(automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding }))
+    await expect(automation.runAccount({ accountId: 'organization-1', database: fixture.account.binding }))
       .resolves.toEqual({ scanned: 0, created: 0, skipped: 0, exceptions: 0 });
     expect(linePush).toHaveBeenCalledTimes(1);
   });
 
   it('approves one frozen Rule Run batch without invoking the Agent again', async () => {
     fixture = await createAutomationTestApp({ ai: true, lineSecret: 'line-secret' });
-    fixture.organization.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");
+    fixture.account.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");
     const lineList = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', { kind: 'line', name: 'Writers' }), fixture.environment);
     const lineListId = (await lineList.json() as { data: { id: string } }).data.id;
     await app.fetch(fixture.jsonRequest(`/api/organizations/organization-1/lists/${lineListId}/items`, { value: 'line-user-1', label: 'Writer' }), fixture.environment);
@@ -438,10 +438,10 @@ describe('Organization Automation Inbox scheduling', () => {
       } }, agent: { complete },
     });
 
-    await automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding });
+    await automation.runAccount({ accountId: 'organization-1', database: fixture.account.binding });
     expect(linePush).not.toHaveBeenCalled();
-    const run = fixture.organization.row<{ id: string }>('SELECT id FROM rule_runs')!;
-    expect(fixture.organization.row<{ id: string }>('SELECT id FROM agent_runs')).toEqual(run);
+    const run = fixture.account.row<{ id: string }>('SELECT id FROM rule_runs')!;
+    expect(fixture.account.row<{ id: string }>('SELECT id FROM agent_runs')).toEqual(run);
     const runResponse = await app.fetch(fixture.request(`/api/organizations/organization-1/rule-runs/${run.id}`), fixture.environment);
     const pending = await runResponse.json() as { data: { sourceMessage: { subject: string; sender: string }; status: string; effects: Array<{ arguments: { destination: string; message: string }; status: string }> } };
     expect(pending.data).toMatchObject({
@@ -455,12 +455,12 @@ describe('Organization Automation Inbox scheduling', () => {
     expect(approved.status).toBe(200);
     expect(linePush).toHaveBeenCalledTimes(1);
     expect(complete).toHaveBeenCalledTimes(2);
-    expect(fixture.organization.rows<{ destination: string; outcome: string }>('SELECT destination, outcome FROM deliveries')).toEqual([{ destination: 'line-user-1', outcome: 'succeeded' }]);
+    expect(fixture.account.rows<{ destination: string; outcome: string }>('SELECT destination, outcome FROM deliveries')).toEqual([{ destination: 'line-user-1', outcome: 'succeeded' }]);
   });
 
   it('creates a Scheduled Event only for a permitted recipient destination in unattended mode', async () => {
     fixture = await createAutomationTestApp({ ai: true });
-    fixture.organization.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");
+    fixture.account.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");
     const recipientList = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/lists', { kind: 'recipient', name: 'Guests' }), fixture.environment);
     const recipientListId = (await recipientList.json() as { data: { id: string } }).data.id;
     await app.fetch(fixture.jsonRequest(`/api/organizations/organization-1/lists/${recipientListId}/items`, { value: 'guest@example.com', label: 'Guest' }), fixture.environment);
@@ -486,29 +486,29 @@ describe('Organization Automation Inbox scheduling', () => {
       } : { model: 'test-model', content: 'done', toolCalls: [], totalTokens: 5 } },
     });
 
-    await expect(automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding }))
+    await expect(automation.runAccount({ accountId: 'organization-1', database: fixture.account.binding }))
       .resolves.toEqual({ scanned: 1, created: 1, skipped: 0, exceptions: 0 });
     expect(calendarUrl).toContain('sendUpdates=none');
     expect(calendarBody).toMatchObject({ summary: 'Practice', attendees: [{ email: 'guest@example.com' }] });
-    expect(fixture.organization.rows<{ agent_rule_id: string; title: string; status: string }>('SELECT agent_rule_id, title, status FROM events')).toEqual([{ agent_rule_id: agentRuleId, title: 'Practice', status: 'scheduled' }]);
-    expect(fixture.organization.rows<{ destination: string; outcome: string }>('SELECT destination, outcome FROM deliveries')).toEqual([{ destination: 'guest@example.com', outcome: 'succeeded' }]);
+    expect(fixture.account.rows<{ agent_rule_id: string; title: string; status: string }>('SELECT agent_rule_id, title, status FROM events')).toEqual([{ agent_rule_id: agentRuleId, title: 'Practice', status: 'scheduled' }]);
+    expect(fixture.account.rows<{ destination: string; outcome: string }>('SELECT destination, outcome FROM deliveries')).toEqual([{ destination: 'guest@example.com', outcome: 'succeeded' }]);
   });
 
-  it('runs each matching read-only Agent Rule once with only Organization query tools', async () => {
+  it('runs each matching read-only Agent Rule once with only Account query tools', async () => {
     fixture = await createAutomationTestApp({ ai: true });
-    fixture.organization.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");
-    fixture.organization.execute(
+    fixture.account.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");
+    fixture.account.execute(
       "INSERT INTO source_messages (id, gmail_message_id, gmail_history_id, sender, subject, received_at, state) VALUES ('source-existing', 'gmail-existing', 'history-existing', 'member@example.com', '既存行事', '2026-08-01', 'processed')",
     );
-    seedScheduledEvent(fixture.organization, { id: 'event-existing', title: '既存行事' });
-    seedAttendanceRegistration(fixture.organization, {
-      eventId: 'event-existing', memberId: 'recipient-existing', destination: 'reader@example.com', status: 'attending',
+    seedScheduledEvent(fixture.account, { id: 'event-existing', title: '既存行事' });
+    seedAttendanceRegistration(fixture.account, {
+      eventId: 'event-existing', contactId: 'recipient-existing', destination: 'reader@example.com', status: 'attending',
     });
-    fixture.organization.execute(
+    fixture.account.execute(
       "INSERT INTO tasks (id, organization_id, source_message_id, source_message_subject, title, deadline, assignee_role_id, assignee_role_name, description, created_at, updated_at) VALUES ('task-existing', 'organization-1', 'source-existing', '既存行事', '資料確認', '2026-08-10', 'unassigned', '未割り当て', '資料を確認する', '2026-08-01', '2026-08-01')",
     );
     const prompt = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/prompts', {
-      name: 'Read-only analyst', instructions: 'Inspect the Source Message and Organization records.',
+      name: 'Read-only analyst', instructions: 'Inspect the Source Message and Account records.',
     }), fixture.environment);
     const promptId = (await prompt.json() as { data: { id: string } }).data.id;
     const agentRule = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/agent-rules', {
@@ -550,7 +550,7 @@ describe('Organization Automation Inbox scheduling', () => {
       },
     });
 
-    await expect(automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding }))
+    await expect(automation.runAccount({ accountId: 'organization-1', database: fixture.account.binding }))
       .resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 0 });
     expect(complete).toHaveBeenCalledTimes(2);
     const toolResults = requests[1]?.messages.filter((message) => message.role === 'tool').map((message) => message.content).join('\n') ?? '';
@@ -614,7 +614,7 @@ describe('Organization Automation Inbox scheduling', () => {
       agent: { complete },
     });
 
-    await expect(automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding }))
+    await expect(automation.runAccount({ accountId: 'organization-1', database: fixture.account.binding }))
       .resolves.toEqual({ scanned: 1, created: 1, skipped: 0, exceptions: 0 });
     expect(googleRequests.filter((url) => url.includes('/messages/gmail-shared'))).toHaveLength(1);
     expect(read).toHaveBeenCalledTimes(1);
@@ -634,7 +634,7 @@ describe('Organization Automation Inbox scheduling', () => {
 
   it('turns an Agent Rule tool-call limit failure into one non-retried Automation Exception', async () => {
     fixture = await createAutomationTestApp({ ai: true });
-    fixture.organization.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");
+    fixture.account.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");
     const prompt = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/prompts', {
       name: 'Bounded analyst', instructions: 'Inspect the Source Message.',
     }), fixture.environment);
@@ -658,9 +658,9 @@ describe('Organization Automation Inbox scheduling', () => {
       agent: { complete },
     });
 
-    await expect(automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding }))
+    await expect(automation.runAccount({ accountId: 'organization-1', database: fixture.account.binding }))
       .resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 1 });
-    await expect(automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding }))
+    await expect(automation.runAccount({ accountId: 'organization-1', database: fixture.account.binding }))
       .resolves.toEqual({ scanned: 0, created: 0, skipped: 0, exceptions: 0 });
     const exceptions = await app.fetch(fixture.request('/api/organizations/organization-1/operations/exceptions'), fixture.environment);
     await expect(exceptions.json()).resolves.toMatchObject({ data: [{
@@ -686,7 +686,7 @@ describe('Organization Automation Inbox scheduling', () => {
 
   it('indexes every Agent Rule run in D1 and exposes its encrypted R2 Run Transcript', async () => {
     fixture = await createAutomationTestApp({ ai: true });
-    fixture.organization.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");
+    fixture.account.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");
     const r2 = createMemoryR2();
     fixture.environment.RECOVERY_RECEIPTS = r2.bucket;
     const prompt = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/prompts', {
@@ -717,7 +717,7 @@ describe('Organization Automation Inbox scheduling', () => {
       } },
     });
 
-    await automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding });
+    await automation.runAccount({ accountId: 'organization-1', database: fixture.account.binding });
     const runs = await app.fetch(fixture.request('/api/organizations/organization-1/agent-runs'), fixture.environment);
     const runsBody = await runs.json() as { data: Array<{ id: string; agentRuleId: string; promptId: string; promptRevision: number; model: string; outcome: string; toolCallCount: number; tokens: number; expiresAt: string }> };
     const transcript = await app.fetch(fixture.request(
@@ -801,13 +801,13 @@ describe('Organization Automation Inbox scheduling', () => {
       displayName: '参加登録担当', description: '出欠と申込期限を扱う',
     }), fixture.environment);
     const roleId = (await createdRole.json() as { data: { id: string } }).data.id;
-    const createdMember = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/members', {
+    const createdContact = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/members', {
       name: '山田花子', email: 'hanako@example.com',
     }), fixture.environment);
-    const memberId = (await createdMember.json() as { data: { id: string } }).data.id;
+    const contactId = (await createdContact.json() as { data: { id: string } }).data.id;
     const assignment = await app.fetch(fixture.jsonRequest(
       `/api/organizations/organization-1/task-roles/${roleId}/assignment`,
-      { memberId },
+      { contactId },
       'PUT',
     ), fixture.environment);
     expect(assignment.status).toBe(200);
@@ -897,16 +897,16 @@ describe('Organization Automation Inbox scheduling', () => {
       },
     });
 
-    await expect(automation.runOrganization({
-      organizationId: 'organization-1',
-      database: fixture.organization.binding,
+    await expect(automation.runAccount({
+      accountId: 'organization-1',
+      database: fixture.account.binding,
     })).resolves.toEqual({ scanned: 1, created: 1, skipped: 0, exceptions: 0 });
     const dashboard = await app.fetch(
       fixture.request('/api/organizations/organization-1/dashboard'),
       fixture.environment,
     );
     await expect(dashboard.json()).resolves.toMatchObject({ data: { upcomingEvents: 1 } });
-    expect(fixture.organization.rows<{ status: string; execution_mode: string }>(
+    expect(fixture.account.rows<{ status: string; execution_mode: string }>(
       'SELECT status, execution_mode FROM rule_runs',
     )).toEqual([{ status: 'completed', execution_mode: 'unattended' }]);
   });
@@ -916,7 +916,7 @@ describe('Organization Automation Inbox scheduling', () => {
     ['approval', 'pending_approval', 'pending'],
   ] as const)('plans a Schema Rule in %s mode without business mutations', async (executionMode, runStatus, effectStatus) => {
     fixture = await createAutomationTestApp({ ai: true });
-    fixture.organization.execute('UPDATE rules SET execution_mode = ? WHERE id = ?', executionMode, 'rule-1');
+    fixture.account.execute('UPDATE rules SET execution_mode = ? WHERE id = ?', executionMode, 'rule-1');
     const calendarWrite = vi.fn();
     const automation = createAutomation(fixture.environment, {
       google: {
@@ -952,15 +952,15 @@ describe('Organization Automation Inbox scheduling', () => {
       },
     });
 
-    await expect(automation.runOrganization({ organizationId: 'organization-1', database: fixture.organization.binding }))
+    await expect(automation.runAccount({ accountId: 'organization-1', database: fixture.account.binding }))
       .resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 0 });
 
     expect(calendarWrite).not.toHaveBeenCalled();
-    expect(fixture.organization.rows('SELECT * FROM events')).toHaveLength(0);
-    expect(fixture.organization.rows('SELECT * FROM tasks')).toHaveLength(0);
-    expect(fixture.organization.rows<{ status: string }>('SELECT status FROM rule_runs')).toEqual([{ status: runStatus }]);
-    expect(fixture.organization.rows<{ status: string }>('SELECT status FROM rule_effects')).toHaveLength(3);
-    expect(fixture.organization.rows<{ status: string }>('SELECT status FROM rule_effects').every(({ status }) => status === effectStatus)).toBe(true);
+    expect(fixture.account.rows('SELECT * FROM events')).toHaveLength(0);
+    expect(fixture.account.rows('SELECT * FROM tasks')).toHaveLength(0);
+    expect(fixture.account.rows<{ status: string }>('SELECT status FROM rule_runs')).toEqual([{ status: runStatus }]);
+    expect(fixture.account.rows<{ status: string }>('SELECT status FROM rule_effects')).toHaveLength(3);
+    expect(fixture.account.rows<{ status: string }>('SELECT status FROM rule_effects').every(({ status }) => status === effectStatus)).toBe(true);
   });
 
   const upsertFixture = (active: AutomationTestApp, extractions: Array<() => MailExtraction>) => {
@@ -1016,9 +1016,9 @@ describe('Organization Automation Inbox scheduling', () => {
     });
     const runOnce = async (index: number) => {
       run = index;
-      return automation().runOrganization({
-        organizationId: 'organization-1',
-        database: active.organization.binding,
+      return automation().runAccount({
+        accountId: 'organization-1',
+        database: active.account.binding,
       });
     };
     return { created, patched, runOnce };
@@ -1056,9 +1056,9 @@ describe('Organization Automation Inbox scheduling', () => {
     expect(created).toHaveLength(1);
     expect(patched).toHaveLength(1);
     expect(patched[0]?.body.location).toBe('市民ホール');
-    // Calendar writes never notify Members; sendUpdates is always none.
+    // Calendar writes never notify Contacts; sendUpdates is always none.
     expect(patched[0]?.url).toContain('sendUpdates=none');
-    expect(fixture.organization.rows('SELECT count(*) AS total FROM events')).toEqual([{ total: 1 }]);
+    expect(fixture.account.rows('SELECT count(*) AS total FROM events')).toEqual([{ total: 1 }]);
   });
 
   it('records the guests an Event Response returned without creating a Scheduled Event for it', async () => {
@@ -1079,8 +1079,8 @@ describe('Organization Automation Inbox scheduling', () => {
     await runOnce(1);
 
     expect(created).toHaveLength(1);
-    expect(fixture.organization.rows('SELECT count(*) AS total FROM events')).toEqual([{ total: 1 }]);
-    expect(fixture.organization.rows(
+    expect(fixture.account.rows('SELECT count(*) AS total FROM events')).toEqual([{ total: 1 }]);
+    expect(fixture.account.rows(
       'SELECT name, affiliation FROM guest_registrations ORDER BY name',
     )).toEqual([
       { name: '山田太郎', affiliation: '北クラブ' },
@@ -1088,7 +1088,7 @@ describe('Organization Automation Inbox scheduling', () => {
     ]);
     expect(patched[0]?.body.description).toContain('外部からの参加登録: 1団体 2名（北クラブ 2名）');
     expect(patched[0]?.body.description).not.toContain('山田太郎');
-    // A guest moves neither the meeting nor its deadline, so this is never news to a Member.
+    // A guest moves neither the meeting nor its deadline, so this is never news to a Contact.
     expect(patched[0]?.url).toContain('sendUpdates=none');
   });
 
@@ -1101,7 +1101,7 @@ describe('Organization Automation Inbox scheduling', () => {
     await expect(runOnce(0)).resolves.toMatchObject({ created: 0, exceptions: 0 });
     expect(created).toEqual([]);
     expect(patched).toEqual([]);
-    expect(fixture.organization.rows('SELECT count(*) AS total FROM events')).toEqual([{ total: 0 }]);
+    expect(fixture.account.rows('SELECT count(*) AS total FROM events')).toEqual([{ total: 0 }]);
   });
 
   it('runs an Automation Inbox only after an authorized member enables it', async () => {
@@ -1206,11 +1206,11 @@ describe('Organization Automation Inbox scheduling', () => {
     });
   });
 
-  it('invites every active Member of the roster to the Scheduled Event it creates', async () => {
+  it('invites every active Contact of the roster to the Scheduled Event it creates', async () => {
     fixture = await createAutomationTestApp({ ai: true });
-    seedMember(fixture.organization, { id: 'member-1', name: '一郎', email: 'first@example.com' });
-    seedMember(fixture.organization, { id: 'member-2', name: '二郎', email: 'second@example.com' });
-    seedMember(fixture.organization, { id: 'member-3', name: '三郎' });
+    seedContact(fixture.account, { id: 'member-1', name: '一郎', email: 'first@example.com' });
+    seedContact(fixture.account, { id: 'member-2', name: '二郎', email: 'second@example.com' });
+    seedContact(fixture.account, { id: 'member-3', name: '三郎' });
     let calendarUrl = '';
     let calendarRequest: { attendees?: Array<{ email?: string }> } = {};
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
@@ -1243,13 +1243,13 @@ describe('Organization Automation Inbox scheduling', () => {
       { email: 'first@example.com' },
       { email: 'second@example.com' },
     ]);
-    expect(fixture.organization.rows(
+    expect(fixture.account.rows(
       "SELECT destination, outcome, external_id FROM deliveries WHERE channel = 'calendar' ORDER BY destination",
     )).toEqual([
       { destination: 'first@example.com', outcome: 'succeeded', external_id: 'calendar-event-1' },
       { destination: 'second@example.com', outcome: 'succeeded', external_id: 'calendar-event-1' },
     ]);
-    expect(fixture.organization.rows('SELECT member_id, email_snapshot FROM event_recipients ORDER BY member_id')).toEqual([
+    expect(fixture.account.rows('SELECT member_id, email_snapshot FROM event_recipients ORDER BY member_id')).toEqual([
       { member_id: 'member-1', email_snapshot: 'first@example.com' },
       { member_id: 'member-2', email_snapshot: 'second@example.com' },
     ]);
@@ -1257,13 +1257,13 @@ describe('Organization Automation Inbox scheduling', () => {
 
   it('delivers a Message Summary for a matched Source Message with no Event Candidate', async () => {
     fixture = await createAutomationTestApp({ ai: true });
-    fixture.organization.execute(
+    fixture.account.execute(
       "INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('recipients-1', 'organization-1', 'recipient', 'Readers', '2026-08-01', '2026-08-01')",
     );
-    fixture.organization.execute(
+    fixture.account.execute(
       "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('reader-1', 'recipients-1', 'reader@example.com', 'Reader', 1)",
     );
-    fixture.organization.execute("INSERT INTO rule_permitted_recipient_lists (rule_id, list_id) VALUES ('rule-1', 'recipients-1')");
+    fixture.account.execute("INSERT INTO rule_permitted_recipient_lists (rule_id, list_id) VALUES ('rule-1', 'recipients-1')");
     const upstreamRequests: Array<{ url: string; body: string | undefined }> = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       upstreamRequests.push({ url, body: typeof init?.body === 'string' ? init.body : undefined });
@@ -1283,10 +1283,10 @@ describe('Organization Automation Inbox scheduling', () => {
       return new Response(JSON.stringify({ error: { message: `unexpected request: ${url}` } }), { status: 500 });
     }));
 
-    await expect(runOrganizationAutomation(
+    await expect(runAccountAutomation(
       fixture.environment,
       'organization-1',
-      fixture.organization.binding,
+      fixture.account.binding,
     )).resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 0 });
 
     const emailRequests = upstreamRequests.filter(({ url }) => url.includes('/messages/send'));
@@ -1315,22 +1315,22 @@ describe('Organization Automation Inbox scheduling', () => {
 
   it('delivers a Message Summary to the deduplicated destinations from every permitted list', async () => {
     fixture = await createAutomationTestApp({ ai: true });
-    fixture.organization.execute(
-      "INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('summary-readers-1', 'organization-1', 'recipient', 'Members', '2026-08-01', '2026-08-01')",
+    fixture.account.execute(
+      "INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('summary-readers-1', 'organization-1', 'recipient', 'Contacts', '2026-08-01', '2026-08-01')",
     );
-    fixture.organization.execute(
+    fixture.account.execute(
       "INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('summary-readers-2', 'organization-1', 'recipient', 'Guests', '2026-08-01', '2026-08-01')",
     );
-    fixture.organization.execute(
-      "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('summary-reader-1', 'summary-readers-1', 'member@example.com', 'Member', 1)",
+    fixture.account.execute(
+      "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('summary-reader-1', 'summary-readers-1', 'member@example.com', 'Contact', 1)",
     );
-    fixture.organization.execute(
+    fixture.account.execute(
       "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('summary-reader-2', 'summary-readers-2', 'guest@example.com', 'Guest', 1)",
     );
-    fixture.organization.execute(
-      "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('summary-reader-duplicate', 'summary-readers-2', 'member@example.com', 'Member duplicate', 1)",
+    fixture.account.execute(
+      "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('summary-reader-duplicate', 'summary-readers-2', 'member@example.com', 'Contact duplicate', 1)",
     );
-    fixture.organization.execute(
+    fixture.account.execute(
       "INSERT INTO rule_permitted_recipient_lists (rule_id, list_id) VALUES ('rule-1', 'summary-readers-1'), ('rule-1', 'summary-readers-2')",
     );
     const upstreamRequests: Array<{ url: string; body: string | undefined }> = [];
@@ -1352,10 +1352,10 @@ describe('Organization Automation Inbox scheduling', () => {
       return new Response(JSON.stringify({ error: { message: `unexpected request: ${url}` } }), { status: 500 });
     }));
 
-    await runOrganizationAutomation(
+    await runAccountAutomation(
       fixture.environment,
       'organization-1',
-      fixture.organization.binding,
+      fixture.account.binding,
     );
 
     const emailRequests = upstreamRequests.filter(({ url }) => url.includes('/messages/send'));
@@ -1385,23 +1385,23 @@ describe('Organization Automation Inbox scheduling', () => {
       return new Response(JSON.stringify({ error: { message: `unexpected request: ${url}` } }), { status: 500 });
     }));
 
-    await expect(runOrganizationAutomation(
+    await expect(runAccountAutomation(
       fixture.environment,
       'organization-1',
-      fixture.organization.binding,
+      fixture.account.binding,
     )).resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 0 });
     expect(upstreamRequests.some((url) => url.includes('/messages/send') || url.includes('api.line.me'))).toBe(false);
   });
 
   it('delivers exactly one Message Summary when one Source Message produces multiple Scheduled Events', async () => {
     fixture = await createAutomationTestApp({ ai: true, lineSecret: 'line-secret' });
-    fixture.organization.execute(
+    fixture.account.execute(
       "INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('line-readers-1', 'organization-1', 'line', 'LINE Readers', '2026-08-01', '2026-08-01')",
     );
-    fixture.organization.execute(
+    fixture.account.execute(
       "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('line-reader-1', 'line-readers-1', 'Usummary-reader-1', 'LINE Reader', 1)",
     );
-    fixture.organization.execute("INSERT INTO rule_permitted_line_lists (rule_id, list_id) VALUES ('rule-1', 'line-readers-1')");
+    fixture.account.execute("INSERT INTO rule_permitted_line_lists (rule_id, list_id) VALUES ('rule-1', 'line-readers-1')");
     const upstreamRequests: Array<{ url: string; body: string | undefined }> = [];
     let calendarIndex = 0;
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
@@ -1427,10 +1427,10 @@ describe('Organization Automation Inbox scheduling', () => {
       return new Response(JSON.stringify({ error: { message: `unexpected request: ${url}` } }), { status: 500 });
     }));
 
-    await expect(runOrganizationAutomation(
+    await expect(runAccountAutomation(
       fixture.environment,
       'organization-1',
-      fixture.organization.binding,
+      fixture.account.binding,
     )).resolves.toEqual({ scanned: 1, created: 2, skipped: 0, exceptions: 0 });
 
     const lineRequests = upstreamRequests.filter(({ url }) => url.includes('api.line.me'));
@@ -1491,13 +1491,13 @@ describe('Organization Automation Inbox scheduling', () => {
 
   it('delivers an Intake Notice containing only sender and subject when intake fails before extraction', async () => {
     fixture = await createAutomationTestApp({ ai: true });
-    fixture.organization.execute(
+    fixture.account.execute(
       "INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('intake-readers-1', 'organization-1', 'recipient', 'Intake Readers', '2026-08-01', '2026-08-01')",
     );
-    fixture.organization.execute(
+    fixture.account.execute(
       "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('intake-reader-1', 'intake-readers-1', 'intake-reader@example.com', 'Reader', 1)",
     );
-    fixture.organization.execute("INSERT INTO rule_permitted_recipient_lists (rule_id, list_id) VALUES ('rule-1', 'intake-readers-1')");
+    fixture.account.execute("INSERT INTO rule_permitted_recipient_lists (rule_id, list_id) VALUES ('rule-1', 'intake-readers-1')");
     const upstreamRequests: Array<{ url: string; body: string | undefined }> = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       upstreamRequests.push({ url, body: typeof init?.body === 'string' ? init.body : undefined });
@@ -1523,10 +1523,10 @@ describe('Organization Automation Inbox scheduling', () => {
       return new Response(JSON.stringify({ error: { message: `unexpected request: ${url}` } }), { status: 500 });
     }));
 
-    await expect(runOrganizationAutomation(
+    await expect(runAccountAutomation(
       fixture.environment,
       'organization-1',
-      fixture.organization.binding,
+      fixture.account.binding,
     )).resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 1 });
 
     const emailRequests = upstreamRequests.filter(({ url }) => url.includes('/messages/send'));
@@ -1696,17 +1696,17 @@ describe('Organization Automation Inbox scheduling', () => {
       }), { status: 200 });
     }));
 
-    await expect(runOrganizationAutomation(
+    await expect(runAccountAutomation(
       fixture.environment,
       'organization-1',
-      fixture.organization.binding,
+      fixture.account.binding,
     )).resolves.toMatchObject({ created: 0, exceptions: 1 });
     expect(requests.some((url) => url.includes('/calendar/v3/'))).toBe(false);
   });
 
   it('keeps the Calendar event as a draft when Drive publication fails', async () => {
     fixture = await createAutomationTestApp({ ai: true });
-    seedMember(fixture.organization, { id: 'member-1', name: '一郎', email: 'first@example.com' });
+    seedContact(fixture.account, { id: 'member-1', name: '一郎', email: 'first@example.com' });
     const markdown = { toMarkdown: vi.fn().mockResolvedValue({
       format: 'markdown', name: '式次第.pdf', mimetype: 'application/pdf', tokens: 4, data: '例会の式次第',
     }) };
@@ -1758,15 +1758,15 @@ describe('Organization Automation Inbox scheduling', () => {
       return new Response(JSON.stringify({ error: { message: `unexpected request: ${url}` } }), { status: 500 });
     }));
 
-    await expect(runOrganizationAutomation(
+    await expect(runAccountAutomation(
       fixture.environment,
       'organization-1',
-      fixture.organization.binding,
+      fixture.account.binding,
     )).resolves.toMatchObject({ created: 0, exceptions: 1 });
     expect(calendarRequest.attachments).toEqual([]);
     expect(calendarRequest.attendees).toEqual([]);
     expect(calendarUrl).toContain('sendUpdates=none');
-    expect(fixture.organization.rows(
+    expect(fixture.account.rows(
       "SELECT destination, outcome, external_id FROM deliveries WHERE channel = 'calendar'",
     )).toEqual([{ destination: 'first@example.com', outcome: 'pending', external_id: null }]);
   });
@@ -1845,7 +1845,7 @@ describe('Manual mailbox test', () => {
     await expect(calendarResponse.json()).resolves.toMatchObject({ data: { eventIds: ['mailbox-test-event'] } });
     expect(calendarRequest).toMatchObject({ summary: '例会' });
     expect(calendarRequest.description).toContain('mailbox-active-preview');
-    expect(fixture.organization.rows('SELECT * FROM source_messages')).toEqual([]);
+    expect(fixture.account.rows('SELECT * FROM source_messages')).toEqual([]);
   });
 
   it('searches Gmail and prepares an OpenAI-compatible request without an AI credential', async () => {
@@ -1910,8 +1910,8 @@ describe('Manual mailbox test', () => {
     });
 
     await expect(automation.mailboxTest.search({
-      organizationId: 'organization-1',
-      database: fixture.organization.binding,
+      accountId: 'organization-1',
+      database: fixture.account.binding,
       subject: '手動テスト',
     })).resolves.toEqual([{ id: 'mailbox-port-message', subject: '手動テスト', sender: 'member@example.com' }]);
   });
@@ -1936,8 +1936,8 @@ describe('Manual mailbox test', () => {
     });
 
     await expect(automation.mailboxTest.search({
-      organizationId: 'organization-1',
-      database: fixture.organization.binding,
+      accountId: 'organization-1',
+      database: fixture.account.binding,
       subject: '30周年記念式典  のご案内',
     })).resolves.toEqual([{ id: 'mailbox-port-message', subject: '３０周年記念式典　のご案内', sender: 'member@example.com' }]);
   });
@@ -1962,8 +1962,8 @@ describe('Manual mailbox test', () => {
     });
 
     await expect(automation.mailboxTest.search({
-      organizationId: 'organization-1',
-      database: fixture.organization.binding,
+      accountId: 'organization-1',
+      database: fixture.account.binding,
       subject: '30周年記念式典のご案内',
     })).resolves.toEqual([]);
   });
@@ -1978,7 +1978,7 @@ describe('Manual mailbox test', () => {
     }), fixture.environment);
     const registrationRoleId = (await registrationRoleResponse.json() as { data: { id: string } }).data.id;
     const paymentRoleId = (await paymentRoleResponse.json() as { data: { id: string } }).data.id;
-    fixture.organization.execute(
+    fixture.account.execute(
       "UPDATE rules SET task_role_ids = ?, status = 'draft' WHERE id = 'rule-1'",
       JSON.stringify([registrationRoleId, paymentRoleId]),
     );
@@ -2095,14 +2095,14 @@ describe('Manual mailbox test', () => {
     expect(aiRequestPreview.data.request.messages?.[1]?.content).not.toContain('| ----------- |');
     expect(aiRequest.messages).toBeUndefined();
 
-    fixture.organization.execute("UPDATE rules SET selection_policy = ? WHERE id = 'rule-1'", JSON.stringify({ sender: 'other@example.com' }));
+    fixture.account.execute("UPDATE rules SET selection_policy = ? WHERE id = 'rule-1'", JSON.stringify({ sender: 'other@example.com' }));
     const rejectedBySelection = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/mail-tests/gmail-message-attachment/draft-preview',
       { ruleId: 'rule-1' },
     ), fixture.environment);
     expect(rejectedBySelection.status).toBe(409);
     expect(aiRequest.messages).toBeUndefined();
-    fixture.organization.execute("UPDATE rules SET selection_policy = '{}' WHERE id = 'rule-1'");
+    fixture.account.execute("UPDATE rules SET selection_policy = '{}' WHERE id = 'rule-1'");
 
     const previewResponse = await app.fetch(fixture.jsonRequest(
       '/api/organizations/organization-1/mail-tests/gmail-message-attachment/draft-preview',
@@ -2151,7 +2151,7 @@ describe('Manual mailbox test', () => {
     expect(driveFolderQueries).toHaveLength(0);
     expect(driveFolders).toHaveLength(0);
     expect(uploadMetadata.parents).toBeUndefined();
-    expect(fixture.organization.rows(
+    expect(fixture.account.rows(
       "SELECT id FROM source_messages WHERE gmail_message_id = 'gmail-message-attachment'",
     )).toEqual([]);
   });
@@ -2231,8 +2231,8 @@ describe('the Event Refresh exit', () => {
     });
 
     const plan = await automation.mailboxTest.planRefresh({
-      organizationId: 'organization-1',
-      database: fixture.organization.binding,
+      accountId: 'organization-1',
+      database: fixture.account.binding,
       messageId: 'gmail-refresh-1',
       events: [CANDIDATE],
     });
@@ -2246,8 +2246,8 @@ describe('the Event Refresh exit', () => {
 
   it('rewrites every field, adds the active roster as attendees, and preserves an existing attendee\'s response status', async () => {
     fixture = await createAutomationTestApp({ ai: true });
-    seedMember(fixture.organization, { id: 'member-1', name: '一郎', email: 'first@example.com' });
-    fixture.organization.execute(
+    seedContact(fixture.account, { id: 'member-1', name: '一郎', email: 'first@example.com' });
+    fixture.account.execute(
       `INSERT INTO events
         (id, organization_id, rule_id, google_event_id, title, starts_at, ends_at, location, description, status, created_at, updated_at)
        VALUES (?, 'organization-1', 'rule-1', 'calendar-event-1', ?, ?, ?, '', '', 'scheduled', ?, ?)`,
@@ -2281,8 +2281,8 @@ describe('the Event Refresh exit', () => {
     });
 
     const outcome = await automation.mailboxTest.applyRefresh({
-      organizationId: 'organization-1',
-      database: fixture.organization.binding,
+      accountId: 'organization-1',
+      database: fixture.account.binding,
       messageId: 'gmail-refresh-1',
       entries: [{ googleEventId: 'calendar-event-1', etag: '"etag-1"', candidate: CANDIDATE }],
     });
@@ -2300,17 +2300,17 @@ describe('the Event Refresh exit', () => {
       { email: 'first@example.com' },
     ]);
     expect(String(patched?.body.description)).toContain('Mail Automation が Gmail メッセージ gmail-refresh-1 から作成しました。');
-    expect(fixture.organization.row<{ title: string; location: string }>(
+    expect(fixture.account.row<{ title: string; location: string }>(
       'SELECT title, location FROM events WHERE google_event_id = ?', 'calendar-event-1',
     )).toMatchObject({ title: '30周年記念式典', location: '市民ホール' });
-    expect(fixture.organization.rows<{ channel: string; external_id: string }>(
+    expect(fixture.account.rows<{ channel: string; external_id: string }>(
       "SELECT channel, external_id FROM deliveries WHERE channel = 'calendar'",
     )).toEqual([{ channel: 'calendar', external_id: 'calendar-event-1' }]);
   });
 
-  it('sends no notification when every active Member is already an attendee', async () => {
+  it('sends no notification when every active Contact is already an attendee', async () => {
     fixture = await createAutomationTestApp({ ai: true });
-    seedMember(fixture.organization, { id: 'member-1', name: '一郎', email: 'first@example.com' });
+    seedContact(fixture.account, { id: 'member-1', name: '一郎', email: 'first@example.com' });
     let patched: { url: string; body: Record<string, unknown> } | undefined;
     const automation = createAutomation(fixture.environment, {
       attachments: attachmentPort,
@@ -2330,8 +2330,8 @@ describe('the Event Refresh exit', () => {
     });
 
     await automation.mailboxTest.applyRefresh({
-      organizationId: 'organization-1',
-      database: fixture.organization.binding,
+      accountId: 'organization-1',
+      database: fixture.account.binding,
       messageId: 'gmail-refresh-1',
       entries: [{ googleEventId: 'calendar-event-1', etag: '"etag-1"', candidate: CANDIDATE }],
     });
@@ -2342,7 +2342,7 @@ describe('the Event Refresh exit', () => {
 
   it('invites the active roster without notifying them when it creates a Scheduled Event through the refresh exit', async () => {
     fixture = await createAutomationTestApp({ ai: true });
-    seedMember(fixture.organization, { id: 'member-1', name: '一郎', email: 'first@example.com' });
+    seedContact(fixture.account, { id: 'member-1', name: '一郎', email: 'first@example.com' });
     let created: { url: string; body: Record<string, unknown> } | undefined;
     const automation = createAutomation(fixture.environment, {
       attachments: attachmentPort,
@@ -2359,8 +2359,8 @@ describe('the Event Refresh exit', () => {
     });
 
     const outcome = await automation.mailboxTest.applyRefresh({
-      organizationId: 'organization-1',
-      database: fixture.organization.binding,
+      accountId: 'organization-1',
+      database: fixture.account.binding,
       messageId: 'gmail-refresh-1',
       entries: [{ googleEventId: null, etag: null, candidate: CANDIDATE }],
     });
@@ -2388,8 +2388,8 @@ describe('the Event Refresh exit', () => {
     });
 
     const outcome = await automation.mailboxTest.applyRefresh({
-      organizationId: 'organization-1',
-      database: fixture.organization.binding,
+      accountId: 'organization-1',
+      database: fixture.account.binding,
       messageId: 'gmail-refresh-1',
       entries: [{ googleEventId: 'calendar-event-1', etag: '"etag-1"', candidate: CANDIDATE }],
     });
@@ -2403,7 +2403,7 @@ describe('the Event Refresh exit', () => {
 
   it('reuses a Public Attachment a previous run already placed in the folder', async () => {
     fixture = await createAutomationTestApp({ ai: true });
-    fixture.organization.execute(
+    fixture.account.execute(
       `INSERT INTO source_messages
         (id, gmail_message_id, gmail_history_id, sender, subject, drive_folder_id, received_at, processed_at, state)
        VALUES (?, 'gmail-refresh-1', 'history-1', ?, ?, 'source-message-folder', ?, ?, 'processed')`,
@@ -2447,8 +2447,8 @@ describe('the Event Refresh exit', () => {
     });
 
     await automation.mailboxTest.applyRefresh({
-      organizationId: 'organization-1',
-      database: fixture.organization.binding,
+      accountId: 'organization-1',
+      database: fixture.account.binding,
       messageId: 'gmail-refresh-1',
       entries: [{ googleEventId: 'calendar-event-1', etag: null, candidate: CANDIDATE }],
     });
@@ -2461,7 +2461,7 @@ describe('the Event Refresh exit', () => {
 
 describe('unattended Automation Inbox health', () => {
   const inboxHealth = (): { status: string; last_error: string | null; failing_since: string | null; alerted_at: string | null } | null =>
-    fixture?.organization.row<{ status: string; last_error: string | null; failing_since: string | null; alerted_at: string | null }>(
+    fixture?.account.row<{ status: string; last_error: string | null; failing_since: string | null; alerted_at: string | null }>(
       "SELECT status, last_error, failing_since, alerted_at FROM google_connections WHERE kind = 'automation_inbox'",
     ) ?? null;
 
@@ -2469,7 +2469,7 @@ describe('unattended Automation Inbox health', () => {
     const keyRecord = fixture?.control.row<{ master_key_version: string; wrapped_key_envelope: string }>(
       "SELECT master_key_version, wrapped_key_envelope FROM organization_keys WHERE organization_id = 'organization-1'",
     );
-    const organizationKey = await unwrapOrganizationKey({
+    const accountKey = await unwrapAccountKey({
       masterKeyVersion: keyRecord?.master_key_version ?? '',
       envelope: JSON.parse(keyRecord?.wrapped_key_envelope ?? '{}'),
     }, await masterKey(fixture?.environment.CREDENTIAL_MASTER_KEY ?? ''), 'organization-1');
@@ -2479,8 +2479,8 @@ describe('unattended Automation Inbox health', () => {
       expiresAt,
       scopes: [],
       tokenType: 'Bearer',
-    }), organizationKey, 'google-connection:organization-1:automation-inbox');
-    fixture?.organization.execute(
+    }), accountKey, 'google-connection:organization-1:automation-inbox');
+    fixture?.account.execute(
       "UPDATE google_connections SET token_envelope = ? WHERE kind = 'automation_inbox'",
       JSON.stringify(envelope),
     );
@@ -2535,7 +2535,7 @@ describe('unattended Automation Inbox health', () => {
 
   it('mails the Administrators once a day of unattended retries has failed and keeps the Inbox connected', async () => {
     fixture = await createAutomationTestApp({ ai: true });
-    fixture.organization.execute(
+    fixture.account.execute(
       "UPDATE google_connections SET failing_since = ?, last_error = 'Backend Error' WHERE kind = 'automation_inbox'",
       new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000).toISOString(),
     );
@@ -2557,7 +2557,7 @@ describe('unattended Automation Inbox health', () => {
     expect(sentNotices(notices)[0]).toContain('To: owner@example.com');
   });
 
-  it('keeps sweeping the fleet when one Organization database cannot be opened', async () => {
+  it('keeps sweeping the fleet when one Account database cannot be opened', async () => {
     fixture = await createAutomationTestApp({ ai: true });
     fixture.control.execute(
       `INSERT INTO organizations (id, name, status, database_id, binding_name, created_at, updated_at)
@@ -2572,7 +2572,7 @@ describe('unattended Automation Inbox health', () => {
 
     await runEnabledAutomations(fixture.environment);
 
-    expect(fixture.organization.row<{ gmail_history_id: string }>(
+    expect(fixture.account.row<{ gmail_history_id: string }>(
       "SELECT gmail_history_id FROM google_connections WHERE kind = 'automation_inbox'",
     )).toEqual({ gmail_history_id: 'history-after-unbound-peer' });
     expect(inboxHealth()).toMatchObject({ status: 'active', last_error: null });
@@ -2580,7 +2580,7 @@ describe('unattended Automation Inbox health', () => {
 
   it('clears a recorded failure as soon as one scheduled run succeeds again', async () => {
     fixture = await createAutomationTestApp({ ai: true });
-    fixture.organization.execute(
+    fixture.account.execute(
       "UPDATE google_connections SET failing_since = ?, alerted_at = ?, last_error = 'Backend Error' WHERE kind = 'automation_inbox'",
       '2026-07-01T00:00:00.000Z',
       '2026-07-02T00:00:00.000Z',

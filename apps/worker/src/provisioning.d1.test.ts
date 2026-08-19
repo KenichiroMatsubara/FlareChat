@@ -4,8 +4,8 @@ import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 
 import controlSchemaMigration from '../migrations/control/0000_initial.sql';
-import organizationSchemaMigration from '../migrations/organization/0000_initial.sql';
-import { provisionOrganizationDatabase } from './organization-db';
+import accountSchemaMigration from '../migrations/organization/0000_initial.sql';
+import { provisionAccountDatabase } from './account-db';
 
 declare module 'cloudflare:test' {
   interface ProvidedEnv {
@@ -23,15 +23,15 @@ const applyMigration = async (database: D1Database, migration: string): Promise<
   await database.batch(statements);
 };
 
-describe('Organization schema provisioning through Miniflare D1', () => {
-  it('applies the canonical schema to an empty local Organization database', async () => {
+describe('Account schema provisioning through Miniflare D1', () => {
+  it('applies the canonical schema to an empty local Account database', async () => {
     await applyMigration(env.CONTROL_DB, controlSchemaMigration);
 
-    const provisioned = await provisionOrganizationDatabase({
+    const provisioned = await provisionAccountDatabase({
       CONTROL_DB: env.CONTROL_DB,
       LOCAL_ORGANIZATION_DB_1: env.LOCAL_ORGANIZATION_DB_1,
-    } as unknown as Parameters<typeof provisionOrganizationDatabase>[0], {
-      organizationId: 'organization-1',
+    } as unknown as Parameters<typeof provisionAccountDatabase>[0], {
+      accountId: 'organization-1',
       inboxAddress: 'first@example.com',
       bindingName: 'ORG_ORGANIZATION1',
       databaseId: null,
@@ -45,9 +45,9 @@ describe('Organization schema provisioning through Miniflare D1', () => {
     expect(tables.results.map(({ name }) => name)).toContain('members');
   });
 
-  it('returns a canonical schema when reusing a migrated local Organization database', async () => {
+  it('returns a canonical schema when reusing a migrated local Account database', async () => {
     await applyMigration(env.CONTROL_DB, controlSchemaMigration);
-    await applyMigration(env.LOCAL_ORGANIZATION_DB_1, organizationSchemaMigration);
+    await applyMigration(env.LOCAL_ORGANIZATION_DB_1, accountSchemaMigration);
     await env.LOCAL_ORGANIZATION_DB_1.batch([
       env.LOCAL_ORGANIZATION_DB_1.prepare(
         'CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)',
@@ -63,11 +63,11 @@ describe('Organization schema provisioning through Miniflare D1', () => {
       ).bind('must survive retry'),
     ]);
 
-    const provisioned = await provisionOrganizationDatabase({
+    const provisioned = await provisionAccountDatabase({
       CONTROL_DB: env.CONTROL_DB,
       LOCAL_ORGANIZATION_DB_1: env.LOCAL_ORGANIZATION_DB_1,
-    } as unknown as Parameters<typeof provisionOrganizationDatabase>[0], {
-      organizationId: 'organization-1',
+    } as unknown as Parameters<typeof provisionAccountDatabase>[0], {
+      accountId: 'organization-1',
       inboxAddress: 'first@example.com',
       bindingName: 'ORG_ORGANIZATION1',
       databaseId: null,

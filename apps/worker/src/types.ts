@@ -24,7 +24,7 @@ export interface SessionRow {
   display_name: string;
 }
 
-export interface OrganizationRow {
+export interface AccountRow {
   id: string;
   name: string;
   status: 'provisioning' | 'active' | 'suspended' | 'failed';
@@ -34,7 +34,7 @@ export interface OrganizationRow {
 
 export interface ConnectionRow {
   id: string;
-  kind: 'line' | 'ai';
+  kind: 'line' | 'ai' | 'discord';
   label: string;
   credential: string;
   status: 'active' | 'disconnected';

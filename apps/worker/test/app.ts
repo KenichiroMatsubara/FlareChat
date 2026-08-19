@@ -1,17 +1,17 @@
 import type { Bindings } from '../src/types';
 import { createMigratedTestD1, type TestD1Database } from './d1';
-import { seedOrganizationRoute } from './seed';
+import { seedAccountRoute } from './seed';
 
 const CREATED_AT = '2026-07-25T00:00:00.000Z';
 const FUTURE = '2099-01-01T00:00:00.000Z';
 
 export interface TestApp {
   control: TestD1Database;
-  organization: TestD1Database;
+  account: TestD1Database;
   environment: Bindings;
   request: (path: string, init?: RequestInit) => Request;
   jsonRequest: (path: string, body: unknown, method?: string) => Request;
-  addOrganization: (input: {
+  addAccount: (input: {
     id: string;
     bindingName: string;
     name?: string;
@@ -24,17 +24,17 @@ export const createTestApp = (
   options: {
     includeAutomationInbox?: boolean;
     controlMigration?: string;
-    organizationMigration?: string;
+    accountMigration?: string;
   } = {},
 ): TestApp => {
   const control = createMigratedTestD1('control', options.controlMigration);
-  const organization = createMigratedTestD1('organization', options.organizationMigration);
+  const account = createMigratedTestD1('organization', options.accountMigration);
   const additionalDatabases: TestD1Database[] = [];
-  seedOrganizationRoute(control, {
+  seedAccountRoute(control, {
     id: 'organization-1',
     bindingName: 'ORG_ORGANIZATION1',
     databaseId: 'database-1',
-    name: 'Organization One',
+    name: 'Account One',
   });
   control.execute(
     'INSERT INTO identities (id, google_subject, email, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
@@ -84,7 +84,7 @@ export const createTestApp = (
       CREATED_AT,
       CREATED_AT,
     );
-    organization.execute(
+    account.execute(
       `INSERT INTO google_connections
         (id, kind, google_subject, inbox_address, granted_scopes, token_envelope, gmail_history_id, enabled, status, created_at, updated_at)
        VALUES (?, 'automation_inbox', ?, ?, ?, ?, ?, 1, 'active', ?, ?)`,
@@ -100,7 +100,7 @@ export const createTestApp = (
   }
   const environment = {
     CONTROL_DB: control.binding,
-    ORG_ORGANIZATION1: organization.binding,
+    ORG_ORGANIZATION1: account.binding,
     RECOVERY_RECEIPTS: {} as R2Bucket,
     ASSETS: {} as Fetcher,
     APP_URL: 'https://app.example.com',
@@ -123,7 +123,7 @@ export const createTestApp = (
   );
   return {
     control,
-    organization,
+    account,
     environment,
     request,
     jsonRequest: (path, body, method = 'POST') => request(path, {
@@ -131,10 +131,10 @@ export const createTestApp = (
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
-    addOrganization: (input) => {
+    addAccount: (input) => {
       const database = createMigratedTestD1('organization', input.migration);
       additionalDatabases.push(database);
-      seedOrganizationRoute(control, {
+      seedAccountRoute(control, {
         id: input.id,
         bindingName: input.bindingName,
         databaseId: `database-${input.id}`,
@@ -165,7 +165,7 @@ export const createTestApp = (
     },
     close: () => {
       for (const database of additionalDatabases) database.close();
-      organization.close();
+      account.close();
       control.close();
     },
   };

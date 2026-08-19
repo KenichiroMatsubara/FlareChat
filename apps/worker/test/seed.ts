@@ -2,7 +2,7 @@ import type { TestD1Database } from './d1';
 
 const CREATED_AT = '2026-07-25T00:00:00.000Z';
 
-export const seedOrganizationRoute = (
+export const seedAccountRoute = (
   control: TestD1Database,
   input: {
     id: string;
@@ -27,10 +27,10 @@ export const seedOrganizationRoute = (
 };
 
 export const seedScheduledEvent = (
-  organization: TestD1Database,
+  account: TestD1Database,
   input: {
     id: string;
-    organizationId?: string;
+    accountId?: string;
     title?: string;
     startsAt?: string;
     endsAt?: string;
@@ -38,24 +38,24 @@ export const seedScheduledEvent = (
     status?: 'draft' | 'scheduled' | 'cancelled' | 'exception';
   },
 ): void => {
-  const organizationId = input.organizationId ?? 'organization-1';
-  const ruleId = `seed-owning-rule-${organizationId}`;
-  organization.execute(
+  const accountId = input.accountId ?? 'organization-1';
+  const ruleId = `seed-owning-rule-${accountId}`;
+  account.execute(
     `INSERT OR IGNORE INTO rules
       (id, organization_id, name, status, created_at, updated_at)
      VALUES (?, ?, ?, 'archived', ?, ?)`,
     ruleId,
-    organizationId,
+    accountId,
     'Seed Owning Rule',
     CREATED_AT,
     CREATED_AT,
   );
-  organization.execute(
+  account.execute(
     `INSERT INTO events
       (id, organization_id, rule_id, title, starts_at, ends_at, status, attendance_deadline, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     input.id,
-    organizationId,
+    accountId,
     ruleId,
     input.title ?? input.id,
     input.startsAt ?? '2099-01-01T10:00:00.000Z',
@@ -67,11 +67,11 @@ export const seedScheduledEvent = (
   );
 };
 
-export const seedMember = (
-  organization: TestD1Database,
+export const seedContact = (
+  account: TestD1Database,
   input: { id: string; name?: string; email?: string; googleSubject?: string; lineDestinationId?: string },
 ): void => {
-  organization.execute(
+  account.execute(
     `INSERT OR IGNORE INTO members (id, organization_id, name, email, state, tags, google_subject, created_at, updated_at)
      VALUES (?, 'organization-1', ?, ?, 'active', '[]', ?, ?, ?)`,
     input.id,
@@ -82,13 +82,13 @@ export const seedMember = (
     CREATED_AT,
   );
   if (!input.lineDestinationId) return;
-  organization.execute(
+  account.execute(
     `INSERT OR IGNORE INTO connections (id, kind, label, credential, status, created_at, updated_at)
      VALUES ('line-connection', 'line', 'LINE', '{}', 'active', ?, ?)`,
     CREATED_AT,
     CREATED_AT,
   );
-  organization.execute(
+  account.execute(
     `INSERT OR IGNORE INTO line_destinations (id, connection_id, destination_id, display_name, kind, status, source, discovered_at, updated_at)
      VALUES (?, 'line-connection', ?, ?, 'user', 'discovered', 'webhook', ?, ?)`,
     `line-${input.id}`,
@@ -97,7 +97,7 @@ export const seedMember = (
     CREATED_AT,
     CREATED_AT,
   );
-  organization.execute(
+  account.execute(
     'INSERT OR IGNORE INTO member_line_destinations (member_id, line_destination_id, created_at) VALUES (?, ?, ?)',
     input.id,
     `line-${input.id}`,
@@ -106,34 +106,34 @@ export const seedMember = (
 };
 
 export const seedAttendanceRegistration = (
-  organization: TestD1Database,
+  account: TestD1Database,
   input: {
     eventId: string;
-    memberId: string;
+    contactId: string;
     destination: string;
     name?: string;
     googleSubject?: string;
     status?: 'unanswered' | 'attending' | 'not_attending';
   },
 ): void => {
-  seedMember(organization, {
-    id: input.memberId,
+  seedContact(account, {
+    id: input.contactId,
     ...(input.name === undefined ? {} : { name: input.name }),
     ...(input.googleSubject === undefined ? {} : { googleSubject: input.googleSubject }),
     lineDestinationId: input.destination,
   });
-  organization.execute(
+  account.execute(
     `INSERT INTO attendance (event_id, member_id, status, comment, updated_at)
      VALUES (?, ?, ?, '', ?)`,
     input.eventId,
-    input.memberId,
+    input.contactId,
     input.status ?? 'unanswered',
     CREATED_AT,
   );
 };
 
 export const seedDeliveryRecord = (
-  organization: TestD1Database,
+  account: TestD1Database,
   input: {
     id: string;
     eventId?: string | null;
@@ -144,7 +144,7 @@ export const seedDeliveryRecord = (
     createdAt: string;
   },
 ): void => {
-  organization.execute(
+  account.execute(
     `INSERT INTO deliveries
       (id, event_id, channel, destination, outcome, external_id, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -159,15 +159,15 @@ export const seedDeliveryRecord = (
 };
 
 export const seedAutomationRule = (
-  organization: TestD1Database,
-  input: { id: string; organizationId?: string; name?: string; status?: 'draft' | 'active' | 'suspended' | 'archived' },
+  account: TestD1Database,
+  input: { id: string; accountId?: string; name?: string; status?: 'draft' | 'active' | 'suspended' | 'archived' },
 ): void => {
-  organization.execute(
+  account.execute(
     `INSERT INTO rules
       (id, organization_id, name, status, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
     input.id,
-    input.organizationId ?? 'organization-1',
+    input.accountId ?? 'organization-1',
     input.name ?? input.id,
     input.status ?? 'active',
     CREATED_AT,
@@ -176,10 +176,10 @@ export const seedAutomationRule = (
 };
 
 export const seedAutomationException = (
-  organization: TestD1Database,
+  account: TestD1Database,
   input: { id: string; code?: string; message?: string },
 ): void => {
-  organization.execute(
+  account.execute(
     `INSERT INTO exceptions (id, code, message, state, created_at)
      VALUES (?, ?, ?, 'open', ?)`,
     input.id,
@@ -189,10 +189,10 @@ export const seedAutomationException = (
   );
 };
 
-export const seedOrganizationMember = (
+export const seedAccountContact = (
   control: TestD1Database,
   input: {
-    organizationId?: string;
+    accountId?: string;
     identityId: string;
     email: string;
     state?: 'active' | 'suspended' | 'removed';
@@ -210,7 +210,7 @@ export const seedOrganizationMember = (
   );
   control.execute(
     'INSERT INTO admins (organization_id, identity_id, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-    input.organizationId ?? 'organization-1',
+    input.accountId ?? 'organization-1',
     input.identityId,
     input.state ?? 'active',
     CREATED_AT,

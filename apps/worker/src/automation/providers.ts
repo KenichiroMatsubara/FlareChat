@@ -1,5 +1,5 @@
 /**
- * Provider port for the Google APIs used by Organization Automation. Business
+ * Provider port for the Google APIs used by Account Automation. Business
  * use-cases receive this interface instead of Fetch request/response shapes.
  */
 export interface GoogleAutomationPort {
@@ -52,7 +52,7 @@ export const productionGoogleAutomationPort: GoogleAutomationPort = {
   },
 };
 
-/** The only production adapter set used by Organization Automation. */
+/** The only production adapter set used by Account Automation. */
 export const productionAutomationDependencies: AutomationDependencies = {
   google: productionGoogleAutomationPort,
   attachments: {

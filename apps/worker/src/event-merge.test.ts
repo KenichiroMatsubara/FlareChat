@@ -66,7 +66,7 @@ describe('Scheduled Event merge', () => {
     expect(withinResponseWindow('2026-08-03T19:00:00+09:00', '2026-04-01T19:00:00+09:00')).toBe(false);
   });
 
-  it('narrows and widens with the window the Organization configured', () => {
+  it('narrows and widens with the window the Account configured', () => {
     expect(withinResponseWindow('2026-08-03T19:00:00+09:00', '2026-07-05T19:00:00+09:00', 14)).toBe(false);
     expect(withinResponseWindow('2026-08-03T19:00:00+09:00', '2026-04-01T19:00:00+09:00', 180)).toBe(true);
   });

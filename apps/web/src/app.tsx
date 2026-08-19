@@ -2,7 +2,7 @@ import { RouterProvider } from 'react-router-dom';
 
 import { createAppRouter } from './router';
 
-export { defaultOrganizationName, setupPhaseLabel, shouldShowOrganizationLoading, SignedOutEntry } from './entry';
+export { defaultAccountName, setupPhaseLabel, shouldShowAccountLoading, SignedOutEntry } from './entry';
 
 const router = typeof window === 'undefined' ? null : createAppRouter();
 

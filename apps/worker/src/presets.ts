@@ -1,7 +1,7 @@
-import membershipOrganization from '../presets/membership-organization.json';
+import membershipAccount from '../presets/membership-organization.json';
 import { eq, sql } from 'drizzle-orm';
 
-import type { OrganizationDatabase } from './storage/database';
+import type { AccountDatabase } from './storage/database';
 import {
   agentRulePermittedLineLists,
   agentRulePermittedRecipientLists,
@@ -18,7 +18,7 @@ import {
   rules,
   settings,
   taskRoleRevisions,
-} from './storage/organization-schema';
+} from './storage/account-schema';
 import { TASK_ROLE_REVISION_ID } from './tasks';
 
 export interface PresetDocument {
@@ -66,7 +66,7 @@ export interface PresetDocument {
   }>;
 }
 
-const catalog: readonly PresetDocument[] = [membershipOrganization as PresetDocument];
+const catalog: readonly PresetDocument[] = [membershipAccount as PresetDocument];
 
 export const availablePresets = (): readonly PresetDocument[] => catalog;
 
@@ -81,7 +81,7 @@ export interface PresetApplicationSummary {
 
 export class PresetConfigurationConflictError extends Error {
   constructor() {
-    super('This Organization already has configuration. Explicitly choose to add another copy of the Preset.');
+    super('This Account already has configuration. Explicitly choose to add another copy of the Preset.');
     this.name = 'PresetConfigurationConflictError';
   }
 }
@@ -107,8 +107,8 @@ const copiedName = (requested: string, used: Set<string>): string => {
 };
 
 export const applyPreset = async (
-  database: OrganizationDatabase,
-  organizationId: string,
+  database: AccountDatabase,
+  accountId: string,
   presetId: string,
   options: { conflictPolicy?: 'duplicate'; applicationKey?: string } = {},
 ): Promise<PresetApplicationSummary> => {
@@ -155,7 +155,7 @@ export const applyPreset = async (
   const statements = [
     ...preset.typedLists.map((list) => database.insert(lists).values({
       id: requiredReference(listIds, list.key, 'Typed List'),
-      organizationId,
+      accountId,
       kind: list.kind,
       name: requiredReference(listNames, list.key, 'Typed List name'),
       description: list.description,
@@ -185,7 +185,7 @@ export const applyPreset = async (
     ...preset.prompts.flatMap((prompt) => {
       const promptId = requiredReference(promptIds, prompt.key, 'Prompt');
       return [
-        database.insert(prompts).values({ id: promptId, organizationId, name: requiredReference(promptNames, prompt.key, 'Prompt name'), instructions: prompt.instructions, currentRevision: 1, createdAt: timestamp, updatedAt: timestamp }),
+        database.insert(prompts).values({ id: promptId, accountId, name: requiredReference(promptNames, prompt.key, 'Prompt name'), instructions: prompt.instructions, currentRevision: 1, createdAt: timestamp, updatedAt: timestamp }),
         database.insert(promptRevisions).values({ promptId, revision: 1, instructions: prompt.instructions, createdAt: timestamp }),
       ];
     }),
@@ -199,7 +199,7 @@ export const applyPreset = async (
       return [
         database.insert(rules).values({
           id: ruleId,
-          organizationId,
+          accountId,
           name: requiredReference(schemaRuleNames, rule.key, 'Schema Rule name'),
           status: rule.state,
           sourceListId: requiredReference(listIds, rule.sourceListKey, 'Source List'),
@@ -222,7 +222,7 @@ export const applyPreset = async (
       const permittedRecipientListIds = rule.recipientListKeys.map((key) => requiredReference(listIds, key, 'Calendar Recipient List'));
       const permittedLineListIds = rule.lineListKeys.map((key) => requiredReference(listIds, key, 'LINE Destination List'));
       return [
-        database.insert(agentRules).values({ id: agentRuleId, organizationId, name: requiredReference(agentRuleNames, rule.key, 'Agent Rule name'), status: rule.state, executionMode: rule.executionMode, promptId, selectionPolicy, priority: rule.priority, currentRevision: 1, createdAt: timestamp, updatedAt: timestamp }),
+        database.insert(agentRules).values({ id: agentRuleId, accountId, name: requiredReference(agentRuleNames, rule.key, 'Agent Rule name'), status: rule.state, executionMode: rule.executionMode, promptId, selectionPolicy, priority: rule.priority, currentRevision: 1, createdAt: timestamp, updatedAt: timestamp }),
         database.insert(agentRuleRevisions).values({ id: crypto.randomUUID(), agentRuleId, revision: 1, promptId, selectionPolicy, executionMode: rule.executionMode, permittedRecipientListIds: JSON.stringify(permittedRecipientListIds), permittedLineListIds: JSON.stringify(permittedLineListIds), createdAt: timestamp }),
         ...permittedRecipientListIds.map((listId) => database.insert(agentRulePermittedRecipientLists).values({ agentRuleId, listId })),
         ...permittedLineListIds.map((listId) => database.insert(agentRulePermittedLineLists).values({ agentRuleId, listId })),

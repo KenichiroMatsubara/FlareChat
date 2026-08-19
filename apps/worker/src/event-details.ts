@@ -33,7 +33,7 @@ export interface TaskRoleDescription {
  */
 export type SourceMessageKind = 'invitation' | 'response';
 
-/** One person from outside the Organization named by an Event Response. */
+/** One person from outside the Account named by an Event Response. */
 export interface GuestDetails {
   name: string;
   affiliation: string;
@@ -346,4 +346,15 @@ export const extractAiEventDetails = async (input: {
   if (!response.ok) throw new Error(`OpenAI 互換 API: ${body.error?.message?.trim() || `HTTP ${response.status}`}`);
   const text = body.choices?.[0]?.message?.content ?? '';
   return validatedMailExtraction(text, input.taskRoles);
+};
+
+/** A safe, canonical OpenAI-compatible Base URL, or null when the value is not one. */
+export const normalizedAiBaseUrl = (value: string | undefined): string | null => {
+  try {
+    const url = new URL(value?.trim() ?? '');
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) return null;
+    return `${url.origin}${url.pathname.replace(/\/+$/u, '')}`;
+  } catch {
+    return null;
+  }
 };

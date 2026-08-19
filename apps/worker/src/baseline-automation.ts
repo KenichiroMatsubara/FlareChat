@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 
-import type { OrganizationDatabase } from './storage/database';
-import { agentRules, ruleRevisions, rules, settings } from './storage/organization-schema';
+import type { AccountDatabase } from './storage/database';
+import { agentRules, ruleRevisions, rules, settings } from './storage/account-schema';
 
 const BASELINE_RULE_SETTING = 'baseline-schema-rule:v1';
 
@@ -12,14 +12,14 @@ interface BaselineRuleState {
 }
 
 /**
- * Ensures a new or legacy Organization has one active catch-all Schema Rule,
+ * Ensures a new or legacy Account has one active catch-all Schema Rule,
  * while preserving more selective higher-priority rules. The marker makes this
  * a one-time bootstrap: if an operator later suspends or archives every rule,
  * runtime processing will not recreate it.
  */
 export const ensureBaselineSchemaRule = async (
-  database: OrganizationDatabase,
-  organizationId: string,
+  database: AccountDatabase,
+  accountId: string,
 ): Promise<{ created: boolean; ruleId: string | null; repairSkipped: boolean }> => {
   const installed = await database.select({ value: settings.value }).from(settings)
     .where(eq(settings.key, BASELINE_RULE_SETTING)).get();
@@ -65,7 +65,7 @@ export const ensureBaselineSchemaRule = async (
   await database.batch([
     database.insert(rules).values({
       id: ruleId,
-      organizationId,
+      accountId,
       name: 'All incoming mail',
       status: 'active',
       selectionPolicy,
@@ -93,7 +93,7 @@ export const ensureBaselineSchemaRule = async (
   return { created: true, ruleId, repairSkipped: true };
 };
 
-export const completeBaselineSkippedRepair = async (database: OrganizationDatabase): Promise<void> => {
+export const completeBaselineSkippedRepair = async (database: AccountDatabase): Promise<void> => {
   const installed = await database.select({ value: settings.value }).from(settings)
     .where(eq(settings.key, BASELINE_RULE_SETTING)).get();
   if (!installed) return;

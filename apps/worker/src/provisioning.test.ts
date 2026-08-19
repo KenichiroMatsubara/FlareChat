@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { app } from './api';
-import { provisionOrganization } from './provisioning';
+import { provisionAccount } from './provisioning';
 import { fleetMigration } from './fleet-migration';
 import { retryProvisioning } from './onboarding';
 import { applyTestMigrations } from '../test/d1';
@@ -15,19 +15,19 @@ afterEach(() => {
   fixture = undefined;
 });
 
-describe('Organization provisioning', () => {
-  it('does not activate a new Organization while a schema release is being prepared', async () => {
+describe('Account provisioning', () => {
+  it('does not activate a new Account while a schema release is being prepared', async () => {
     fixture = await createProvisioningTestApp();
     await fleetMigration.prepareRelease(fixture.environment);
 
-    await expect(provisionOrganization(
+    await expect(provisionAccount(
       fixture.environment,
       fixture.provisioning,
     )).rejects.toThrow(/schema release/u);
 
     expect(fixture.control.row<{ status: string }>(
       'SELECT status FROM organizations WHERE id = ?',
-      fixture.provisioning.organizationId,
+      fixture.provisioning.accountId,
     )).toEqual({ status: 'provisioning' });
   });
 
@@ -39,16 +39,16 @@ describe('Organization provisioning', () => {
 
     expect(fixture.control.row<{ state: string }>(
       'SELECT state FROM organization_provisionings WHERE organization_id = ?',
-      fixture.provisioning.organizationId,
+      fixture.provisioning.accountId,
     )).toEqual({ state: 'provisioning' });
   });
 
-  it('activates an isolated Organization with its granted account as the Automation Inbox', async () => {
+  it('activates an isolated Account with its granted account as the Automation Inbox', async () => {
     fixture = await createProvisioningTestApp();
     const cloudflare = vi.fn();
     vi.stubGlobal('fetch', cloudflare);
 
-    await provisionOrganization(fixture.environment, fixture.provisioning);
+    await provisionAccount(fixture.environment, fixture.provisioning);
 
     const automation = await app.fetch(new Request(
       'https://app.example.com/api/organizations/organization-1/automation',
@@ -68,8 +68,8 @@ describe('Organization provisioning', () => {
     });
     await expect(membership.json()).resolves.toMatchObject({
       data: {
-        organizations: [{
-          organizationId: 'organization-1',
+        accounts: [{
+          accountId: 'organization-1',
           status: 'active',
         }],
       },
@@ -80,29 +80,29 @@ describe('Organization provisioning', () => {
     expect(cloudflare).not.toHaveBeenCalled();
   });
 
-  it('copies the selected Preset while creating an Organization', async () => {
+  it('copies the selected Preset while creating an Account', async () => {
     fixture = await createProvisioningTestApp();
     const selected = { ...fixture.provisioning, presetId: 'membership-organization' };
 
-    await provisionOrganization(fixture.environment, selected);
+    await provisionAccount(fixture.environment, selected);
 
-    expect(fixture.organization.rows<{ name: string }>('SELECT name FROM lists ORDER BY name')).toEqual([
+    expect(fixture.account.rows<{ name: string }>('SELECT name FROM lists ORDER BY name')).toEqual([
       { name: 'Calendar members' },
       { name: 'LINE members' },
       { name: 'Trusted announcement sources' },
     ]);
-    expect(fixture.organization.row<{ name: string }>('SELECT name FROM rules')).toEqual({
+    expect(fixture.account.row<{ name: string }>('SELECT name FROM rules')).toEqual({
       name: 'Membership announcements',
     });
-    expect(fixture.organization.row<{ name: string }>('SELECT name FROM agent_rules')).toEqual({
+    expect(fixture.account.row<{ name: string }>('SELECT name FROM agent_rules')).toEqual({
       name: 'Membership follow-up',
     });
   });
 
   it('refreshes the same Automation Inbox credential without erasing a rediscovered database', async () => {
     fixture = await createProvisioningTestApp();
-    applyTestMigrations(fixture.organization, 'organization');
-    fixture.organization.execute(
+    applyTestMigrations(fixture.account, 'organization');
+    fixture.account.execute(
       `INSERT INTO google_connections
         (id, kind, google_subject, inbox_address, granted_scopes, token_envelope,
          gmail_history_id, enabled, status, created_at, updated_at)
@@ -116,16 +116,16 @@ describe('Organization provisioning', () => {
       '2026-07-25T00:00:00.000Z',
       '2026-07-25T00:00:00.000Z',
     );
-    fixture.organization.execute(
+    fixture.account.execute(
       'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)',
       'preserved',
       'yes',
       '2026-07-25T00:00:00.000Z',
     );
 
-    await provisionOrganization(fixture.environment, fixture.provisioning);
+    await provisionAccount(fixture.environment, fixture.provisioning);
 
-    expect(fixture.organization.row<{
+    expect(fixture.account.row<{
       id: string;
       gmail_history_id: string;
       status: string;
@@ -135,11 +135,11 @@ describe('Organization provisioning', () => {
       gmail_history_id: 'history-1',
       status: 'active',
     });
-    expect(fixture.organization.row<{ value: string }>(
+    expect(fixture.account.row<{ value: string }>(
       'SELECT value FROM settings WHERE key = ?',
       'preserved',
     )).toEqual({ value: 'yes' });
-    expect(fixture.organization.row<{ token_envelope: string }>(
+    expect(fixture.account.row<{ token_envelope: string }>(
       'SELECT token_envelope FROM google_connections',
     )?.token_envelope).not.toBe('{"stale":true}');
   });

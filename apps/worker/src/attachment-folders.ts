@@ -1,8 +1,8 @@
 import { eq } from 'drizzle-orm';
 import { DEFAULT_ATTACHMENT_FOLDER_PATH, readAttachmentFolderPath, sourceMessageFolderName } from '@mail/domain';
 
-import { settings, sourceMessages } from './storage/organization-schema';
-import type { OrganizationDatabase } from './storage/database';
+import { settings, sourceMessages } from './storage/account-schema';
+import type { AccountDatabase } from './storage/database';
 import type { createSourceMessageFolder, ensureAttachmentFolderPath } from './drive-attachments';
 
 export const ATTACHMENT_FOLDER_PATH_SETTING = 'attachment_folder_path';
@@ -12,15 +12,15 @@ export interface DriveFolderPort {
   createMessageFolder: typeof createSourceMessageFolder;
 }
 
-/** The Drive location this Organization writes, falling back to the product default. */
-export const organizationAttachmentFolderPath = async (database: OrganizationDatabase): Promise<string> => {
+/** The Drive location this Account writes, falling back to the product default. */
+export const accountAttachmentFolderPath = async (database: AccountDatabase): Promise<string> => {
   const stored = await database.select({ value: settings.value }).from(settings)
     .where(eq(settings.key, ATTACHMENT_FOLDER_PATH_SETTING)).get();
   return stored?.value ?? DEFAULT_ATTACHMENT_FOLDER_PATH;
 };
 
-export const saveOrganizationAttachmentFolderPath = async (
-  database: OrganizationDatabase,
+export const saveAccountAttachmentFolderPath = async (
+  database: AccountDatabase,
   path: string,
   updatedAt: string,
 ): Promise<void> => {
@@ -35,7 +35,7 @@ export const saveOrganizationAttachmentFolderPath = async (
  * reprocessing the same message never produces a second folder.
  */
 export const resolveSourceMessageFolder = async (input: {
-  database: OrganizationDatabase;
+  database: AccountDatabase;
   drive: DriveFolderPort;
   accessToken: string;
   subject: string;
@@ -44,7 +44,7 @@ export const resolveSourceMessageFolder = async (input: {
   sourceMessageId?: string | undefined;
 }): Promise<string> => {
   if (input.recordedFolderId) return input.recordedFolderId;
-  const configured = readAttachmentFolderPath(await organizationAttachmentFolderPath(input.database));
+  const configured = readAttachmentFolderPath(await accountAttachmentFolderPath(input.database));
   if (!configured.accepted) throw new Error(`Attachment Folder Path is not usable (${configured.reason}).`);
   const parentId = await input.drive.ensurePath({ accessToken: input.accessToken, segments: configured.segments });
   const folderId = await input.drive.createMessageFolder({

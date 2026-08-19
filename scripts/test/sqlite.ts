@@ -38,7 +38,7 @@ export const createDiscoverableControlDatabase = (directory: string, name: strin
   database.close();
 };
 
-export const createDiscoverableOrganizationDatabase = (directory: string, name: string): void => {
+export const createDiscoverableAccountDatabase = (directory: string, name: string): void => {
   const database = createDatabase(directory, name, `
     CREATE TABLE settings (key TEXT PRIMARY KEY);
     CREATE TABLE google_connections (id TEXT PRIMARY KEY);

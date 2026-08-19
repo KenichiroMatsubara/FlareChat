@@ -5,8 +5,8 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import type { AppState } from '@mail/domain';
 
 import { ApiError } from './api';
-import { createAppRoutes, organizationRoutePaths, resolveApplicationRedirect, routePaths } from './router';
-import { logoutFromRouteError, MemberPortalView } from './routes';
+import { createAppRoutes, accountRoutePaths, resolveApplicationRedirect, routePaths } from './router';
+import { logoutFromRouteError, ContactPortalView } from './routes';
 import { pendingKey } from './pending';
 
 describe('application routes', () => {
@@ -17,15 +17,17 @@ describe('application routes', () => {
       setupConfirm: '/setup/confirm',
       setupProvisioning: '/setup/provisioning',
       setupFailed: '/setup/failed',
-      organization: '/organizations/:organizationId',
+      account: '/organizations/:accountId',
       portal: '/portal',
-      portalJoin: '/portal/join/:organizationId/:token',
+      portalJoin: '/portal/join/:accountId/:token',
     });
-    expect(organizationRoutePaths).toEqual({
+    expect(accountRoutePaths).toEqual({
       automation: 'automation',
+      chat: 'chat',
+      automations: 'automations',
       connections: 'connections',
       rules: 'rules',
-      members: 'members',
+      contacts: 'members',
       mailboxTest: 'mailbox-test',
       ruleRuns: 'rule-runs',
       eventRefresh: 'event-refresh',
@@ -34,9 +36,9 @@ describe('application routes', () => {
   });
 
   it('builds shareable organization URLs without string concatenation at call sites', async () => {
-    const { organizationUrl } = await import('./router');
+    const { accountUrl } = await import('./router');
 
-    expect(organizationUrl('org/1', 'rules')).toBe('/organizations/org%2F1/rules');
+    expect(accountUrl('org/1', 'rules')).toBe('/organizations/org%2F1/rules');
   });
 
   it('redirects a URL that does not match the durable application state', () => {
@@ -44,7 +46,7 @@ describe('application routes', () => {
     const ready = {
       kind: 'ready',
       identity: { email: 'owner@example.com', displayName: 'Owner' },
-      organizations: [{ organizationId: 'org-1', name: 'Example', status: 'active' }],
+      accounts: [{ accountId: 'org-1', name: 'Example', status: 'active' }],
     } as AppState;
 
     expect(resolveApplicationRedirect('/setup', signedOut)).toBe('/');
@@ -57,7 +59,7 @@ describe('application routes', () => {
     const ready = {
       kind: 'ready',
       identity: { email: 'owner@example.com', displayName: 'Owner' },
-      organizations: [{ organizationId: 'org-1', name: 'Example', status: 'active' }],
+      accounts: [{ accountId: 'org-1', name: 'Example', status: 'active' }],
     } as AppState;
     const router = createMemoryRouter(createAppRoutes({
       bootstrap: async () => ready,
@@ -75,11 +77,11 @@ describe('application routes', () => {
     expect(unknown.state.matches.at(-1)?.route.path).toBe('*');
   });
 
-  it('opens the Organization Task table as a durable deep link', async () => {
+  it('opens the Account Task table as a durable deep link', async () => {
     const ready = {
       kind: 'ready',
       identity: { email: 'owner@example.com', displayName: 'Owner' },
-      organizations: [{ organizationId: 'org-1', name: 'Example', status: 'active' }],
+      accounts: [{ accountId: 'org-1', name: 'Example', status: 'active' }],
     } as AppState;
     const router = createMemoryRouter(createAppRoutes({
       bootstrap: async () => ready,
@@ -93,7 +95,7 @@ describe('application routes', () => {
     const ready = {
       kind: 'ready',
       identity: { email: 'owner@example.com', displayName: 'Owner' },
-      organizations: [{ organizationId: 'org-1', name: 'Example', status: 'active' }],
+      accounts: [{ accountId: 'org-1', name: 'Example', status: 'active' }],
     } as AppState;
     const router = createMemoryRouter(createAppRoutes({
       bootstrap: async () => ready,
@@ -112,7 +114,7 @@ describe('application routes', () => {
       initialEntries: ['/organizations/org-1/automation'],
       hydrationData: {
         loaderData: {},
-        errors: { root: new Error('Organization database is unavailable.') },
+        errors: { root: new Error('Account database is unavailable.') },
       },
     });
 
@@ -160,16 +162,16 @@ describe('application routes', () => {
     expect(navigate).toHaveBeenCalledWith('/', { replace: true });
   });
 
-  it('sends a Member to the Portal and keeps them off the management GUI', () => {
-    const member = {
+  it('sends a Contact to the Portal and keeps them off the management GUI', () => {
+    const contact = {
       kind: 'member',
       identity: { email: 'hanako@example.com', displayName: '山田花子' },
-      organization: { organizationId: 'org-1', name: 'Example' },
+      account: { accountId: 'org-1', name: 'Example' },
     } as AppState;
 
-    expect(resolveApplicationRedirect('/portal', member)).toBeNull();
-    expect(resolveApplicationRedirect('/', member)).toBe('/portal');
-    expect(resolveApplicationRedirect('/organizations/org-1/automation', member)).toBe('/portal');
+    expect(resolveApplicationRedirect('/portal', contact)).toBeNull();
+    expect(resolveApplicationRedirect('/', contact)).toBe('/portal');
+    expect(resolveApplicationRedirect('/organizations/org-1/automation', contact)).toBe('/portal');
   });
 
   it('keeps a portal invitation reachable in every application state, so signing in returns to it', () => {
@@ -184,10 +186,10 @@ describe('application routes', () => {
   });
 });
 
-describe('Member Portal progress', () => {
+describe('Contact Portal progress', () => {
   const portal = {
-    organization: { organizationId: 'org-1', name: 'Example' },
-    member: { memberId: 'member-1', name: '山田' },
+    account: { accountId: 'org-1', name: 'Example' },
+    contact: { contactId: 'member-1', name: '山田' },
     events: [{
       eventId: 'event-1', title: '総会', startsAt: '2026-09-01T01:00:00.000Z', endsAt: '2026-09-01T03:00:00.000Z',
       location: '本部', registrationDeadline: null, status: 'unanswered' as const, comment: '', open: true,
@@ -198,7 +200,7 @@ describe('Member Portal progress', () => {
     }],
   };
   const view = (pending: (key: string) => boolean, settled: (key: string) => boolean = () => false, running: string[] = []): string =>
-    renderToStaticMarkup(<MemberPortalView
+    renderToStaticMarkup(<ContactPortalView
       portal={portal}
       running={running}
       pending={pending}
@@ -226,7 +228,7 @@ describe('Member Portal progress', () => {
     expect(saved).toContain('保存しました');
   });
 
-  it('reports a Member leaving the portal', () => {
+  it('reports a Contact leaving the portal', () => {
     expect(view((key) => key === pendingKey.portalLogout)).toContain('ログアウト中…');
   });
 

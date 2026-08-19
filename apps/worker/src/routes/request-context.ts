@@ -1,25 +1,25 @@
 import { and, eq, gt, isNull } from 'drizzle-orm';
 
-import { masterKey, unwrapOrganizationKey } from '../cryptography';
+import { masterKey, unwrapAccountKey } from '../cryptography';
 import {
   createDatabaseAccess,
   DatabaseBindingUnavailableError,
 } from '../database-access';
-import type { Bindings, OrganizationRow, SessionRow } from '../types';
+import type { Bindings, AccountRow, SessionRow } from '../types';
 import { controlDatabase } from '../storage/database';
-import { admins, identities, organizationKeys, organizations, sessions } from '../storage/control-schema';
+import { accountIdentities, identities, accountKeys, accounts, sessions } from '../storage/control-schema';
 
-export interface OrganizationAccess {
+export interface AccountAccess {
   session: SessionRow;
-  organization: OrganizationRow;
+  account: AccountRow;
   database: D1Database | null;
 }
 
 export interface RequestContext {
   session(): Promise<SessionRow | null>;
-  organization(organizationId: string): Promise<OrganizationAccess>;
-  organizationKey(organizationId: string): Promise<CryptoKey>;
-  activeOrganizationDatabase(organizationId: string): Promise<D1Database | null>;
+  account(accountId: string): Promise<AccountAccess>;
+  accountKey(accountId: string): Promise<CryptoKey>;
+  activeAccountDatabase(accountId: string): Promise<D1Database | null>;
 }
 
 const now = (): string => new Date().toISOString();
@@ -52,17 +52,17 @@ export const createRequestContext = (request: Request, env: Bindings): RequestCo
 
   return {
     session,
-    async organization(organizationId) {
+    async account(accountId) {
       const currentSession = await session();
       if (!currentSession) throw new Error('Authentication is required.');
       const membership = await controlDatabase(env.CONTROL_DB).select({
-        id: organizations.id,
-        name: organizations.name,
-        status: organizations.status,
-        database_id: organizations.databaseId,
-        binding_name: organizations.bindingName,
-      }).from(admins).innerJoin(organizations, eq(organizations.id, admins.organizationId))
-        .where(and(eq(admins.identityId, currentSession.identity_id), eq(admins.organizationId, organizationId), eq(admins.state, 'active')))
+        id: accounts.id,
+        name: accounts.name,
+        status: accounts.status,
+        database_id: accounts.databaseId,
+        binding_name: accounts.bindingName,
+      }).from(accountIdentities).innerJoin(accounts, eq(accounts.id, accountIdentities.accountId))
+        .where(and(eq(accountIdentities.identityId, currentSession.identity_id), eq(accountIdentities.accountId, accountId), eq(accountIdentities.state, 'active')))
         .get();
       if (!membership) throw new Error('この組織へのアクセス権がありません。');
       if (membership.status !== 'active') throw new Error('この組織は現在利用できません。');
@@ -78,36 +78,36 @@ export const createRequestContext = (request: Request, env: Bindings): RequestCo
       }
       return {
         session: currentSession,
-        organization: membership,
+        account: membership,
         database,
       };
     },
-    async organizationKey(organizationId) {
+    async accountKey(accountId) {
       const keyRecord = await controlDatabase(env.CONTROL_DB).select({
-        masterKeyVersion: organizationKeys.masterKeyVersion,
-        wrappedKeyEnvelope: organizationKeys.wrappedKeyEnvelope,
-      }).from(organizationKeys).where(eq(organizationKeys.organizationId, organizationId)).get();
+        masterKeyVersion: accountKeys.masterKeyVersion,
+        wrappedKeyEnvelope: accountKeys.wrappedKeyEnvelope,
+      }).from(accountKeys).where(eq(accountKeys.accountId, accountId)).get();
       if (!keyRecord) throw new Error('組織暗号鍵が見つかりません。');
-      return unwrapOrganizationKey(
+      return unwrapAccountKey(
         { masterKeyVersion: keyRecord.masterKeyVersion, envelope: JSON.parse(keyRecord.wrappedKeyEnvelope) },
         await masterKey(env.CREDENTIAL_MASTER_KEY),
-        organizationId,
+        accountId,
       );
     },
-    async activeOrganizationDatabase(organizationId) {
-      const organization = await controlDatabase(env.CONTROL_DB).select({
-        databaseId: organizations.databaseId,
-        bindingName: organizations.bindingName,
-      }).from(organizations).where(and(
-        eq(organizations.id, organizationId),
-        eq(organizations.status, 'active'),
+    async activeAccountDatabase(accountId) {
+      const account = await controlDatabase(env.CONTROL_DB).select({
+        databaseId: accounts.databaseId,
+        bindingName: accounts.bindingName,
+      }).from(accounts).where(and(
+        eq(accounts.id, accountId),
+        eq(accounts.status, 'active'),
       )).get();
-      if (!organization) return null;
+      if (!account) return null;
       try {
         return (await databases.open({
           kind: 'organization',
-          bindingName: organization.bindingName,
-          databaseId: organization.databaseId,
+          bindingName: account.bindingName,
+          databaseId: account.databaseId,
         })).raw;
       } catch (error) {
         if (error instanceof DatabaseBindingUnavailableError) return null;

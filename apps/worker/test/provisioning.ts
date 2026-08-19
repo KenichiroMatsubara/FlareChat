@@ -1,6 +1,6 @@
-import { createOrganizationKey, encrypt, masterKey } from '../src/cryptography';
+import { createAccountKey, encrypt, masterKey } from '../src/cryptography';
 import { controlDatabase } from '../src/storage/database';
-import { organizationProvisionings, type OrganizationProvisioningRecord } from '../src/storage/control-schema';
+import { accountProvisionings, type AccountProvisioningRecord } from '../src/storage/control-schema';
 import type { Bindings } from '../src/types';
 import { createMigratedTestD1, createTestD1Database, type TestD1Database } from './d1';
 
@@ -9,17 +9,17 @@ export const TEST_MASTER_KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
 export interface ProvisioningTestApp {
   control: TestD1Database;
-  organization: TestD1Database;
+  account: TestD1Database;
   environment: Bindings;
-  provisioning: OrganizationProvisioningRecord;
+  provisioning: AccountProvisioningRecord;
   close: () => void;
 }
 
 export const createProvisioningTestApp = async (): Promise<ProvisioningTestApp> => {
   const control = createMigratedTestD1('control');
-  const organization = createTestD1Database();
+  const account = createTestD1Database();
   const deploymentKey = await masterKey(TEST_MASTER_KEY);
-  const wrapped = await createOrganizationKey(deploymentKey, 'v1', 'organization-1');
+  const wrapped = await createAccountKey(deploymentKey, 'v1', 'organization-1');
   const provisioningCredential = await encrypt(
     JSON.stringify({
       accessToken: 'access-1',
@@ -44,7 +44,7 @@ export const createProvisioningTestApp = async (): Promise<ProvisioningTestApp> 
     `INSERT INTO organizations (id, name, status, binding_name, created_at, updated_at)
      VALUES (?, ?, 'provisioning', ?, ?, ?)`,
     'organization-1',
-    'Example Organization',
+    'Example Account',
     'ORG_ORGANIZATION1',
     CREATED_AT,
     CREATED_AT,
@@ -93,22 +93,22 @@ export const createProvisioningTestApp = async (): Promise<ProvisioningTestApp> 
     CREATED_AT,
     CREATED_AT,
   );
-  const provisioning = await controlDatabase(control.binding).select().from(organizationProvisionings).get();
+  const provisioning = await controlDatabase(control.binding).select().from(accountProvisionings).get();
   if (!provisioning) throw new Error('Provisioning test state could not be created.');
   return {
     control,
-    organization,
+    account,
     provisioning,
     environment: {
       CONTROL_DB: control.binding,
-      LOCAL_ORGANIZATION_DB_1: organization.binding,
+      LOCAL_ORGANIZATION_DB_1: account.binding,
       CREDENTIAL_MASTER_KEY: TEST_MASTER_KEY,
       CREDENTIAL_MASTER_KEY_VERSION: 'v1',
       APP_URL: 'https://app.example.com',
       WEB_ORIGIN: 'https://app.example.com',
     } as unknown as Bindings,
     close: () => {
-      organization.close();
+      account.close();
       control.close();
     },
   };

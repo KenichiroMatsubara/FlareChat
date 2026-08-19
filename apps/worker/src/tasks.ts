@@ -1,8 +1,8 @@
 import { and, asc, count, eq, inArray, sql } from 'drizzle-orm';
 
 import type { TaskDetails } from './event-details';
-import type { OrganizationDatabase } from './storage/database';
-import { operationalTaskRoles, taskRoleAssignments, taskRoleRevisions, tasks } from './storage/organization-schema';
+import type { AccountDatabase } from './storage/database';
+import { operationalTaskRoles, taskRoleAssignments, taskRoleRevisions, tasks } from './storage/account-schema';
 
 export const UNASSIGNED_TASK_ROLE = {
   id: 'unassigned',
@@ -16,13 +16,13 @@ export interface OperationalTaskRole {
   description: string;
 }
 
-/** The single row that carries the Operational Task Role revision of one Organization. */
+/** The single row that carries the Operational Task Role revision of one Account. */
 export const TASK_ROLE_REVISION_ID = 'current';
 
 /**
  * Whether the open Tasks still match the Operational Task Role set. It becomes
  * pending the moment a role is added, renamed, described differently, or
- * removed, and stays pending until an Admin completes a reassignment review.
+ * removed, and stays pending until an AccountIdentity completes a reassignment review.
  */
 export interface TaskReassignmentReview {
   rolesChangedAt: string | null;
@@ -37,7 +37,7 @@ export interface TaskView {
   deadline: string;
   assigneeRoleId: string;
   assigneeRoleName: string;
-  assigneeMemberId: string | null;
+  assigneeContactId: string | null;
   assigneeName: string;
   sourceMessageSubject: string;
   description: string;
@@ -48,7 +48,7 @@ export interface TaskView {
 
 const timestamp = (): string => new Date().toISOString();
 
-const reassignmentReviewOf = async (database: OrganizationDatabase): Promise<TaskReassignmentReview> => {
+const reassignmentReviewOf = async (database: AccountDatabase): Promise<TaskReassignmentReview> => {
   const [revision, open] = await Promise.all([
     database.select().from(taskRoleRevisions).where(eq(taskRoleRevisions.id, TASK_ROLE_REVISION_ID)).get(),
     database.select({ value: count() }).from(tasks).where(eq(tasks.completed, false)).get(),
@@ -65,7 +65,7 @@ const reassignmentReviewOf = async (database: OrganizationDatabase): Promise<Tas
  * Counts the role change rather than dating it: two changes within one
  * millisecond of a review must still leave the review pending.
  */
-const recordRoleChange = async (database: OrganizationDatabase): Promise<void> => {
+const recordRoleChange = async (database: AccountDatabase): Promise<void> => {
   const changedAt = timestamp();
   await database.insert(taskRoleRevisions)
     .values({ id: TASK_ROLE_REVISION_ID, revision: 1, reviewedRevision: 0, changedAt, reviewedAt: null })
@@ -75,7 +75,7 @@ const recordRoleChange = async (database: OrganizationDatabase): Promise<void> =
     }).run();
 };
 
-export const createTaskWorkflow = (database: OrganizationDatabase) => ({
+export const createTaskWorkflow = (database: AccountDatabase) => ({
   async listRoles(): Promise<OperationalTaskRole[]> {
     return database.select({
       id: operationalTaskRoles.id,
@@ -129,7 +129,7 @@ export const createTaskWorkflow = (database: OrganizationDatabase) => ({
   },
 
   /**
-   * Moves the named open Tasks onto the roles an Admin accepted, taking each
+   * Moves the named open Tasks onto the roles an AccountIdentity accepted, taking each
    * assignee from the role's current holder. A Task that no longer exists, is
    * already completed, or would collide with an existing Task of the same role,
    * deadline, and title is reported as skipped rather than failing the batch.
@@ -156,7 +156,7 @@ export const createTaskWorkflow = (database: OrganizationDatabase) => ({
         const task = await database.update(tasks).set({
           assigneeRoleId: role.id,
           assigneeRoleName: role.displayName,
-          assigneeMemberId: assignment?.memberId ?? null,
+          assigneeContactId: assignment?.contactId ?? null,
           assigneeName: assignment?.displayName ?? UNASSIGNED_TASK_ROLE.displayName,
           updatedAt: timestamp(),
         }).where(and(eq(tasks.id, taskId), eq(tasks.completed, false))).returning().get();
@@ -169,13 +169,13 @@ export const createTaskWorkflow = (database: OrganizationDatabase) => ({
     return { tasks: updated, skipped };
   },
 
-  async assignRole(input: { roleId: string; memberId: string; displayName: string }): Promise<void> {
+  async assignRole(input: { roleId: string; contactId: string; displayName: string }): Promise<void> {
     const now = timestamp();
     await database.insert(taskRoleAssignments).values({ ...input, assignedAt: now, updatedAt: now })
-      .onConflictDoUpdate({ target: taskRoleAssignments.roleId, set: { memberId: input.memberId, displayName: input.displayName, updatedAt: now } }).run();
+      .onConflictDoUpdate({ target: taskRoleAssignments.roleId, set: { contactId: input.contactId, displayName: input.displayName, updatedAt: now } }).run();
   },
 
-  async createFromSourceMessage(input: { organizationId: string; sourceMessageId: string; sourceMessageSubject: string; extractedTasks: TaskDetails[] }): Promise<void> {
+  async createFromSourceMessage(input: { accountId: string; sourceMessageId: string; sourceMessageSubject: string; extractedTasks: TaskDetails[] }): Promise<void> {
     const [roles, assignments] = await Promise.all([
       database.select().from(operationalTaskRoles).all(),
       database.select().from(taskRoleAssignments).all(),
@@ -188,14 +188,14 @@ export const createTaskWorkflow = (database: OrganizationDatabase) => ({
       const now = timestamp();
       await database.insert(tasks).values({
         id: crypto.randomUUID(),
-        organizationId: input.organizationId,
+        accountId: input.accountId,
         sourceMessageId: input.sourceMessageId,
         sourceMessageSubject: input.sourceMessageSubject,
         title: extracted.title,
         deadline: extracted.deadline,
         assigneeRoleId: role.id,
         assigneeRoleName: role.displayName,
-        assigneeMemberId: assignment?.memberId ?? null,
+        assigneeContactId: assignment?.contactId ?? null,
         assigneeName: assignment?.displayName ?? '未割り当て',
         description: extracted.description,
         createdAt: now,
@@ -204,8 +204,8 @@ export const createTaskWorkflow = (database: OrganizationDatabase) => ({
     }
   },
 
-  async list(input: { assigneeMemberId?: string; unassigned?: boolean; event?: string; completed?: boolean } = {}): Promise<TaskView[]> {
-    const conditions = [input.unassigned ? eq(tasks.assigneeRoleId, UNASSIGNED_TASK_ROLE.id) : input.assigneeMemberId ? eq(tasks.assigneeMemberId, input.assigneeMemberId) : undefined,
+  async list(input: { assigneeContactId?: string; unassigned?: boolean; event?: string; completed?: boolean } = {}): Promise<TaskView[]> {
+    const conditions = [input.unassigned ? eq(tasks.assigneeRoleId, UNASSIGNED_TASK_ROLE.id) : input.assigneeContactId ? eq(tasks.assigneeContactId, input.assigneeContactId) : undefined,
       input.event ? eq(tasks.sourceMessageSubject, input.event) : undefined,
       input.completed === undefined ? undefined : eq(tasks.completed, input.completed)].filter((value): value is NonNullable<typeof value> => Boolean(value));
     const rows = await database.select().from(tasks).where(conditions.length ? and(...conditions) : undefined)

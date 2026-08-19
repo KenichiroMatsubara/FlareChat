@@ -1,11 +1,11 @@
-export interface MemberImportPreview {
+export interface ContactImportPreview {
   accepted: Array<{ name: string; email: string }>;
   duplicates: string[];
   invalid: Array<{ row: number; value: string }>;
 }
 
 /** Parses a small name,email CSV preview without persisting recipient data. */
-export const previewMemberCsv = (csv: string): MemberImportPreview => {
+export const previewContactCsv = (csv: string): ContactImportPreview => {
   const accepted: Array<{ name: string; email: string }> = [];
   const duplicates: string[] = [];
   const invalid: Array<{ row: number; value: string }> = [];
@@ -22,5 +22,5 @@ export const previewMemberCsv = (csv: string): MemberImportPreview => {
   return { accepted, duplicates, invalid };
 };
 
-export const exportMemberCsv = (recipients: Array<{ name: string; email: string }>): string =>
+export const exportContactCsv = (recipients: Array<{ name: string; email: string }>): string =>
   recipients.map((recipient) => `${recipient.name.replaceAll('"', '""')},${recipient.email}`).join('\n');

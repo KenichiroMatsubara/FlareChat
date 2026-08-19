@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { app } from './api';
-import { encrypt, masterKey, unwrapOrganizationKey } from './cryptography';
+import { encrypt, masterKey, unwrapAccountKey } from './cryptography';
 import { randomToken } from './encoding';
 import { GOOGLE_IDENTITY_SCOPES, GOOGLE_SCOPES } from './google';
 import { createTestApp, type TestApp } from '../test/app';
@@ -9,13 +9,13 @@ import { createAutomationTestApp } from '../test/automation';
 import { createTestD1Database, type TestD1Database } from '../test/d1';
 
 let fixture: TestApp | undefined;
-let localOrganization: TestD1Database | undefined;
+let localAccount: TestD1Database | undefined;
 
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
-  localOrganization?.close();
-  localOrganization = undefined;
+  localAccount?.close();
+  localAccount = undefined;
   fixture?.close();
   fixture = undefined;
 });
@@ -40,12 +40,12 @@ describe('application entry', () => {
     });
   });
 
-  it('makes each database ready before an existing Admin bootstrap uses its schema', async () => {
+  it('makes each database ready before an existing Account bootstrap uses its schema', async () => {
     fixture = createTestApp({
       controlMigration: '0000_initial.sql',
-      organizationMigration: '0013_agent_rule_writes.sql',
+      accountMigration: '0013_agent_rule_writes.sql',
     });
-    const secondOrganization = fixture.addOrganization({
+    const secondAccount = fixture.addAccount({
       id: 'organization-2',
       bindingName: 'ORG_ORGANIZATION2',
       migration: '0000_initial.sql',
@@ -57,26 +57,26 @@ describe('application entry', () => {
     await expect(bootstrap.json()).resolves.toMatchObject({
       data: {
         kind: 'ready',
-        organizations: [
-          { organizationId: 'organization-1' },
-          { organizationId: 'organization-2' },
+        accounts: [
+          { accountId: 'organization-1' },
+          { accountId: 'organization-2' },
         ],
       },
     });
     expect(fixture.control.rows<{ name: string }>(
       'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1',
     )).toEqual([{ name: '0005_member_logins.sql' }]);
-    expect(fixture.organization.rows<{ name: string }>(
+    expect(fixture.account.rows<{ name: string }>(
       'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1',
-    )).toEqual([{ name: '0021_rule_execution.sql' }]);
-    expect(secondOrganization.rows<{ name: string }>(
+    )).toEqual([{ name: '0025_discord_channel.sql' }]);
+    expect(secondAccount.rows<{ name: string }>(
       'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1',
-    )).toEqual([{ name: '0021_rule_execution.sql' }]);
+    )).toEqual([{ name: '0025_discord_channel.sql' }]);
   });
 
-  it('reports the exact Organization schema mismatch without revoking the session', async () => {
+  it('reports the exact Account schema mismatch without revoking the session', async () => {
     fixture = createTestApp();
-    fixture.organization.execute(
+    fixture.account.execute(
       'INSERT INTO d1_migrations (name) VALUES (?)',
       '9999_future.sql',
     );
@@ -95,7 +95,7 @@ describe('application entry', () => {
         databaseId: 'database-1',
         bindingName: 'ORG_ORGANIZATION1',
         currentMigration: '9999_future.sql',
-        expectedMigration: '0021_rule_execution.sql',
+        expectedMigration: '0025_discord_channel.sql',
         requestId: expect.any(String),
       },
     });
@@ -134,7 +134,7 @@ describe('application entry', () => {
     )).toEqual([{ revoked_at: null }]);
   });
 
-  it('returns an existing Admin to their Organization after identity-only Google login', async () => {
+  it('returns an existing Account to their Account after identity-only Google login', async () => {
     fixture = createTestApp();
     fixture.environment.CREDENTIAL_MASTER_KEY = randomToken(32);
     fixture.environment.CREDENTIAL_MASTER_KEY_VERSION = 'test-v1';
@@ -181,9 +181,9 @@ describe('application entry', () => {
       data: {
         kind: 'ready',
         identity: { email: 'owner@example.com', displayName: 'Owner' },
-        organizations: [{
-          organizationId: 'organization-1',
-          name: 'Organization One',
+        accounts: [{
+          accountId: 'organization-1',
+          name: 'Account One',
           status: 'active',
         }],
       },
@@ -192,7 +192,7 @@ describe('application entry', () => {
 
   it('keeps the Owner session and Membership when the Automation Inbox is disconnected', async () => {
     fixture = createTestApp();
-    fixture.organization.execute(
+    fixture.account.execute(
       "UPDATE google_connections SET status = 'disconnected', enabled = 0 WHERE kind = 'automation_inbox'",
     );
 
@@ -202,13 +202,13 @@ describe('application entry', () => {
     await expect(bootstrap.json()).resolves.toMatchObject({
       data: {
         kind: 'ready',
-        organizations: [{ organizationId: 'organization-1' }],
+        accounts: [{ accountId: 'organization-1' }],
       },
     });
     await expect(identity.json()).resolves.toMatchObject({
       data: {
         email: 'owner@example.com',
-        organizations: [{ organizationId: 'organization-1' }],
+        accounts: [{ accountId: 'organization-1' }],
       },
     });
   });
@@ -218,7 +218,7 @@ describe('application entry', () => {
     const keyRecord = fixture.control.row<{ master_key_version: string; wrapped_key_envelope: string }>(
       "SELECT master_key_version, wrapped_key_envelope FROM organization_keys WHERE organization_id = 'organization-1'",
     );
-    const organizationKey = await unwrapOrganizationKey({
+    const accountKey = await unwrapAccountKey({
       masterKeyVersion: keyRecord?.master_key_version ?? '',
       envelope: JSON.parse(keyRecord?.wrapped_key_envelope ?? '{}'),
     }, await masterKey(fixture.environment.CREDENTIAL_MASTER_KEY), 'organization-1');
@@ -228,8 +228,8 @@ describe('application entry', () => {
       expiresAt: '2000-01-01T00:00:00.000Z',
       scopes: GOOGLE_SCOPES,
       tokenType: 'Bearer',
-    }), organizationKey, 'google-connection:organization-1:automation-inbox');
-    fixture.organization.execute(
+    }), accountKey, 'google-connection:organization-1:automation-inbox');
+    fixture.account.execute(
       "UPDATE google_connections SET token_envelope = ? WHERE id = 'inbox-1'",
       JSON.stringify(expiredToken),
     );
@@ -244,14 +244,14 @@ describe('application entry', () => {
     const bootstrap = await app.fetch(fixture.request('/api/bootstrap'), fixture.environment);
 
     expect(bootstrap.status).toBe(200);
-    expect(fixture.organization.row<{ status: string; last_error: string | null }>(
+    expect(fixture.account.row<{ status: string; last_error: string | null }>(
       "SELECT status, last_error FROM google_connections WHERE id = 'inbox-1'",
     )).toEqual({ status: 'reauthentication_required', last_error: 'Token has been expired or revoked.' });
   });
 
   it('reconnects a reauthentication-required Automation Inbox and keeps its Gmail cursor so the outage is processed', async () => {
     fixture = await createAutomationTestApp();
-    fixture.organization.execute(
+    fixture.account.execute(
       "UPDATE google_connections SET google_subject = 'google-subject-1', status = 'reauthentication_required', last_error = 'Token has been expired or revoked.' WHERE id = 'inbox-1'",
     );
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
@@ -294,7 +294,7 @@ describe('application entry', () => {
 
     expect(redirect.pathname).toBe('/organizations/organization-1/automation');
     expect(callback.headers.get('set-cookie')).toContain('mail_session=');
-    expect(fixture.organization.rows<{ status: string; last_error: string | null; gmail_history_id: string }>(
+    expect(fixture.account.rows<{ status: string; last_error: string | null; gmail_history_id: string }>(
       "SELECT status, last_error, gmail_history_id FROM google_connections WHERE id = 'inbox-1'",
     )).toEqual([{
       status: 'active',
@@ -303,7 +303,7 @@ describe('application entry', () => {
     }]);
   });
 
-  it('opens Organization setup from one complete Google grant without a setup cookie', async () => {
+  it('opens Account setup from one complete Google grant without a setup cookie', async () => {
     fixture = createTestApp();
     fixture.environment.CREDENTIAL_MASTER_KEY = randomToken(32);
     fixture.environment.CREDENTIAL_MASTER_KEY_VERSION = 'test-v1';
@@ -361,7 +361,7 @@ describe('application entry', () => {
     });
   });
 
-  it('treats Organization setup by an existing Admin as ordinary login', async () => {
+  it('treats Account setup by an existing Account as ordinary login', async () => {
     fixture = createTestApp();
     fixture.environment.CREDENTIAL_MASTER_KEY = randomToken(32);
     fixture.environment.CREDENTIAL_MASTER_KEY_VERSION = 'test-v1';
@@ -412,7 +412,7 @@ describe('application entry', () => {
     await expect(bootstrap.json()).resolves.toMatchObject({
       data: {
         kind: 'ready',
-        organizations: [{ organizationId: 'organization-1' }],
+        accounts: [{ accountId: 'organization-1' }],
       },
     });
     expect(fixture.control.row<{ count: number }>('SELECT COUNT(*) AS count FROM organizations')?.count).toBe(1);
@@ -420,10 +420,10 @@ describe('application entry', () => {
     expect(fixture.control.row<{ count: number }>('SELECT COUNT(*) AS count FROM organization_provisionings')?.count).toBe(0);
   });
 
-  it('confirms the Organization name and selected Preset through the session', async () => {
+  it('confirms the Account name and selected Preset through the session', async () => {
     fixture = createTestApp();
-    localOrganization = createTestD1Database();
-    (fixture.environment as unknown as Record<string, unknown>).LOCAL_ORGANIZATION_DB_1 = localOrganization.binding;
+    localAccount = createTestD1Database();
+    (fixture.environment as unknown as Record<string, unknown>).LOCAL_ORGANIZATION_DB_1 = localAccount.binding;
     fixture.environment.CREDENTIAL_MASTER_KEY = randomToken(32);
     fixture.environment.CREDENTIAL_MASTER_KEY_VERSION = 'test-v1';
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
@@ -468,7 +468,7 @@ describe('application entry', () => {
         'Content-Type': 'application/json',
         Cookie: `mail_session=${sessionCookie}`,
       },
-      body: JSON.stringify({ name: 'New Organization', presetId: 'membership-organization' }),
+      body: JSON.stringify({ name: 'New Account', presetId: 'membership-organization' }),
     }), fixture.environment);
     const bootstrap = await app.fetch(new Request('https://app.example.com/api/bootstrap', {
       headers: { Cookie: `mail_session=${sessionCookie}` },
@@ -480,20 +480,20 @@ describe('application entry', () => {
       data: {
         kind: 'ready',
         identity: { email: 'new-owner@example.com' },
-        organizations: [{
-          name: 'New Organization',
+        accounts: [{
+          name: 'New Account',
           status: 'active',
         }],
       },
     });
-    expect(localOrganization.rows<{ name: string }>('SELECT name FROM lists ORDER BY name')).toEqual([
+    expect(localAccount.rows<{ name: string }>('SELECT name FROM lists ORDER BY name')).toEqual([
       { name: 'Calendar members' },
       { name: 'LINE members' },
       { name: 'Trusted announcement sources' },
     ]);
   });
 
-  it('returns an unassigned identity after an unconfirmed Organization setup expires', async () => {
+  it('returns an unassigned identity after an unconfirmed Account setup expires', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-26T00:00:00.000Z'));
     fixture = createTestApp();
@@ -549,7 +549,7 @@ describe('application entry', () => {
     });
   });
 
-  it('keeps a failed Organization provisioning visible and retries it through the session', async () => {
+  it('keeps a failed Account provisioning visible and retries it through the session', async () => {
     fixture = createTestApp();
     fixture.environment.CREDENTIAL_MASTER_KEY = randomToken(32);
     fixture.environment.CREDENTIAL_MASTER_KEY_VERSION = 'test-v1';
@@ -595,7 +595,7 @@ describe('application entry', () => {
         'Content-Type': 'application/json',
         Cookie: `mail_session=${sessionCookie}`,
       },
-      body: JSON.stringify({ name: 'Retry Organization' }),
+      body: JSON.stringify({ name: 'Retry Account' }),
     }), fixture.environment);
     const failed = await app.fetch(new Request('https://app.example.com/api/bootstrap', {
       headers: { Cookie: `mail_session=${sessionCookie}` },
@@ -604,14 +604,14 @@ describe('application entry', () => {
     await expect(failed.json()).resolves.toMatchObject({
       data: {
         kind: 'provisioning_failed',
-        organization: { name: 'Retry Organization' },
+        account: { name: 'Retry Account' },
         phase: 'allocating_database',
         error: 'Cloudflare D1 credentials are not configured.',
       },
     });
 
-    localOrganization = createTestD1Database();
-    (fixture.environment as unknown as Record<string, unknown>).LOCAL_ORGANIZATION_DB_1 = localOrganization.binding;
+    localAccount = createTestD1Database();
+    (fixture.environment as unknown as Record<string, unknown>).LOCAL_ORGANIZATION_DB_1 = localAccount.binding;
     const retried = await app.fetch(new Request('https://app.example.com/api/onboarding/retry', {
       method: 'POST',
       headers: { Cookie: `mail_session=${sessionCookie}` },
@@ -624,7 +624,7 @@ describe('application entry', () => {
     await expect(ready.json()).resolves.toMatchObject({
       data: {
         kind: 'ready',
-        organizations: [{ name: 'Retry Organization', status: 'active' }],
+        accounts: [{ name: 'Retry Account', status: 'active' }],
       },
     });
   });

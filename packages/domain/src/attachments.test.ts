@@ -24,7 +24,7 @@ describe('attachment intake limits', () => {
 });
 
 describe('Attachment Folder Path', () => {
-  it('keeps what the Organization typed and treats a slash as the level separator', () => {
+  it('keeps what the Account typed and treats a slash as the level separator', () => {
     expect(readAttachmentFolderPath('会計 2026/添付ファイル')).toEqual({
       accepted: true,
       segments: ['会計 2026', '添付ファイル'],

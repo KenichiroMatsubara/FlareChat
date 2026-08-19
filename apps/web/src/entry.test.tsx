@@ -5,13 +5,13 @@ import { SignedOutEntry } from './entry';
 import { DEFAULT_MAIL_TEST_SUBJECT, PresetSetupChoice } from './routes';
 
 describe('signed-out application entry', () => {
-  it('presents Organization creation and existing-member login as separate choices', () => {
+  it('presents Account creation and existing-member login as separate choices', () => {
     const markup = renderToStaticMarkup(
       <SignedOutEntry busy={false} error="" onSelect={vi.fn()} />,
     );
 
-    expect(markup).toContain('新しいOrganizationを作る');
-    expect(markup).toContain('既存Organizationへログイン');
+    expect(markup).toContain('新しいAccountを作る');
+    expect(markup).toContain('既存Accountへログイン');
     expect(markup).toMatch(/class="[^"]*secondary[^"]*entry-login[^"]*"/u);
   });
 });
@@ -22,8 +22,8 @@ describe('manual mailbox test defaults', () => {
   });
 });
 
-describe('Organization setup Preset choice', () => {
-  it('offers the repository Preset as an optional copy during Organization creation', () => {
+describe('Account setup Preset choice', () => {
+  it('offers the repository Preset as an optional copy during Account creation', () => {
     const markup = renderToStaticMarkup(<PresetSetupChoice
       presets={[{ id: 'membership-organization', name: 'Membership organization', description: 'Starting configuration.' }]}
       selectedId=""
@@ -32,6 +32,6 @@ describe('Organization setup Preset choice', () => {
 
     expect(markup).toContain('type="checkbox"');
     expect(markup).toContain('Membership organization');
-    expect(markup).toContain('Organization作成時にコピー');
+    expect(markup).toContain('Account作成時にコピー');
   });
 });
