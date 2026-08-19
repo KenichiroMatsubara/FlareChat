@@ -7,6 +7,7 @@
 import { and, eq, isNotNull } from 'drizzle-orm';
 
 import { advanceAutomation, dueAutomations, runAutomation, type AutomationRunOutcome } from './automation-run';
+import { channelCredentials } from './channel';
 import { chatInternalHandlers, listChatServers } from './chat-store';
 import { completeChatTurn } from './chat-model';
 import { createDatabaseAccess } from './database-access';
@@ -23,15 +24,13 @@ interface AccountCredential {
   apiKey?: string;
   baseUrl?: string;
   model?: string;
-  channelAccessToken?: string;
-  botToken?: string;
 }
 
 const credentialFor = async (input: {
   database: D1Database;
   accountKey: CryptoKey;
   accountId: string;
-  kind: 'ai' | 'line' | 'discord';
+  kind: 'ai';
 }): Promise<AccountCredential | null> => {
   const row = await drizzleAccountDatabase(input.database).select().from(connections)
     .where(and(eq(connections.kind, input.kind), eq(connections.status, 'active'))).limit(1).get();
@@ -63,8 +62,7 @@ export const runDueAccountAutomations = async (env: Bindings, at: Date): Promise
     const ai = await credentialFor({ database: opened.raw, accountKey, accountId: account.id, kind: 'ai' });
     const model = ai?.model?.trim();
     const baseUrl = normalizedAiBaseUrl(ai?.baseUrl) ?? '';
-    const line = await credentialFor({ database: opened.raw, accountKey, accountId: account.id, kind: 'line' });
-    const discord = await credentialFor({ database: opened.raw, accountKey, accountId: account.id, kind: 'discord' });
+    const credentials = await channelCredentials({ database: opened.raw, accountKey, accountId: account.id });
     const servers = await listChatServers({ database: opened.raw, accountKey, accountId: account.id });
 
     for (const automation of due) {
@@ -94,11 +92,7 @@ export const runDueAccountAutomations = async (env: Bindings, at: Date): Promise
         model: { complete: completeChatTurn },
         connection: { apiKey: ai.apiKey, baseUrl, model },
         readHandlers: chatInternalHandlers(opened.raw),
-        ports: mcpServerPorts({
-          database: opened.raw,
-          lineAccessToken: line?.channelAccessToken ?? null,
-          discordBotToken: discord?.botToken ?? null,
-        }),
+        ports: mcpServerPorts({ database: opened.raw, credentials }),
         suppression: suppressionPort({ database: opened.raw, scope: automation.id, window: automation.suppressionWindow, at }),
         at,
       }));

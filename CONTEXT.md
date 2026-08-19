@@ -258,6 +258,10 @@ _Avoid_: pending delivery, draft action
 An Account-started check of one selected Automation Inbox message through the same Active Primary Rule selection, task-role boundary, attachment conversion, and AI provider path as live Automation. Preview does not persist or consume the Source Message and has no business effect; a separate short-lived confirmation may create only the reviewed Calendar events and their Public Attachments. Draft Rule Preview remains a distinct Rule Runs operation.
 _Avoid_: Draft Rule Run, production replay
 
+**Channel Test**:
+An Account-started send of one arbitrary message to one Contact through the same Channel seam an Automation and the MCP Server send through, or one call of a registered MCP Server's tool with arguments the operator wrote. It consults no Suppression Window, because a test whose repeat silently sends nothing reports a Channel as working when it never spoke, and it leaves an ordinary Delivery Record, because a real message really left.
+_Avoid_: ping, dry run, smoke test
+
 **Run Transcript**:
 The complete encrypted Agent Rule reasoning record attached to a Rule Run—its Prompt revision, model, every tool call with arguments and results, and final output—retained to explain a run that will never be retried.
 _Avoid_: log, agent history

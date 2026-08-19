@@ -38,6 +38,8 @@ import {
 import { completeChatTurn } from './chat-model';
 import { generateAccessToken, accessTokenHash, presentedToken } from './access-token';
 import { grantedServerTools, handleMcpServerRequest, MCP_SERVER_TOOLS, type JsonRpcRequest } from './mcp-server';
+import { channelCredentials, reachableContacts, sendOnChannel } from './channel';
+import { callMcpTool, listMcpTools } from './mcp';
 import {
   admitAccessTokenCall,
   authenticateAccessToken,
@@ -2607,6 +2609,101 @@ app.delete('/api/organizations/:accountId/mcp-servers/:serverId', async (context
   }
 });
 
+/**
+ * Sending one arbitrary message as a test (ADR 0158).
+ *
+ * An operator states a Contact, a Channel and a text, and the message travels the
+ * same seam an Automation and the MCP Server send through, so a test that
+ * arrives proves the production path and not a second one written for testing.
+ * Repeat suppression is not consulted, because a test whose second run silently
+ * sends nothing would report the Channel as working when it never spoke.
+ */
+app.get('/api/organizations/:accountId/channel-tests/targets', async (context) => {
+  try {
+    const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
+    if (!access.database) return failure(context, 'Account データベースに接続できません。', 503);
+    const reachable = await reachableContacts({ database: access.database });
+    return json(context, reachable.filter((contact) => contact.channels.length > 0));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '送信先を取得できませんでした。';
+    return failure(context, message, message === 'Authentication is required.' ? 401 : 403);
+  }
+});
+
+app.post('/api/organizations/:accountId/channel-tests', async (context) => {
+  try {
+    const accountId = context.req.param('accountId');
+    const access = await accountForRequest(context.req.raw, context.env, accountId);
+    if (!access.database) return failure(context, 'Account データベースに接続できません。', 503);
+    const input = await context.req.json<{ contactId?: string; channel?: string; text?: string }>();
+    const contactId = input.contactId?.trim() ?? '';
+    const channel = input.channel?.trim() ?? '';
+    const text = input.text ?? '';
+    if (!contactId) return failure(context, '送信先の Contact を選んでください。');
+    if (!text.trim() || text.length > 1_000) return failure(context, 'テストメッセージは 1〜1,000 文字で入力してください。');
+    const delivery = await sendOnChannel({
+      database: access.database,
+      credentials: await channelCredentials({
+        database: access.database,
+        accountKey: await accountKeyForRequest(context.env, accountId),
+        accountId,
+      }),
+      contactId,
+      channel,
+      text,
+    });
+    return json(context, { ...delivery, sentAt: now() });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'テスト送信に失敗しました。';
+    return failure(context, message, message === 'Authentication is required.' ? 401 : 409);
+  }
+});
+
+/**
+ * Calling one registered MCP Server for real (ADR 0142, ADR 0158).
+ *
+ * Without a tool name this lists what the server offers, which is the cheapest
+ * proof that the URL, the token and the revision are right. With one it calls
+ * that tool with the arguments given and returns the server's own answer,
+ * failures included, so a LINE MCP Server can be made to send a real message.
+ */
+app.post('/api/organizations/:accountId/mcp-servers/:serverId/tests', async (context) => {
+  try {
+    const accountId = context.req.param('accountId');
+    const serverId = context.req.param('serverId');
+    const access = await accountForRequest(context.req.raw, context.env, accountId);
+    if (!access.database) return failure(context, 'Account データベースに接続できません。', 503);
+    const input = await context.req.json<{ tool?: string; arguments?: unknown }>();
+    const servers = await listChatServers({
+      database: access.database,
+      accountKey: await accountKeyForRequest(context.env, accountId),
+      accountId,
+    });
+    const server = servers.find(({ id }) => id === serverId);
+    if (!server) return failure(context, 'その MCP Server は登録されていません。', 404);
+    const request = (url: string, init: RequestInit) => fetch(url, init);
+    const tool = input.tool?.trim() ?? '';
+    if (!tool) {
+      const tools = await listMcpTools({ connection: server.connection, fetch: request });
+      return json(context, { server: server.name, tools });
+    }
+    const argument = input.arguments;
+    if (argument !== undefined && (typeof argument !== 'object' || argument === null || Array.isArray(argument))) {
+      return failure(context, 'ツールの引数は JSON オブジェクトで指定してください。');
+    }
+    const result = await callMcpTool({
+      connection: server.connection,
+      fetch: request,
+      name: tool,
+      arguments: (argument ?? {}) as Record<string, unknown>,
+    });
+    return json(context, { server: server.name, tool, isError: result.isError, text: result.text });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'MCP Server を呼び出せませんでした。';
+    return failure(context, message, message === 'Authentication is required.' ? 401 : 503);
+  }
+});
+
 app.get('/api/organizations/:accountId/chat', async (context) => {
   try {
     const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
@@ -2695,14 +2792,6 @@ app.post('/api/organizations/:accountId/chat', async (context) => {
   }
 });
 
-
-const lineAccessTokenFor = async (input: { database: D1Database; accountKey: CryptoKey; accountId: string }): Promise<string | null> => {
-  const existing = await drizzleAccountDatabase(input.database).select().from(accountConnections)
-    .where(and(eq(accountConnections.kind, 'line'), eq(accountConnections.status, 'active'))).limit(1).get();
-  if (!existing) return null;
-  const credential = await connectionCredential(existing, input.accountKey, input.accountId, 'line');
-  return credential.channelAccessToken ?? null;
-};
 
 interface DiscordCredential {
   botToken?: string;
@@ -2982,8 +3071,7 @@ app.post('/api/public/organizations/:accountId/mcp', async (context) => {
       prompts: await publishedPrompts(database),
       ports: mcpServerPorts({
         database,
-        lineAccessToken: await lineAccessTokenFor({ database, accountKey, accountId }),
-        discordBotToken: (await discordCredentialFor({ database, accountKey, accountId }))?.botToken ?? null,
+        credentials: await channelCredentials({ database, accountKey, accountId }),
       }),
       suppression: suppressionPort({ database, scope: token.id, window: token.suppressionWindow, at }),
       scope: token.id,
