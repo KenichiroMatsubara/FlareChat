@@ -29,6 +29,7 @@ describe('application routes', () => {
       rules: 'rules',
       contacts: 'members',
       mailboxTest: 'mailbox-test',
+      channelTest: 'channel-test',
       ruleRuns: 'rule-runs',
       eventRefresh: 'event-refresh',
       tasks: 'tasks',

@@ -3,12 +3,10 @@
  * what it was granted, whom it may reach, and how its writes actually happen.
  */
 
-import { and, asc, eq, inArray, like, or } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 
 import { accessTokenHash, withinCallLimits } from './access-token';
-import { deliverLineBatch } from './delivery';
-import { sendDiscordMessage } from './discord';
-import { recordDeliveryAttempt } from './delivery';
+import { isChannelName, reachableContacts, sendOnChannel, type ChannelCredentials } from './channel';
 import { enqueueJob } from './jobs';
 import { suppressionExpiry, suppressionHolds, type SuppressionWindow } from './suppression';
 import { accountDatabase as drizzleAccountDatabase } from './storage/database';
@@ -17,11 +15,7 @@ import {
   accessTokens,
   accessTokenTools,
   contactListMembers,
-  channelHandles,
-  contactLineDestinations,
-  contacts,
   jobs as jobsTable,
-  lineDestinations,
   prompts,
   suppressions,
 } from './storage/account-schema';
@@ -130,94 +124,30 @@ export const publishedPrompts = async (database: D1Database): Promise<McpServerP
   }));
 };
 
-/** Where a Contact is reachable on Discord: the channel to post in, or null when it has no handle. */
-const discordTargetFor = async (database: D1Database, contactId: string): Promise<string | null> => {
-  const row = await drizzleAccountDatabase(database).select({
-    replyTarget: channelHandles.replyTarget,
-    externalId: channelHandles.externalId,
-  }).from(channelHandles)
-    .where(and(eq(channelHandles.contactId, contactId), eq(channelHandles.channel, 'discord'), eq(channelHandles.isPrimary, true)))
-    .get();
-  return row?.replyTarget ?? null;
-};
-
-/** The LINE destination a Contact is reachable at, or null when it has none. */
-const lineDestinationFor = async (database: D1Database, contactId: string): Promise<string | null> => {
-  const row = await drizzleAccountDatabase(database).select({ destinationId: lineDestinations.destinationId })
-    .from(contactLineDestinations)
-    .innerJoin(lineDestinations, eq(lineDestinations.id, contactLineDestinations.lineDestinationId))
-    .where(eq(contactLineDestinations.contactId, contactId))
-    .get();
-  return row?.destinationId ?? null;
-};
-
 export const mcpServerPorts = (input: {
   database: D1Database;
-  lineAccessToken: string | null;
-  discordBotToken?: string | null;
-}): McpServerPorts => {
-  const db = drizzleAccountDatabase(input.database);
-  return {
-    searchContacts: async ({ query, contactIds }) => {
-      if (!contactIds.length) return [];
-      const term = `%${query}%`;
-      const rows = await db.select({ id: contacts.id, name: contacts.name, email: contacts.email, state: contacts.state })
-        .from(contacts)
-        .where(and(
-          inArray(contacts.id, [...contactIds]),
-          query ? or(like(contacts.name, term), like(contacts.email, term)) : undefined,
-        ))
-        .orderBy(asc(contacts.name)).limit(200).all();
-      return Promise.all(rows.map(async (row) => ({
-        ...row,
-        channels: [
-          ...(await lineDestinationFor(input.database, row.id) ? ['line'] : []),
-          ...(await discordTargetFor(input.database, row.id) ? ['discord'] : []),
-        ],
-      })));
-    },
-    sendToContact: async ({ contactId, channel, text }) => {
-      if (channel === 'discord') {
-        if (!input.discordBotToken) throw new Error('This Account has no Discord Connection to send through.');
-        const target = await discordTargetFor(input.database, contactId);
-        if (!target) throw new Error(`Contact ${contactId} has no Discord handle to reach.`);
-        const sent = await sendDiscordMessage({
-          fetch: (url, init) => fetch(url, init),
-          botToken: input.discordBotToken,
-          channelId: target,
-          text,
-        });
-        await recordDeliveryAttempt(input.database, {
-          destination: target,
-          channel: 'discord',
-          outcome: 'succeeded',
-          externalId: sent.externalId,
-        });
-        return { delivered: true, channel: 'discord', contactId };
-      }
-      if (channel !== 'line') throw new Error(`This server does not reach a Contact on ${channel} yet.`);
-      if (!input.lineAccessToken) throw new Error('This Account has no LINE Connection to send through.');
-      const destination = await lineDestinationFor(input.database, contactId);
-      if (!destination) throw new Error(`Contact ${contactId} has no LINE handle to reach.`);
-      const [attempt] = await deliverLineBatch({
-        database: input.database,
-        accessToken: input.lineAccessToken,
-        destinationId: destination,
-        messages: [text],
-      });
-      if (attempt?.outcome !== 'succeeded') throw new Error('LINE refused the message.');
-      return { delivered: true, channel: 'line', contactId };
-    },
-    scheduleReminder: async ({ contactId, channel, text, at }) => {
-      if (channel !== 'line' && channel !== 'discord') throw new Error(`This server does not reach a Contact on ${channel} yet.`);
-      const job = await enqueueJob(input.database, {
-        kind: 'mcp.reminder',
-        payload: { contactId, channel, text },
-        idempotencyKey: `mcp-reminder:${contactId}:${at}:${text}`,
-      });
-      await drizzleAccountDatabase(input.database).update(jobsTable).set({ availableAt: at, updatedAt: at })
-        .where(eq(jobsTable.id, job.id)).run();
-      return { scheduled: true, at, contactId };
-    },
-  };
-};
+  credentials: ChannelCredentials;
+}): McpServerPorts => ({
+  searchContacts: ({ query, contactIds }) => reachableContacts({ database: input.database, query, contactIds }),
+  sendToContact: async ({ contactId, channel, text }) => {
+    const delivery = await sendOnChannel({
+      database: input.database,
+      credentials: input.credentials,
+      contactId,
+      channel,
+      texts: [text],
+    });
+    return { delivered: delivery.delivered, channel: delivery.channel, contactId: delivery.contactId };
+  },
+  scheduleReminder: async ({ contactId, channel, text, at }) => {
+    if (!isChannelName(channel)) throw new Error(`This server does not reach a Contact on ${channel} yet.`);
+    const job = await enqueueJob(input.database, {
+      kind: 'mcp.reminder',
+      payload: { contactId, channel, text },
+      idempotencyKey: `mcp-reminder:${contactId}:${at}:${text}`,
+    });
+    await drizzleAccountDatabase(input.database).update(jobsTable).set({ availableAt: at, updatedAt: at })
+      .where(eq(jobsTable.id, job.id)).run();
+    return { scheduled: true, at, contactId };
+  },
+});

@@ -686,7 +686,49 @@ export const api = {
     request(`/api/organizations/${encodeURIComponent(accountId)}/automations/${encodeURIComponent(id)}/runs`),
   saveDiscordConnection: (accountId: string, input: { botToken: string; applicationPublicKey: string }): Promise<{ configured: boolean; interactionsUrl: string }> =>
     request(`/api/organizations/${encodeURIComponent(accountId)}/connections/discord`, { method: 'PUT', body: JSON.stringify(input) }),
+  channelTestTargets: (accountId: string): Promise<ChannelTestTarget[]> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/channel-tests/targets`),
+  sendChannelTest: (accountId: string, input: { contactId: string; channel: string; texts: string[] }): Promise<ChannelTestDelivery> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/channel-tests`, { method: 'POST', body: JSON.stringify(input) }),
+  listMcpServerTools: (accountId: string, serverId: string): Promise<{ server: string; tools: McpServerToolView[] }> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/mcp-servers/${encodeURIComponent(serverId)}/tests`, { method: 'POST', body: JSON.stringify({}) }),
+  callMcpServerTool: (accountId: string, serverId: string, input: { tool: string; arguments: Record<string, unknown> }): Promise<McpServerToolResult> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/mcp-servers/${encodeURIComponent(serverId)}/tests`, { method: 'POST', body: JSON.stringify(input) }),
 };
+
+/** One Contact a test message can actually be sent to, and where. */
+export interface ChannelTestTarget {
+  id: string;
+  name: string;
+  email: string;
+  state: string;
+  channels: string[];
+}
+
+export interface ChannelTestDelivery {
+  delivered: boolean;
+  channel: string;
+  contactId: string;
+  destination: string;
+  /** How many messages were meant to arrive, and how many provider requests carried them. */
+  messages: number;
+  requests: number;
+  externalId: string | null;
+  sentAt: string;
+}
+
+export interface McpServerToolView {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+
+export interface McpServerToolResult {
+  server: string;
+  tool: string;
+  isError: boolean;
+  text: string;
+}
 
 export interface AutomationInput {
   name: string;

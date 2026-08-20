@@ -1,15 +1,16 @@
-import { CalendarClock, CheckSquare, CircleAlert, LogOut, Mail, Menu, MessageSquare, Play, RefreshCw, Settings, ShieldCheck, SlidersHorizontal, UsersRound, X } from 'lucide-react';
+import { CalendarClock, CheckSquare, CircleAlert, LogOut, Mail, Menu, MessageSquare, Play, RefreshCw, Send, Settings, ShieldCheck, SlidersHorizontal, UsersRound, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
 import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, OperationalTaskRole, AccountAgentRule, AccountConnections, AccountLineDestination, AccountMembership, AccountPrompt, AccountContact, AccountContactInput, AccountRule, AccountRuleInput, AccountTask, AccountTypedList, PresetSummary, ContactLineDestinationInput, RuleRun, TaskAssignmentProposal, TaskReassignmentReview, TaskRoleAssignment } from './api';
 import { AutomationPage, ConnectionsPage, EventRefreshPage, MailboxTestPage, ContactsPage, RuleRunsPage, RulesPage, TasksPage } from './dashboard-pages';
+import { ChannelTestPage } from './channel-test';
 import { ChatPage } from './chat';
 import { AutomationsPage } from './automations';
 import { pendingKey, ROUTE_NAVIGATION_KEY } from './pending';
 import { PendingOverlay } from './progress';
 
-export type Page = 'automation' | 'chat' | 'automations' | 'connections' | 'rules' | 'members' | 'mailbox-test' | 'rule-runs' | 'event-refresh' | 'tasks';
+export type Page = 'automation' | 'chat' | 'automations' | 'connections' | 'rules' | 'members' | 'mailbox-test' | 'channel-test' | 'rule-runs' | 'event-refresh' | 'tasks';
 
 export const needsGoogleReauthentication = (error: string): boolean =>
   /token has been expired or revoked/iu.test(error);
@@ -40,6 +41,7 @@ const navigationItems: readonly NavigationItem[] = [
   { to: '../members', label: 'メンバー', icon: <UsersRound size={16} /> },
   { to: '../tasks', label: 'タスク', icon: <CheckSquare size={16} /> },
   { to: '../mailbox-test', label: 'メールテスト', icon: <Mail size={16} /> },
+  { to: '../channel-test', label: '送信テスト', icon: <Send size={16} /> },
   { to: '../rule-runs', label: 'Rule Runs', icon: <SlidersHorizontal size={16} /> },
   { to: '../event-refresh', label: '予定の再同期', icon: <RefreshCw size={16} /> },
 ];
@@ -167,6 +169,8 @@ export const Dashboard = (props: DashboardProps) => {
       ? <ChatPage accountId={props.accountId ?? ''} />
       : page === 'automations'
         ? <AutomationsPage accountId={props.accountId ?? ''} />
+        : page === 'channel-test'
+          ? <ChannelTestPage accountId={props.accountId ?? ''} />
     : page === 'connections'
       ? <ConnectionsPage {...props} />
       : page === 'rules'

@@ -39,7 +39,8 @@ import { writeRecoveryReceipt } from './recovery-receipts';
 import { resolveSourceMessageFolder } from './attachment-folders';
 import { createTaskWorkflow } from './tasks';
 import { createRuleExecution, type ExecutionMode, type RuleEffectPort } from './execution';
-import { activeContactInvitees, deliverLineBatch, deliverSourceMessageEmail, recordDeliveryAttempt, recordEventInvitations } from './delivery';
+import { channelCredentials, sendOnDestination, sendToDestinations, type ChannelCredentials } from './channel';
+import { activeContactInvitees, deliverSourceMessageEmail, recordDeliveryAttempt, recordEventInvitations } from './delivery';
 import type { PublishedDriveAttachment, SourceAttachment, SourceAttachmentContent } from './drive-attachments';
 import { GoogleGrantRejectedError } from './google';
 import type { GoogleTokenSet } from './google';
@@ -477,28 +478,22 @@ interface AiCredential {
   baseUrl?: string;
 }
 
-interface LineCredential {
-  channelAccessToken?: string;
-}
-
-const lineAccessToken = async (
+/**
+ * This Account's Channel credentials, or none when they cannot be read.
+ *
+ * A Schema Rule run that cannot decrypt a Connection records its notices as
+ * failed rather than aborting the extraction it already completed, so an
+ * unreadable credential is an absent one here.
+ */
+const accountChannelCredentials = async (
   env: Bindings,
   accountId: string,
   database: D1Database,
-): Promise<string | null> => {
-  const connection = await drizzleAccountDatabase(database).select().from(connections)
-    .where(and(eq(connections.kind, 'line'), eq(connections.status, 'active'))).limit(1).get();
-  if (!connection) return null;
+): Promise<ChannelCredentials> => {
   try {
-    const key = await accountKeyFor(env, accountId);
-    const credential = JSON.parse(await decrypt(
-      JSON.parse(connection.credential),
-      key,
-      `organization-connection:${accountId}:line`,
-    )) as LineCredential;
-    return credential.channelAccessToken?.trim() || null;
+    return await channelCredentials({ database, accountKey: await accountKeyFor(env, accountId), accountId });
   } catch {
-    return null;
+    return { line: null, discord: null };
   }
 };
 
@@ -533,19 +528,20 @@ const deliverSourceMessageNotice = async (input: {
   }
   const permittedLineListIds = input.rule.permittedLineListIds ?? [];
   if (!permittedLineListIds.length) return;
-  const accessToken = await lineAccessToken(input.env, input.accountId, input.database);
-  if (!accessToken) return;
+  const credentials = await accountChannelCredentials(input.env, input.accountId, input.database);
+  if (!credentials.line) return;
   const destinations = await db.select({ destinationId: listItems.value }).from(listItems).where(and(
     inArray(listItems.listId, permittedLineListIds),
     eq(listItems.enabled, true),
   )).all();
-  await Promise.all([...new Set(destinations.map(({ destinationId }) => destinationId))].map((destinationId) => deliverLineBatch({
+  await sendToDestinations({
     database: input.database,
-    accessToken,
+    credentials,
+    channel: 'line',
+    destinations: destinations.map(({ destinationId }) => destinationId),
+    texts: [input.body],
     sourceMessageId: input.sourceMessageId,
-    destinationId,
-    messages: [input.body],
-  })));
+  });
 };
 
 /** Uses the Account-scoped OpenAI-compatible connection when it is configured. */
@@ -653,11 +649,14 @@ const createAgentWritePort = (input: {
   agentRuleId: string;
   googleAccessToken: string;
 }): AgentWritePort => ({
-  sendLine: async ({ destination, message }) => {
-    const accessToken = await lineAccessToken(input.env, input.accountId, input.database);
-    if (!accessToken) return recordDeliveryAttempt(input.database, { sourceMessageId: input.sourceMessageId, destination, channel: 'line', outcome: 'failed', externalId: null });
-    return (await deliverLineBatch({ database: input.database, accessToken, sourceMessageId: input.sourceMessageId, destinationId: destination, messages: [message] }))[0];
-  },
+  sendLine: async ({ destination, message }) => sendOnDestination({
+    database: input.database,
+    credentials: await accountChannelCredentials(input.env, input.accountId, input.database),
+    channel: 'line',
+    destination,
+    texts: [message],
+    sourceMessageId: input.sourceMessageId,
+  }),
   createScheduledEvent: async (arguments_) => {
     const database = drizzleAccountDatabase(input.database);
     const eventId = crypto.randomUUID();
