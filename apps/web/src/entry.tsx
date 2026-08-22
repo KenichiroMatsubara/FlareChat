@@ -32,8 +32,8 @@ export const SignedOutEntry = ({
   error: string;
   onSelect: (intent: 'login' | 'organization_setup') => void;
 }) => <main className="setup-shell"><section className="setup-card login-card">
-  <div className="setup-brand"><span><Mail size={22} /></span><div><strong>Mail Automation</strong><small>GMAIL TO CALENDAR</small></div></div>
-  <p className="eyebrow">GOOGLE IDENTITY</p><h1>Mail Automationを開く</h1>
+  <div className="setup-brand"><span><Mail size={22} /></span><div><strong>FlareChat</strong><small>SCHEDULES AND CONTACTS</small></div></div>
+  <p className="eyebrow">GOOGLE IDENTITY</p><h1>FlareChatを開く</h1>
   <p className="setup-copy">どちらか一方を選んでください。この選択自体はGoogle認証ではなく、選んだ導線でだけOAuthを1回行います。</p>
   {error && <p className="setup-error">{error}</p>}
   <button className="primary" onClick={() => onSelect('organization_setup')} disabled={busy}>{busy ? 'Googleへ接続中…' : '新しいAccountを作る'}</button>

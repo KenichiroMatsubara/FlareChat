@@ -65,7 +65,7 @@ export const SetupRoute = () => {
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Google 認可を開始できませんでした。'); setBusy(false); }
   };
   return <SetupCard>
-    <div className="setup-brand"><strong>Mail Automation</strong><small>CREATE ACCOUNT</small></div>
+    <div className="setup-brand"><strong>FlareChat</strong><small>CREATE ACCOUNT</small></div>
     <p className="eyebrow">NO ACCOUNT</p><h1>Accountをセットアップ</h1>
     <p className="setup-copy">Automation Inboxを認可すると、このGoogleアカウントを初期OwnerとしてAccount DBを作成します。</p>
     {error && <p className="setup-error">{error}</p>}
@@ -752,7 +752,7 @@ export const ContactPortalJoinRoute = () => {
     }
   };
   return <SetupCard>
-    <div className="setup-brand"><strong>Mail Automation</strong><small>CONTACT PORTAL</small></div>
+    <div className="setup-brand"><strong>FlareChat</strong><small>CONTACT PORTAL</small></div>
     <p className="eyebrow">JOIN</p><h1>連絡先ページを開く</h1>
     {error && <p className="setup-error">{error}</p>}
     {state.kind === 'signed_out'
