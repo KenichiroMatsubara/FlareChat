@@ -1,16 +1,17 @@
-import { CalendarClock, CheckSquare, CircleAlert, LogOut, Mail, Menu, MessageSquare, Play, RefreshCw, Send, Settings, ShieldCheck, SlidersHorizontal, UsersRound, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { BellRing, CalendarClock, CheckSquare, CircleAlert, LogOut, Mail, Menu, MessageSquare, Play, RefreshCw, Send, Settings, ShieldCheck, SlidersHorizontal, UsersRound, X } from 'lucide-react';
+import { Fragment, useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
 import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, AccountAgentRule, AccountConnections, AccountLineDestination, AccountMembership, AccountPrompt, AccountContact, AccountContactInput, AccountRule, AccountRuleInput, AccountTask, AccountTypedList, PresetSummary, ContactLineDestinationInput, RuleRun } from './api';
 import { AutomationPage, ConnectionsPage, EventRefreshPage, MailboxTestPage, ContactsPage, RuleRunsPage, RulesPage, TasksPage } from './dashboard-pages';
+import { RemindersPage } from './reminders';
 import { ChannelTestPage } from './channel-test';
 import { ChatPage } from './chat';
 import { AutomationsPage } from './automations';
 import { pendingKey, ROUTE_NAVIGATION_KEY } from './pending';
 import { PendingOverlay } from './progress';
 
-export type Page = 'automation' | 'chat' | 'automations' | 'connections' | 'rules' | 'members' | 'mailbox-test' | 'channel-test' | 'rule-runs' | 'event-refresh' | 'tasks';
+export type Page = 'automation' | 'chat' | 'automations' | 'connections' | 'rules' | 'members' | 'mailbox-test' | 'channel-test' | 'rule-runs' | 'event-refresh' | 'tasks' | 'reminders';
 
 export const needsGoogleReauthentication = (error: string): boolean =>
   /token has been expired or revoked/iu.test(error);
@@ -21,7 +22,7 @@ export const GoogleReauthenticationAction = ({ onClick, busy = false }: { onClic
     {busy ? 'Google へ接続中…' : 'Automation Inbox を再接続する'}
   </button>;
 
-/** Width at which the collapsed navigation panel becomes the inline top bar. */
+/** Width at which the collapsed navigation drawer becomes the standing side bar. */
 export const DESKTOP_NAVIGATION_QUERY = '(min-width: 1101px)';
 
 export const NAVIGATION_PANEL_ID = 'app-navigation';
@@ -32,18 +33,40 @@ interface NavigationItem {
   readonly icon: React.ReactNode;
 }
 
-const navigationItems: readonly NavigationItem[] = [
-  { to: '../automation', label: '自動化', icon: <Play size={16} /> },
-  { to: '../chat', label: 'チャット', icon: <MessageSquare size={16} /> },
-  { to: '../automations', label: '定期実行', icon: <CalendarClock size={16} /> },
-  { to: '../connections', label: '接続設定', icon: <Settings size={16} /> },
-  { to: '../rules', label: 'ルール', icon: <SlidersHorizontal size={16} /> },
-  { to: '../members', label: '連絡先', icon: <UsersRound size={16} /> },
-  { to: '../tasks', label: 'タスク', icon: <CheckSquare size={16} /> },
-  { to: '../mailbox-test', label: 'メールテスト', icon: <Mail size={16} /> },
-  { to: '../channel-test', label: '送信テスト', icon: <Send size={16} /> },
-  { to: '../rule-runs', label: 'Rule Runs', icon: <SlidersHorizontal size={16} /> },
-  { to: '../event-refresh', label: '予定の再同期', icon: <RefreshCw size={16} /> },
+/** One heading's worth of destinations, so rarely used tooling stops competing with daily work. */
+interface NavigationGroup {
+  readonly heading: string;
+  readonly items: readonly NavigationItem[];
+}
+
+const navigationGroups: readonly NavigationGroup[] = [
+  {
+    heading: '運用',
+    items: [
+      { to: '../automation', label: '自動化', icon: <Play size={16} /> },
+      { to: '../chat', label: 'チャット', icon: <MessageSquare size={16} /> },
+      { to: '../automations', label: '定期実行', icon: <CalendarClock size={16} /> },
+      { to: '../tasks', label: 'タスク', icon: <CheckSquare size={16} /> },
+      { to: '../reminders', label: 'リマインド', icon: <BellRing size={16} /> },
+      { to: '../members', label: '連絡先', icon: <UsersRound size={16} /> },
+    ],
+  },
+  {
+    heading: '設定',
+    items: [
+      { to: '../connections', label: '接続設定', icon: <Settings size={16} /> },
+      { to: '../rules', label: 'ルール', icon: <SlidersHorizontal size={16} /> },
+    ],
+  },
+  {
+    heading: '検証',
+    items: [
+      { to: '../mailbox-test', label: 'メールテスト', icon: <Mail size={16} /> },
+      { to: '../channel-test', label: '送信テスト', icon: <Send size={16} /> },
+      { to: '../rule-runs', label: 'Rule Runs', icon: <SlidersHorizontal size={16} /> },
+      { to: '../event-refresh', label: '予定の再同期', icon: <RefreshCw size={16} /> },
+    ],
+  },
 ];
 
 export interface DashboardProps {
@@ -170,6 +193,8 @@ export const Dashboard = (props: DashboardProps) => {
         ? <RulesPage {...props} />
         : page === 'members'
           ? <ContactsPage {...props} />
+          : page === 'reminders'
+            ? <RemindersPage accountId={props.accountId ?? ''} />
           : page === 'tasks'
             ? <TasksPage {...props} />
             : page === 'mailbox-test'
@@ -199,21 +224,26 @@ export const Dashboard = (props: DashboardProps) => {
 
   return <div className="app-shell">
     <header className="app-topbar">
-      <div className="app-brand"><span><Mail size={20} /></span><strong>Mail Automation</strong></div>
+      <div className="app-brand"><span><Mail size={20} /></span><strong>FlareChat</strong></div>
       <button type="button" className="topbar-toggle" aria-controls={NAVIGATION_PANEL_ID} aria-expanded={menuOpen} aria-label={menuOpen ? 'メニューを閉じる' : 'メニューを開く'} onClick={() => setMenuOpen((open) => !open)}>{menuOpen ? <X size={20} /> : <Menu size={20} />}</button>
-      <div id={NAVIGATION_PANEL_ID} className={menuOpen ? 'topbar-panel open' : 'topbar-panel'}>
-        {props.accounts && props.accountId && <label className="organization-picker"><span className="sr-only">Account</span><select aria-label="Account" value={props.accountId} disabled={props.navigating} onChange={(event) => navigate(`/organizations/${encodeURIComponent(event.target.value)}/automation`)}>{props.accounts.map((account) => <option key={account.accountId} value={account.accountId}>{account.name}</option>)}</select></label>}
-        <nav aria-label="メインナビゲーション">
-          {navigationItems.map((item) => <NavLink key={item.to} to={item.to} className={({ isActive, isPending }) => [isActive ? 'active' : '', isPending ? 'loading' : ''].filter(Boolean).join(' ')} onClick={() => setMenuOpen(false)}>{item.icon}{item.label}</NavLink>)}
-        </nav>
-        <button className="topbar-logout" onClick={props.onLogout} disabled={loggingOut}>{loggingOut ? <RefreshCw className="spin" size={16} /> : <LogOut size={16} />}{loggingOut ? 'ログアウト中…' : 'ログアウト'}</button>
-      </div>
     </header>
     <PendingOverlay running={props.navigating ? [ROUTE_NAVIGATION_KEY, ...props.runningOperations] : props.runningOperations} />
     {menuOpen && <button type="button" className="topbar-scrim" tabIndex={-1} aria-hidden="true" onClick={() => setMenuOpen(false)} />}
-    <main className={props.navigating ? 'app-content navigating' : 'app-content'} aria-busy={props.navigating}>
-      {(props.error || requiresGoogleReauthentication) && <div className="dashboard-error"><p><CircleAlert size={17} />{recoveryMessage}</p>{requiresGoogleReauthentication && <GoogleReauthenticationAction onClick={props.onReauthenticate} busy={props.isPending(pendingKey.reauthenticate)} />}</div>}
-      {content}
-    </main>
+    <div className="app-body">
+      <div id={NAVIGATION_PANEL_ID} className={menuOpen ? 'topbar-panel open' : 'topbar-panel'}>
+        {props.accounts && props.accountId && <label className="organization-picker"><span className="sr-only">Account</span><select aria-label="Account" value={props.accountId} disabled={props.navigating} onChange={(event) => navigate(`/organizations/${encodeURIComponent(event.target.value)}/automation`)}>{props.accounts.map((account) => <option key={account.accountId} value={account.accountId}>{account.name}</option>)}</select></label>}
+        <nav aria-label="メインナビゲーション">
+          {navigationGroups.map((group) => <Fragment key={group.heading}>
+            <p className="nav-group">{group.heading}</p>
+            {group.items.map((item) => <NavLink key={item.to} to={item.to} className={({ isActive, isPending }) => [isActive ? 'active' : '', isPending ? 'loading' : ''].filter(Boolean).join(' ')} onClick={() => setMenuOpen(false)}>{item.icon}{item.label}</NavLink>)}
+          </Fragment>)}
+        </nav>
+        <button className="topbar-logout" onClick={props.onLogout} disabled={loggingOut}>{loggingOut ? <RefreshCw className="spin" size={16} /> : <LogOut size={16} />}{loggingOut ? 'ログアウト中…' : 'ログアウト'}</button>
+      </div>
+      <main className={props.navigating ? 'app-content navigating' : 'app-content'} aria-busy={props.navigating}>
+        {(props.error || requiresGoogleReauthentication) && <div className="dashboard-error"><p><CircleAlert size={17} />{recoveryMessage}</p>{requiresGoogleReauthentication && <GoogleReauthenticationAction onClick={props.onReauthenticate} busy={props.isPending(pendingKey.reauthenticate)} />}</div>}
+        {content}
+      </main>
+    </div>
   </div>;
 };

@@ -22,6 +22,8 @@ export type JobHandler = (input: {
   accountId: string;
   job: ClaimedJob;
   payload: Record<string, unknown>;
+  /** The instant this pass is running for, so a handler never has to read the clock itself. */
+  at: string;
 }) => Promise<void>;
 
 export interface JobDispatchOutcome {
@@ -57,6 +59,7 @@ export const dispatchClaimedJobs = async (input: {
         accountId: input.accountId,
         job,
         payload: JSON.parse(job.payload || '{}') as Record<string, unknown>,
+        at: input.at,
       });
       await completeJob(input.database, job.id, input.at);
       outcome.handled += 1;

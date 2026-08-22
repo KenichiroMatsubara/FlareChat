@@ -6,6 +6,9 @@ import type { TestApp } from '../test/app';
 import { createAutomationTestApp } from '../test/automation';
 import type { ClaimedJob } from './jobs';
 
+/** The dispatcher's instant. The suite freezes the clock, so this is stable. */
+const TEST_NOW = new Date().toISOString();
+
 const CREATED_AT = '2026-08-01T00:00:00.000Z';
 
 let fixture: TestApp | undefined;
@@ -66,6 +69,7 @@ describe('scheduled reminder delivery', () => {
       accountId: 'organization-1',
       job,
       payload: { contactId: 'contact-1', channel: 'discord', text: '明日9時です' },
+      at: TEST_NOW,
     });
 
     expect(sent).toEqual([{ content: '明日9時です' }]);
@@ -82,6 +86,7 @@ describe('scheduled reminder delivery', () => {
       accountId: 'organization-1',
       job,
       payload: { contactId: 'contact-1', channel: 'line', text: '明日9時です' },
+      at: TEST_NOW,
     })).rejects.toThrow(/LINE/u);
   });
 
@@ -93,6 +98,7 @@ describe('scheduled reminder delivery', () => {
       accountId: 'organization-1',
       job,
       payload: { text: '明日9時です' },
+      at: TEST_NOW,
     })).rejects.toThrow(/Contact/u);
   });
 });

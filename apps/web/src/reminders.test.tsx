@@ -1,0 +1,86 @@
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it } from 'vitest';
+
+import { MilestoneSummary, ReminderSchedule, milestoneLabel, taskPreviewRows } from './reminders';
+import type { ScheduledTaskReminder } from './api';
+
+const reminder = (overrides: Partial<ScheduledTaskReminder>): ScheduledTaskReminder => ({
+  taskId: 'task-1',
+  title: '参加費を振り込む',
+  deadline: '2026-08-20',
+  contactId: 'contact-1',
+  contactName: '山田花子',
+  channel: 'line',
+  destination: 'Umemb…',
+  milestone: 0,
+  sendOn: '2026-08-20',
+  text: '【リマインド】本日が締め切りです\n・8/20(木)まで 参加費を振り込む',
+  ...overrides,
+});
+
+describe('Task reminder milestones', () => {
+  it('says which side of the deadline a milestone sits on', () => {
+    expect(milestoneLabel(3)).toBe('締め切り3日前');
+    expect(milestoneLabel(0)).toBe('締め切り当日');
+    expect(milestoneLabel(-1)).toBe('締め切り1日後');
+  });
+
+  it('lists the milestones in the order they fire', () => {
+    const markup = renderToStaticMarkup(<MilestoneSummary days={[7, 3, 1, 0, -1]} />);
+
+    expect(markup).toContain('締め切り7日前');
+    expect(markup).toContain('締め切り当日');
+    expect(markup).toContain('締め切り1日後');
+    expect(markup.indexOf('締め切り7日前')).toBeLessThan(markup.indexOf('締め切り当日'));
+  });
+
+  it('says an empty set reminds never rather than rendering an empty list', () => {
+    expect(renderToStaticMarkup(<MilestoneSummary days={[]} />)).toContain('リマインドしません。');
+  });
+});
+
+describe('the schedule of reminders still to be sent', () => {
+  it('shows who each reminder reaches, when, and the words it will arrive with', () => {
+    const markup = renderToStaticMarkup(<ReminderSchedule rows={taskPreviewRows([reminder({})])} enabled />);
+
+    expect(markup).toContain('2026-08-20');
+    expect(markup).toContain('山田花子');
+    expect(markup).toContain('LINE');
+    expect(markup).toContain('本日が締め切りです');
+    expect(markup).toContain('締め切り当日');
+  });
+
+  it('never shows a whole LINE destination, as no other Account screen does', () => {
+    const markup = renderToStaticMarkup(<ReminderSchedule rows={taskPreviewRows([reminder({})])} enabled />);
+
+    expect(markup).toContain('Umemb…');
+    expect(markup).not.toContain('Umember-1');
+  });
+
+  it('says there is nothing coming rather than rendering an empty table', () => {
+    expect(renderToStaticMarkup(<ReminderSchedule rows={[]} enabled />)).toContain('送信予定のリマインドはありません。');
+  });
+
+  it('shows the schedule while reminders are off, and says they will not be sent', () => {
+    const markup = renderToStaticMarkup(<ReminderSchedule rows={taskPreviewRows([reminder({})])} enabled={false} />);
+
+    expect(markup).toContain('本日が締め切りです');
+    expect(markup).toContain('オフのため、これらは送信されません');
+  });
+
+  it('does not warn about being off when reminders are on', () => {
+    const markup = renderToStaticMarkup(<ReminderSchedule rows={taskPreviewRows([reminder({})])} enabled />);
+
+    expect(markup).not.toContain('オフのため');
+  });
+
+  it('keeps one row per Task and milestone so the same Task may appear more than once', () => {
+    const markup = renderToStaticMarkup(<ReminderSchedule rows={taskPreviewRows([
+      reminder({ milestone: 1, sendOn: '2026-08-19' }),
+      reminder({ milestone: -1, sendOn: '2026-08-21' }),
+    ])} enabled />);
+
+    expect(markup).toContain('締め切り1日前');
+    expect(markup).toContain('締め切り1日後');
+  });
+});

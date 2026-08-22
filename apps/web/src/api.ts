@@ -318,6 +318,40 @@ export interface AccountTask {
   id: string; title: string; deadline: string; assigneeContactId: string | null; assigneeName: string; sourceMessageSubject: string; description: string; remarks: string; completed: boolean; completedAt: string | null;
 }
 
+/** Whether an Account sends reminders, and on which milestones. */
+export interface ReminderSettings {
+  enabled: boolean;
+  days: number[];
+}
+
+/** One attendance reminder the fixed milestones will send, as the GUI previews it. */
+export interface ScheduledAttendanceReminder {
+  eventId: string;
+  eventTitle: string;
+  deadline: string;
+  contactId: string;
+  contactName: string;
+  channel: string;
+  destination: string;
+  milestone: number;
+  sendOn: string;
+  text: string;
+}
+
+/** One reminder the configured milestones will send, as the GUI previews it. */
+export interface ScheduledTaskReminder {
+  taskId: string;
+  title: string;
+  deadline: string;
+  contactId: string;
+  contactName: string;
+  channel: string;
+  destination: string;
+  milestone: number;
+  sendOn: string;
+  text: string;
+}
+
 export interface ContactLineDestination {
   id: string;
   destinationId: string;
@@ -494,6 +528,25 @@ export const api = {
   }),
   accountDeliveryAudit: (accountId: string): Promise<DeliveryAuditRecord[]> => request(`/api/organizations/${encodeURIComponent(accountId)}/audit/deliveries`),
   accountTasks: (accountId: string): Promise<AccountTask[]> => request(`/api/organizations/${encodeURIComponent(accountId)}/tasks`),
+
+  taskReminders: (accountId: string): Promise<ReminderSettings> => request(`/api/organizations/${encodeURIComponent(accountId)}/task-reminders`),
+
+  saveTaskReminders: (accountId: string, input: { days?: readonly number[]; enabled?: boolean }): Promise<ReminderSettings> => request(`/api/organizations/${encodeURIComponent(accountId)}/task-reminders`, {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  }),
+
+  scheduledTaskReminders: (accountId: string): Promise<ScheduledTaskReminder[]> => request(`/api/organizations/${encodeURIComponent(accountId)}/task-reminders/schedule`),
+
+  attendanceReminders: (accountId: string): Promise<ReminderSettings> => request(`/api/organizations/${encodeURIComponent(accountId)}/attendance-reminders`),
+
+  saveAttendanceReminders: (accountId: string, enabled: boolean): Promise<ReminderSettings> => request(`/api/organizations/${encodeURIComponent(accountId)}/attendance-reminders`, {
+    method: 'PUT',
+    body: JSON.stringify({ enabled }),
+  }),
+
+  scheduledAttendanceReminders: (accountId: string): Promise<ScheduledAttendanceReminder[]> => request(`/api/organizations/${encodeURIComponent(accountId)}/attendance-reminders/schedule`),
+
   accountAttachmentFolder: (accountId: string): Promise<{ path: string }> => request(`/api/organizations/${encodeURIComponent(accountId)}/attachment-folder`),
 
   saveAccountAttachmentFolder: (accountId: string, path: string): Promise<{ path: string }> => request(`/api/organizations/${encodeURIComponent(accountId)}/attachment-folder`, {

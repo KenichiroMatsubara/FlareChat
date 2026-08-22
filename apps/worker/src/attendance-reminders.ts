@@ -1,35 +1,107 @@
-import { shouldSendAttendanceReminder } from '@mail/domain';
+import { ATTENDANCE_REMINDER_DAYS, displayLineDestinationId, shouldSendAttendanceReminder } from '@mail/domain';
 import { and, eq, isNotNull } from 'drizzle-orm';
+import { ATTENDANCE_REMINDER_JOB_KIND } from './attendance-reminder-job';
 import { createDatabaseAccess } from './database-access';
+import { attendanceReminderNotice } from './notice';
+import { ATTENDANCE_REMINDERS_ENABLED_SETTING, accountRemindersEnabled, saveAccountRemindersEnabled } from './reminder-switch';
 import type { Bindings } from './types';
 import { controlDatabase, accountDatabase as drizzleAccountDatabase } from './storage/database';
+import type { AccountDatabase } from './storage/database';
 import { accounts } from './storage/control-schema';
 import { attendance, events, jobs, lineDestinations, contactLineDestinations, contacts } from './storage/account-schema';
 
 interface ReminderCandidate {
   eventId: string;
+  eventTitle: string;
   contactId: string;
+  contactName: string;
   destination: string;
   status: 'unanswered' | 'attending' | 'not_attending';
   attendanceDeadline: string;
 }
 
+export const accountAttendanceRemindersEnabled = (database: AccountDatabase): Promise<boolean> =>
+  accountRemindersEnabled(database, ATTENDANCE_REMINDERS_ENABLED_SETTING);
+
+export const saveAccountAttendanceRemindersEnabled = (
+  database: AccountDatabase,
+  enabled: boolean,
+  updatedAt: string,
+): Promise<void> => saveAccountRemindersEnabled(database, ATTENDANCE_REMINDERS_ENABLED_SETTING, enabled, updatedAt);
+
+/** The unanswered, LINE-reachable Registrations both the queue and the preview read. */
+const attendanceReminderCandidates = async (db: AccountDatabase): Promise<ReminderCandidate[]> => await db.select({
+  eventId: attendance.eventId,
+  eventTitle: events.title,
+  contactId: attendance.contactId,
+  contactName: contacts.name,
+  destination: lineDestinations.destinationId,
+  status: attendance.status,
+  attendanceDeadline: events.attendanceDeadline,
+}).from(attendance)
+  .innerJoin(events, eq(events.id, attendance.eventId))
+  .innerJoin(contacts, eq(contacts.id, attendance.contactId))
+  .innerJoin(contactLineDestinations, eq(contactLineDestinations.contactId, contacts.id))
+  .innerJoin(lineDestinations, eq(lineDestinations.id, contactLineDestinations.lineDestinationId))
+  .where(isNotNull(events.attendanceDeadline))
+  .all() as ReminderCandidate[];
+
+/** One attendance reminder this Account's configuration will send, before it is sent. */
+export interface ScheduledAttendanceReminder {
+  eventId: string;
+  eventTitle: string;
+  deadline: string;
+  contactId: string;
+  contactName: string;
+  channel: string;
+  destination: string;
+  milestone: number;
+  sendOn: string;
+  text: string;
+}
+
+const day = (instant: number): string => new Date(instant).toISOString().slice(0, 10);
+
+/**
+ * Every attendance reminder still ahead of this Account, composed exactly as it
+ * will be delivered. It answers the same question the Task preview does, and is
+ * readable whether or not the switch is on, because deciding to turn reminders
+ * on is exactly when somebody needs to see what turning them on would send.
+ */
+export const upcomingAttendanceReminders = async (
+  database: D1Database,
+  now: string,
+): Promise<ScheduledAttendanceReminder[]> => {
+  const rows = await attendanceReminderCandidates(drizzleAccountDatabase(database));
+  const today = day(Date.parse(now));
+  const scheduled: ScheduledAttendanceReminder[] = [];
+  for (const row of rows) {
+    if (row.status !== 'unanswered') continue;
+    for (const milestone of ATTENDANCE_REMINDER_DAYS) {
+      const sendOn = day(Date.parse(row.attendanceDeadline) - milestone * 86_400_000);
+      if (sendOn < today) continue;
+      scheduled.push({
+        eventId: row.eventId,
+        eventTitle: row.eventTitle,
+        deadline: row.attendanceDeadline,
+        contactId: row.contactId,
+        contactName: row.contactName,
+        channel: 'line',
+        destination: displayLineDestinationId(row.destination),
+        milestone,
+        sendOn,
+        text: attendanceReminderNotice({ title: row.eventTitle, deadline: row.attendanceDeadline, milestone }),
+      });
+    }
+  }
+  return scheduled.sort((left, right) => left.sendOn.localeCompare(right.sendOn) || left.eventTitle.localeCompare(right.eventTitle));
+};
+
 /** Queues one durable reminder per unanswered recipient and milestone. */
 export const enqueueDueAttendanceReminders = async (database: D1Database, now: string): Promise<number> => {
   const db = drizzleAccountDatabase(database);
-  const rows: ReminderCandidate[] = await db.select({
-    eventId: attendance.eventId,
-    contactId: attendance.contactId,
-    destination: lineDestinations.destinationId,
-    status: attendance.status,
-    attendanceDeadline: events.attendanceDeadline,
-  }).from(attendance)
-    .innerJoin(events, eq(events.id, attendance.eventId))
-    .innerJoin(contacts, eq(contacts.id, attendance.contactId))
-    .innerJoin(contactLineDestinations, eq(contactLineDestinations.contactId, contacts.id))
-    .innerJoin(lineDestinations, eq(lineDestinations.id, contactLineDestinations.lineDestinationId))
-    .where(isNotNull(events.attendanceDeadline))
-    .all() as ReminderCandidate[];
+  if (!await accountAttendanceRemindersEnabled(db)) return 0;
+  const rows = await attendanceReminderCandidates(db);
   let queued = 0;
   for (const row of rows) {
     const milestone = Math.floor((Date.parse(row.attendanceDeadline) - Date.parse(now)) / 86_400_000);
@@ -38,7 +110,7 @@ export const enqueueDueAttendanceReminders = async (database: D1Database, now: s
     const timestamp = now;
     const result = await db.insert(jobs).values({
       id: crypto.randomUUID(),
-      kind: 'attendance_reminder',
+      kind: ATTENDANCE_REMINDER_JOB_KIND,
       payload: JSON.stringify({ eventId: row.eventId, contactId: row.contactId, destination: row.destination, milestone }),
       state: 'pending',
       attempts: 0,

@@ -1,6 +1,16 @@
 import { and, eq } from 'drizzle-orm';
 import { Hono } from 'hono';
-import { MAX_RESPONSE_WINDOW_DAYS, MIN_RESPONSE_WINDOW_DAYS, readAttachmentFolderPath, readResponseWindowDays } from '@mail/domain';
+import {
+  ATTENDANCE_REMINDER_DAYS,
+  MAX_RESPONSE_WINDOW_DAYS,
+  MAX_TASK_REMINDER_DAY,
+  MAX_TASK_REMINDER_DAYS,
+  MIN_RESPONSE_WINDOW_DAYS,
+  MIN_TASK_REMINDER_DAY,
+  readAttachmentFolderPath,
+  readResponseWindowDays,
+  readTaskReminderDays,
+} from '@mail/domain';
 
 import { beginGoogleEntry, entryConfigurationError } from '../entry';
 import { createAutomation } from '../automation';
@@ -12,6 +22,18 @@ import { createAccountStore } from '../storage/account-store';
 import { connections } from '../storage/account-schema';
 import { accountAttachmentFolderPath, saveAccountAttachmentFolderPath } from '../attachment-folders';
 import { accountResponseWindowDays, saveAccountResponseWindowDays } from '../event-merge';
+import {
+  accountTaskReminderDays,
+  accountTaskRemindersEnabled,
+  saveAccountTaskReminderDays,
+  saveAccountTaskRemindersEnabled,
+  upcomingTaskReminders,
+} from '../task-reminders';
+import {
+  accountAttendanceRemindersEnabled,
+  saveAccountAttendanceRemindersEnabled,
+  upcomingAttendanceReminders,
+} from '../attendance-reminders';
 
 export const automationRoutes = new Hono<{ Bindings: Bindings }>();
 
@@ -111,6 +133,99 @@ automationRoutes.put('/organizations/:accountId/response-window', async (context
     return json(context, { days: read.days });
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Event Response window could not be saved.', 409);
+  }
+});
+
+const TASK_REMINDER_REJECTIONS: Record<string, string> = {
+  not_a_list: 'リマインドする日をリストで指定してください。',
+  not_a_number: 'リマインドする日は整数で入力してください。',
+  out_of_range: `リマインドする日は締め切りの${MAX_TASK_REMINDER_DAY}日前から${Math.abs(MIN_TASK_REMINDER_DAY)}日後までの範囲で入力してください。`,
+  too_many: `リマインドする日は${MAX_TASK_REMINDER_DAYS}件までです。`,
+};
+
+automationRoutes.get('/organizations/:accountId/task-reminders', async (context) => {
+  try {
+    const access = await createRequestContext(context.req.raw, context.env).account(context.req.param('accountId'));
+    if (!access.database) throw new Error('Account database is not available.');
+    const database = accountDatabase(access.database);
+    return json(context, {
+      enabled: await accountTaskRemindersEnabled(database),
+      days: await accountTaskReminderDays(database),
+    });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Task reminder milestones could not be loaded.', 403);
+  }
+});
+
+/**
+ * The switch and the milestones are saved together, but either may be left out:
+ * turning reminders off must not have to restate the cadence it is turning off.
+ */
+automationRoutes.put('/organizations/:accountId/task-reminders', async (context) => {
+  try {
+    const access = await createRequestContext(context.req.raw, context.env).account(context.req.param('accountId'));
+    if (!access.database) throw new Error('Account database is not available.');
+    const input = await context.req.json<{ days?: unknown; enabled?: unknown }>();
+    if (input.enabled !== undefined && typeof input.enabled !== 'boolean') return failure(context, 'enabled must be a boolean.');
+    const database = accountDatabase(access.database);
+    if (input.days !== undefined) {
+      const read = readTaskReminderDays(input.days);
+      if (!read.accepted) return failure(context, TASK_REMINDER_REJECTIONS[read.reason] ?? 'リマインドする日を保存できませんでした。');
+      await saveAccountTaskReminderDays(database, read.days, now());
+    }
+    if (typeof input.enabled === 'boolean') await saveAccountTaskRemindersEnabled(database, input.enabled, now());
+    return json(context, {
+      enabled: await accountTaskRemindersEnabled(database),
+      days: await accountTaskReminderDays(database),
+    });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Task reminder milestones could not be saved.', 409);
+  }
+});
+
+automationRoutes.get('/organizations/:accountId/attendance-reminders', async (context) => {
+  try {
+    const access = await createRequestContext(context.req.raw, context.env).account(context.req.param('accountId'));
+    if (!access.database) throw new Error('Account database is not available.');
+    return json(context, {
+      enabled: await accountAttendanceRemindersEnabled(accountDatabase(access.database)),
+      days: [...ATTENDANCE_REMINDER_DAYS],
+    });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Attendance reminders could not be loaded.', 403);
+  }
+});
+
+automationRoutes.put('/organizations/:accountId/attendance-reminders', async (context) => {
+  try {
+    const access = await createRequestContext(context.req.raw, context.env).account(context.req.param('accountId'));
+    if (!access.database) throw new Error('Account database is not available.');
+    const input = await context.req.json<{ enabled?: unknown }>();
+    if (typeof input.enabled !== 'boolean') return failure(context, 'enabled must be a boolean.');
+    await saveAccountAttendanceRemindersEnabled(accountDatabase(access.database), input.enabled, now());
+    return json(context, { enabled: input.enabled, days: [...ATTENDANCE_REMINDER_DAYS] });
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Attendance reminders could not be saved.', 409);
+  }
+});
+
+automationRoutes.get('/organizations/:accountId/attendance-reminders/schedule', async (context) => {
+  try {
+    const access = await createRequestContext(context.req.raw, context.env).account(context.req.param('accountId'));
+    if (!access.database) throw new Error('Account database is not available.');
+    return json(context, await upcomingAttendanceReminders(access.database, now()));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Scheduled attendance reminders could not be loaded.', 403);
+  }
+});
+
+automationRoutes.get('/organizations/:accountId/task-reminders/schedule', async (context) => {
+  try {
+    const access = await createRequestContext(context.req.raw, context.env).account(context.req.param('accountId'));
+    if (!access.database) throw new Error('Account database is not available.');
+    return json(context, await upcomingTaskReminders(access.database, now()));
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Scheduled Task reminders could not be loaded.', 403);
   }
 });
 
