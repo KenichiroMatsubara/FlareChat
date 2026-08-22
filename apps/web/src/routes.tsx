@@ -572,7 +572,7 @@ export const AccountLayout = () => {
   return <AccountContext.Provider value={value}><Outlet /></AccountContext.Provider>;
 };
 
-type AccountPage = 'automation' | 'chat' | 'automations' | 'connections' | 'rules' | 'members' | 'mailbox-test' | 'channel-test' | 'rule-runs' | 'event-refresh' | 'tasks';
+type AccountPage = 'automation' | 'chat' | 'automations' | 'connections' | 'rules' | 'members' | 'mailbox-test' | 'channel-test' | 'rule-runs' | 'event-refresh' | 'tasks' | 'reminders';
 export const AccountPage = ({ page }: { page: AccountPage }) => {
   const value = useAccount();
   const navigation = useNavigation();

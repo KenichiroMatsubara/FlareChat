@@ -1,16 +1,17 @@
-import { CalendarClock, CheckSquare, CircleAlert, LogOut, Mail, Menu, MessageSquare, Play, RefreshCw, Send, Settings, ShieldCheck, SlidersHorizontal, UsersRound, X } from 'lucide-react';
+import { BellRing, CalendarClock, CheckSquare, CircleAlert, LogOut, Mail, Menu, MessageSquare, Play, RefreshCw, Send, Settings, ShieldCheck, SlidersHorizontal, UsersRound, X } from 'lucide-react';
 import { Fragment, useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
 import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, AccountAgentRule, AccountConnections, AccountLineDestination, AccountMembership, AccountPrompt, AccountContact, AccountContactInput, AccountRule, AccountRuleInput, AccountTask, AccountTypedList, PresetSummary, ContactLineDestinationInput, RuleRun } from './api';
 import { AutomationPage, ConnectionsPage, EventRefreshPage, MailboxTestPage, ContactsPage, RuleRunsPage, RulesPage, TasksPage } from './dashboard-pages';
+import { RemindersPage } from './reminders';
 import { ChannelTestPage } from './channel-test';
 import { ChatPage } from './chat';
 import { AutomationsPage } from './automations';
 import { pendingKey, ROUTE_NAVIGATION_KEY } from './pending';
 import { PendingOverlay } from './progress';
 
-export type Page = 'automation' | 'chat' | 'automations' | 'connections' | 'rules' | 'members' | 'mailbox-test' | 'channel-test' | 'rule-runs' | 'event-refresh' | 'tasks';
+export type Page = 'automation' | 'chat' | 'automations' | 'connections' | 'rules' | 'members' | 'mailbox-test' | 'channel-test' | 'rule-runs' | 'event-refresh' | 'tasks' | 'reminders';
 
 export const needsGoogleReauthentication = (error: string): boolean =>
   /token has been expired or revoked/iu.test(error);
@@ -46,6 +47,7 @@ const navigationGroups: readonly NavigationGroup[] = [
       { to: '../chat', label: 'チャット', icon: <MessageSquare size={16} /> },
       { to: '../automations', label: '定期実行', icon: <CalendarClock size={16} /> },
       { to: '../tasks', label: 'タスク', icon: <CheckSquare size={16} /> },
+      { to: '../reminders', label: 'リマインド', icon: <BellRing size={16} /> },
       { to: '../members', label: '連絡先', icon: <UsersRound size={16} /> },
     ],
   },
@@ -191,6 +193,8 @@ export const Dashboard = (props: DashboardProps) => {
         ? <RulesPage {...props} />
         : page === 'members'
           ? <ContactsPage {...props} />
+          : page === 'reminders'
+            ? <RemindersPage accountId={props.accountId ?? ''} />
           : page === 'tasks'
             ? <TasksPage {...props} />
             : page === 'mailbox-test'

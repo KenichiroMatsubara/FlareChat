@@ -206,7 +206,21 @@ export { CAPACITY_CRITICAL_THRESHOLD, CAPACITY_WARNING_THRESHOLD, capacityWarnin
 export type { CapacityWarning } from './capacity';
 export { canConsumeContactLink } from './member-links';
 export type { ContactLinkCheck } from './member-links';
-export { ATTENDANCE_REMINDER_DAYS, TASK_REMINDER_DAYS, shouldSendAttendanceReminder, shouldSendTaskReminder } from './reminders';
+export {
+  ATTENDANCE_REMINDER_DAYS,
+  DEFAULT_REMINDERS_ENABLED,
+  DEFAULT_TASK_REMINDER_DAYS,
+  readRemindersEnabled,
+  writeRemindersEnabled,
+  MAX_TASK_REMINDER_DAY,
+  MAX_TASK_REMINDER_DAYS,
+  MIN_TASK_REMINDER_DAY,
+  readTaskReminderDays,
+  shouldSendAttendanceReminder,
+  shouldSendTaskReminder,
+  writeTaskReminderDays,
+} from './reminders';
+export type { TaskReminderDaysRejection, TaskReminderDaysResult } from './reminders';
 export { classifyEventChange } from './event-changes';
 export type { EventChangeKind } from './event-changes';
 export { shouldWriteRecoveryReceipt } from './recovery';

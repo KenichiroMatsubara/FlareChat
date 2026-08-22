@@ -68,6 +68,39 @@ const eventLine = (event: NoticeEvent): string => {
 const taskLine = (task: NoticeTask): string => `・${by(task.deadline)} ${task.title}（${task.assigneeName}）`;
 
 /**
+ * One Task reminder as its assignee reads it, and as the administration GUI
+ * shows it before it is sent. The milestone is stated in words rather than as a
+ * signed number of days, because "本日締め切り" and "期限切れ" are what a reader
+ * acts on; the same composition serves the preview so the GUI cannot promise
+ * text the delivery would not send.
+ */
+export const attendanceReminderNotice = (input: {
+  title: string;
+  deadline: string;
+  milestone: number;
+}): string => {
+  const heading = input.milestone > 0
+    ? `【出欠のお願い】回答期限まであと${input.milestone}日`
+    : input.milestone === 0
+      ? '【出欠のお願い】本日が回答期限です'
+      : '【出欠のお願い】回答期限を過ぎています';
+  return `${heading}\n・${input.title}（${by(input.deadline)}）`;
+};
+
+export const taskReminderNotice = (input: {
+  title: string;
+  deadline: string;
+  milestone: number;
+}): string => {
+  const heading = input.milestone > 0
+    ? `【リマインド】締め切りまであと${input.milestone}日`
+    : input.milestone === 0
+      ? '【リマインド】本日が締め切りです'
+      : `【リマインド】期限切れです（${Math.abs(input.milestone)}日経過）`;
+  return `${heading}\n・${by(input.deadline)} ${input.title}`;
+};
+
+/**
  * One Source Message's summary, the events it produced, and the Tasks it raised,
  * as one message. A section with nothing in it is left out entirely, so a
  * message that produced neither reads exactly as its summary alone.

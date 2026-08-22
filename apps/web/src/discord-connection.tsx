@@ -49,7 +49,7 @@ export const DiscordConnection = ({ accountId }: { accountId: string }) => {
       <label>アプリケーション公開鍵
         <input value={publicKey} onChange={(event) => setPublicKey(event.target.value)} placeholder="64文字の16進数" />
       </label>
-      <button type="submit" disabled={saving || !botToken.trim() || !publicKey.trim()}>保存</button>
+      <button type="submit" className="primary" disabled={saving || !botToken.trim() || !publicKey.trim()}>保存</button>
     </form>
     {interactionsUrl && <label className="discord-endpoint">
       Discord の Interactions Endpoint URL に設定してください

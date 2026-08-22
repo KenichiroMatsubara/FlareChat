@@ -6,6 +6,8 @@ import { retryProvisioning } from '../onboarding';
 import { dispatchDueAccountJobs } from '../job-dispatch';
 import { runDueAccountAutomations } from '../automation-schedule';
 import { MCP_REMINDER_JOB_KIND, reminderJobHandler } from '../reminder-job';
+import { TASK_REMINDER_JOB_KIND, taskReminderJobHandler } from '../task-reminder-job';
+import { ATTENDANCE_REMINDER_JOB_KIND, attendanceReminderJobHandler } from '../attendance-reminder-job';
 import type { Bindings } from '../types';
 
 /** The frequent tick: work that is late the moment its stated time passes. */
@@ -35,7 +37,11 @@ export const runBackgroundWork = async (env: Bindings, cron?: string): Promise<v
     await retryProvisioning(env);
     await enqueueDueAccountAttendanceReminders(env, dueAt);
     await enqueueDueAccountTaskReminders(env, dueAt);
-    await dispatchDueAccountJobs(env, dueAt, { [MCP_REMINDER_JOB_KIND]: reminderJobHandler(env) });
+    await dispatchDueAccountJobs(env, dueAt, {
+      [MCP_REMINDER_JOB_KIND]: reminderJobHandler(env),
+      [TASK_REMINDER_JOB_KIND]: taskReminderJobHandler(env),
+      [ATTENDANCE_REMINDER_JOB_KIND]: attendanceReminderJobHandler(env),
+    });
     await runDueAccountAutomations(env, new Date(dueAt));
   }
   if (cron !== DUE_WORK_CRON) await createAutomation(env).runEnabledAccounts();

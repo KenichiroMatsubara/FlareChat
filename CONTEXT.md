@@ -36,7 +36,7 @@ The Automation Inbox remains an Account-owned Google Connection rather than a pe
 
 A Contact registers attendance, writes comments, and completes the Tasks assigned to it through a Contact Page, which it enters by a short-lived single-use link exchanged for a time-bounded session, delivered only to a Channel Handle that addresses that Contact alone. A Contact may read every Task in the Account but may complete only its own. It holds no credential of any kind, so anyone holding an unexpired link acts as that Contact, and revocation, single use, and expiry are the whole mitigation. A Contact reachable only through a shared group or room has no page and is administered entirely by the Account, because a link sent into a group lets every member of it act as that Contact.
 
-An unfinished Task notifies its assignee alone at the same seven, three, and one day milestones the attendance reminders use.
+An Account sends no reminders until it turns them on, and turns Task reminders and attendance reminders on separately. An unfinished Task then notifies its assignee alone at the Reminder Milestones its Account chose, which default to seven, three, and one day before the deadline, the deadline day itself, and the day the Task falls overdue. Whichever reminders an Account would send are readable before it turns them on, worded and addressed as they will arrive.
 
 A Task names the Contact it was given to, and nothing stands between the two. The extraction is shown the Account's active Contacts, each with the description the Account wrote for it, and names one of them or states that none fits; the assignee's name is copied onto the Task when it is created, so a Task keeps saying who it was given to after that Contact is renamed or removed. An Account may hand a Task to a different Contact, or take it off every Contact, at any time.
 
@@ -441,6 +441,14 @@ _Avoid_: user, attendee
 **Task**:
 An Account-owned, deadline-bearing work item extracted once from a Source Message and tracked until completed.
 _Avoid_: reminder, to-do
+
+**Reminder Milestone**:
+One moment a Task reminds its assignee, counted in whole days until the deadline: a positive number is that many days before it, 0 is the deadline day, and a negative number is that many days after it. An Account chooses its own set, and an empty set reminds never.
+_Avoid_: reminder schedule, reminder interval, lead time
+
+**Reminder Schedule**:
+Every reminder an Account's Reminder Milestones still have ahead of them, each already addressed to a Contact and worded as it will arrive. It is readable whether or not that Account has turned reminders on, and states what would be sent rather than what was.
+_Avoid_: reminder queue, outbox, pending reminders
 
 **Task Assignment**:
 The Contact one Task was given to, named by the extraction from the Account's own Contacts and changeable by the Account afterwards. Each Task keeps the assignee name captured when it was created, so history still reads correctly after the roster changes.

@@ -33,6 +33,7 @@ describe('application routes', () => {
       ruleRuns: 'rule-runs',
       eventRefresh: 'event-refresh',
       tasks: 'tasks',
+      reminders: 'reminders',
     });
   });
 
@@ -76,6 +77,20 @@ describe('application routes', () => {
     }), { initialEntries: ['/unknown'] });
     await unknown.initialize();
     expect(unknown.state.matches.at(-1)?.route.path).toBe('*');
+  });
+
+  it('opens the reminder settings as a durable deep link', async () => {
+    const ready = {
+      kind: 'ready',
+      identity: { email: 'owner@example.com', displayName: 'Owner' },
+      accounts: [{ accountId: 'org-1', name: 'Example', status: 'active' }],
+    } as AppState;
+    const router = createMemoryRouter(createAppRoutes({
+      bootstrap: async () => ready,
+      logout: async () => ({ loggedOut: true }),
+    }), { initialEntries: ['/organizations/org-1/reminders'] });
+    await router.initialize();
+    expect(router.state.matches.at(-1)?.route.path).toBe('reminders');
   });
 
   it('opens the Account Task table as a durable deep link', async () => {

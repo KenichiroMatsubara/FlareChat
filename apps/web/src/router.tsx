@@ -27,6 +27,7 @@ export const accountRoutePaths = {
   ruleRuns: 'rule-runs',
   eventRefresh: 'event-refresh',
   tasks: 'tasks',
+  reminders: 'reminders',
 } as const;
 
 export const accountUrl = (
@@ -111,6 +112,7 @@ const rootRoute = (client: RouterClient) => ({
         { path: 'rule-runs', element: <AccountPage page="rule-runs" /> },
         { path: 'event-refresh', element: <AccountPage page="event-refresh" /> },
         { path: 'tasks', element: <AccountPage page="tasks" /> },
+        { path: 'reminders', element: <AccountPage page="reminders" /> },
       ],
     },
     { path: '*', element: <NotFoundRoute /> },
