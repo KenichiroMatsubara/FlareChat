@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { sourceMessageNotice } from './notice';
+import { sourceMessageNotice, taskReminderNotice } from './notice';
 
 const event = {
   title: '定例会議',
@@ -63,5 +63,34 @@ describe('source message notice', () => {
   it('leaves out a location the extraction did not state', () => {
     expect(sourceMessageNotice({ summary: '案内です。', events: [{ ...event, location: '  ' }], tasks: [] }))
       .toBe('案内です。\n\n【予定】\n・8/25(火) 19:00〜21:00 定例会議');
+  });
+});
+
+describe('Task reminder notice', () => {
+  const reminder = {
+    title: '登録用紙の返信',
+    deadline: '2026-08-29',
+    milestone: 3,
+    sourceMessageSubject: '田原RAC9月第一例会「ビールの世界」ご案内',
+    description: '登録用紙にふりがなを含めて記入し、メールで返信する。',
+  };
+
+  it('places the Task by naming the message it came from and what it asks for', () => {
+    expect(taskReminderNotice(reminder)).toBe([
+      '【リマインド】締め切りまであと3日',
+      '・8/29(土)まで 登録用紙の返信',
+      '元メール：田原RAC9月第一例会「ビールの世界」ご案内',
+      '登録用紙にふりがなを含めて記入し、メールで返信する。',
+    ].join('\n'));
+  });
+
+  it('states the milestone in words on the deadline day and after it', () => {
+    expect(taskReminderNotice({ ...reminder, milestone: 0 })).toContain('【リマインド】本日が締め切りです');
+    expect(taskReminderNotice({ ...reminder, milestone: -2 })).toContain('【リマインド】期限切れです（2日経過）');
+  });
+
+  it('leaves out a subject or a description the Task does not carry', () => {
+    expect(taskReminderNotice({ ...reminder, sourceMessageSubject: '  ', description: '' }))
+      .toBe('【リマインド】締め切りまであと3日\n・8/29(土)まで 登録用紙の返信');
   });
 });

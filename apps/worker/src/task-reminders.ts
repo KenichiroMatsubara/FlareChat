@@ -59,6 +59,8 @@ interface TaskReminderCandidate {
   contactName: string;
   title: string;
   deadline: string;
+  sourceMessageSubject: string;
+  description: string;
   completed: boolean;
   destination: string;
 }
@@ -112,7 +114,13 @@ export const upcomingTaskReminders = async (
         destination: displayLineDestinationId(row.destination),
         milestone,
         sendOn,
-        text: taskReminderNotice({ title: row.title, deadline: row.deadline, milestone }),
+        text: taskReminderNotice({
+          title: row.title,
+          deadline: row.deadline,
+          milestone,
+          sourceMessageSubject: row.sourceMessageSubject,
+          description: row.description,
+        }),
       });
     }
   }
@@ -126,6 +134,8 @@ const taskReminderCandidates = async (db: AccountDatabase): Promise<TaskReminder
   contactName: contacts.name,
   title: tasks.title,
   deadline: tasks.deadline,
+  sourceMessageSubject: tasks.sourceMessageSubject,
+  description: tasks.description,
   completed: tasks.completed,
   destination: lineDestinations.destinationId,
 }).from(tasks)

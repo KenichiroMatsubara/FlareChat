@@ -98,6 +98,8 @@ describe('Task reminder delivery', () => {
 
     expect(sent).toHaveLength(1);
     expect(JSON.stringify(sent[0])).toContain('本日が締め切りです');
+    expect(JSON.stringify(sent[0])).toContain('元メール：年次行事');
+    expect(JSON.stringify(sent[0])).toContain('指定口座へ送金する');
     expect(fixture.account.rows('SELECT outcome FROM deliveries')).toEqual([{ outcome: 'succeeded' }]);
   });
 
