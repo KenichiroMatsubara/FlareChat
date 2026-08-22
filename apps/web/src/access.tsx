@@ -109,7 +109,7 @@ export const AccessPanel = ({ accountId }: { accountId: string }) => {
           {contact.name}
         </label>)}
       </fieldset>
-      <button type="submit" disabled={!listName.trim() || !listContactIds.length}>Contact List を保存</button>
+      <button type="submit" className="primary" disabled={!listName.trim() || !listContactIds.length}>Contact List を保存</button>
     </form>
 
     <form className="access-form" onSubmit={(event) => { event.preventDefault(); void issue(); }}>
@@ -132,7 +132,7 @@ export const AccessPanel = ({ accountId }: { accountId: string }) => {
           {WINDOWS.map((window) => <option key={window} value={window}>{window}</option>)}
         </select>
       </label>
-      <button type="submit" disabled={!tokenName.trim() || !tokenListId || !tokenTools.length}>発行</button>
+      <button type="submit" className="primary" disabled={!tokenName.trim() || !tokenListId || !tokenTools.length}>発行</button>
     </form>
 
     <ul className="access-tokens">
@@ -140,7 +140,7 @@ export const AccessPanel = ({ accountId }: { accountId: string }) => {
         <span className="access-token-name">{token.name}</span>
         <span>{token.tools.join(', ')}</span>
         <span>{token.lastUsedAt ? `最終利用 ${token.lastUsedAt}` : '未使用'}</span>
-        <button type="button" onClick={() => void revoke(token.id)} aria-label={`${token.name} を失効`}><Trash2 size={16} /></button>
+        <button type="button" className="secondary" onClick={() => void revoke(token.id)} aria-label={`${token.name} を失効`}><Trash2 size={16} /></button>
       </li>)}
     </ul>
   </section>;

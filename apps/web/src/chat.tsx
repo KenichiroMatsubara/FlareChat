@@ -118,7 +118,7 @@ export const ChatPage = ({ accountId }: { accountId: string }) => {
         placeholder="例: 来週の予定と未回答の Contact を教えて"
         onChange={(event) => setMessage(event.target.value)}
       />
-      <button type="submit" disabled={sending || !message.trim()}>
+      <button type="submit" className="primary" disabled={sending || !message.trim()}>
         {sending ? <RefreshCw className="spin" size={16} /> : <Send size={16} />}
         {sending ? '応答を待っています…' : '送信'}
       </button>
@@ -133,14 +133,14 @@ export const ChatPage = ({ accountId }: { accountId: string }) => {
           <span className="chat-server-name">{server.name}</span>
           <span className="chat-server-url">{server.url}</span>
           <span>{server.authenticated ? 'トークンあり' : '認証なし'}</span>
-          <button type="button" onClick={() => void removeServer(server.id)} aria-label={`${server.name} を削除`}><Trash2 size={16} /></button>
+          <button type="button" className="secondary" onClick={() => void removeServer(server.id)} aria-label={`${server.name} を削除`}><Trash2 size={16} /></button>
         </li>)}
       </ul>
       <form onSubmit={(event) => { event.preventDefault(); void saveServer(); }}>
         <label>名前<input value={serverName} onChange={(event) => setServerName(event.target.value)} placeholder="notion" /></label>
         <label>URL<input value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} placeholder="https://example.com/mcp" /></label>
         <label>トークン<input value={serverToken} type="password" onChange={(event) => setServerToken(event.target.value)} placeholder="任意" /></label>
-        <button type="submit" disabled={!serverName.trim() || !serverUrl.trim()}>追加</button>
+        <button type="submit" className="primary" disabled={!serverName.trim() || !serverUrl.trim()}>追加</button>
       </form>
     </section>
 

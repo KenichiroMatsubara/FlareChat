@@ -119,8 +119,8 @@ export const AutomationsPage = ({ accountId }: { accountId: string }) => {
           <span>{automation.schedule}</span>
           <span>{automation.state}</span>
           <span>{automation.nextRunAt ? `次回 ${automation.nextRunAt}` : '予定なし'}</span>
-          <button type="button" onClick={() => void showRuns(automation.id)}>実行履歴</button>
-          <button type="button" onClick={() => void remove(automation.id)} aria-label={`${automation.name} を削除`}><Trash2 size={16} /></button>
+          <button type="button" className="secondary" onClick={() => void showRuns(automation.id)}>実行履歴</button>
+          <button type="button" className="secondary" onClick={() => void remove(automation.id)} aria-label={`${automation.name} を削除`}><Trash2 size={16} /></button>
         </div>
         {automation.lastError && <p className="chat-failure"><CircleAlert size={16} />{automation.lastError}</p>}
         {runs[automation.id] && <AutomationRunList runs={runs[automation.id] ?? []} />}
@@ -163,7 +163,7 @@ export const AutomationsPage = ({ accountId }: { accountId: string }) => {
           {STATES.map((entry) => <option key={entry} value={entry}>{entry}</option>)}
         </select>
       </label>
-      <button type="submit" disabled={!name.trim() || !promptId || (grantsWrite && !contactListId)}>保存</button>
+      <button type="submit" className="primary" disabled={!name.trim() || !promptId || (grantsWrite && !contactListId)}>保存</button>
     </form>
   </section>;
 };
