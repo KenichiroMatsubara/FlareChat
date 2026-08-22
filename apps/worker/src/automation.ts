@@ -1536,7 +1536,7 @@ interface CorrelationTarget {
 
 /**
  * The Scheduled Events this Account's automation owns inside a time window,
- * each paired with the values Mail Automation last wrote. Calendar supplies the
+ * each paired with the values FlareChat last wrote. Calendar supplies the
  * window and the live state; D1 supplies what a merge is allowed to overwrite.
  */
 const correlationTargets = async (
