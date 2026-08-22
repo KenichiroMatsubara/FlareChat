@@ -52,6 +52,7 @@ const ruleEffectKindLabel = (kind: string): string => ({
   'schema.apply_events': '予定を作成・更新',
   'agent.send_line_message': 'LINEメッセージを送信',
   'agent.create_scheduled_event': '予定を作成',
+  'agent.send_email_summary': '要約メールを送信',
   'calendar.create': '予定を作成',
   'drive.publish': '添付ファイルをDriveへ保存',
   'task.create': '期限タスクを作成',
@@ -70,6 +71,13 @@ const ruleEffectDetails = (effect: RuleEffect): string[] => {
     return [
       textValue(arguments_.destination) ? `送信先: ${String(arguments_.destination)}` : null,
       textValue(arguments_.message) ? `内容: ${String(arguments_.message)}` : null,
+    ].filter((value): value is string => Boolean(value));
+  }
+  if (effect.kind === 'agent.send_email_summary') {
+    return [
+      textValue(arguments_.destination) ? `送信先: ${String(arguments_.destination)}` : null,
+      textValue(arguments_.subject) ? `件名: ${String(arguments_.subject)}` : null,
+      textValue(arguments_.body) ? `内容: ${String(arguments_.body)}` : null,
     ].filter((value): value is string => Boolean(value));
   }
   if (effect.kind === 'agent.create_scheduled_event' || effect.kind === 'calendar.create') {
@@ -708,11 +716,11 @@ const DestinationListChoices = ({
 </fieldset>;
 
 /**
- * Who this Rule tells about a Source Message, chosen as Contacts (ADR 0162).
+ * Who this Rule tells about a Source Message, chosen as Contacts (ADR 0162, ADR 0166).
  *
- * The handle is never typed here: the Account picks people, groups, and rooms it
- * already holds, and delivery resolves each one's handle on the Channel it is
- * reachable on.
+ * This is the Rule's only destination setting. The address is never typed here:
+ * the Account picks people, groups, and rooms it already holds, and delivery
+ * resolves each one's email or Channel handle.
  */
 const NoticeContactChoices = ({ rule, props }: {
   rule: DashboardProps['accountRules'][number];
@@ -724,6 +732,7 @@ const NoticeContactChoices = ({ rule, props }: {
   const named = props.noticeTargets.filter((target) => contactIds.includes(target.id)).map((target) => target.name);
   return <fieldset className="rule-notice-contacts">
     <legend>要約の送り先（連絡先）</legend>
+    <small>ここで選んだ連絡先にだけ要約を配信します。メールアドレスを持つ連絡先にはメールで届きます。</small>
     {props.noticeTargets.length
       ? props.noticeTargets.map((target) => <label key={target.id}>
         <input
@@ -733,7 +742,7 @@ const NoticeContactChoices = ({ rule, props }: {
           onChange={(change) => setContactIds((current) => toggledIds(current, target.id, change.target.checked))}
         />{target.name}<small>{target.channels.join('・').toUpperCase()}</small>
       </label>)
-      : <small>送信できる連絡先がありません。連絡先画面でLINEを紐付けてください。</small>}
+      : <small>送信できる連絡先がありません。連絡先画面でメールアドレスかLINEを登録してください。</small>}
     <small>選択中: {named.join('、') || '送り先なし'}</small>
     <button type="button" className="secondary" disabled={saving} onClick={() => void props.onSaveNoticeContacts(rule.id, contactIds)}>{saving ? <><RefreshCw className="spin" size={13} />保存中…</> : '要約の送り先を保存'}</button>
     <FieldSaveState saving={saving} saved={props.isSettled(pendingKey.ruleNoticeContacts(rule.id))} />

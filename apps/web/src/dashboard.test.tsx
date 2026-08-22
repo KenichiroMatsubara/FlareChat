@@ -157,7 +157,7 @@ describe('Task assignment', () => {
           page="rules"
           noticeTargets={[
             { id: 'contact-group', name: '要約送信グループ', channels: ['line'] },
-            { id: 'contact-yamada', name: '山田花子', channels: ['line'] },
+            { id: 'contact-yamada', name: '山田花子', channels: ['email'] },
           ]}
           contactLists={[{ id: 'list-1', name: '要約の送り先', contactIds: ['contact-group'] }]}
           accountRules={[{
@@ -172,7 +172,10 @@ describe('Task assignment', () => {
 
     expect(html).toContain('要約の送り先（連絡先）');
     expect(html).toContain('要約送信グループ');
+    // A Contact holding an email address is offered as a summary destination,
+    // and the row says which way it will be reached.
     expect(html).toContain('山田花子');
+    expect(html).toContain('EMAIL');
     expect(html).toContain('選択中: 要約送信グループ');
   });
 

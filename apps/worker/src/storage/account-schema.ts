@@ -232,7 +232,7 @@ export const proposedActions = sqliteTable('proposed_actions', {
   id: text('id').primaryKey(),
   agentRunId: text('agent_run_id').notNull(),
   agentRuleId: text('agent_rule_id').notNull(),
-  tool: text('tool', { enum: ['send_line_message', 'create_scheduled_event'] }).notNull(),
+  tool: text('tool', { enum: ['send_line_message', 'create_scheduled_event', 'send_email_summary'] }).notNull(),
   arguments: text('arguments').notNull(),
   status: text('status', { enum: ['pending', 'approved', 'rejected', 'expired', 'failed'] }).notNull().default('pending'),
   createdAt: text('created_at').notNull(),
@@ -240,7 +240,7 @@ export const proposedActions = sqliteTable('proposed_actions', {
   decidedAt: text('decided_at'),
   decidedBy: text('decided_by'),
 }, (table) => [
-  check('proposed_actions_tool_check', sql`${table.tool} in ('send_line_message', 'create_scheduled_event')`),
+  check('proposed_actions_tool_check', sql`${table.tool} in ('send_line_message', 'create_scheduled_event', 'send_email_summary')`),
   check('proposed_actions_status_check', sql`${table.status} in ('pending', 'approved', 'rejected', 'expired', 'failed')`),
   index('proposed_actions_run_idx').on(table.agentRunId, table.createdAt),
 ]);

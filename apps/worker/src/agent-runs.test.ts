@@ -41,7 +41,7 @@ describe('Agent Rule writes', () => {
       executionMode: 'approval',
       permittedLineDestinations: ['line-user-1'],
       permittedRecipientDestinations: [],
-      writes: { sendLine, createScheduledEvent: vi.fn() },
+      writes: { sendLine, createScheduledEvent: vi.fn(), sendEmailSummary: vi.fn() },
       model: { complete: async () => turn++ === 0 ? {
         model: 'test-model',
         content: '',
@@ -70,7 +70,7 @@ describe('Agent Rule writes', () => {
       executionMode: 'approval',
       permittedLineDestinations: ['line-user-1'],
       permittedRecipientDestinations: [],
-      writes: { sendLine: vi.fn(), createScheduledEvent: vi.fn() },
+      writes: { sendLine: vi.fn(), createScheduledEvent: vi.fn(), sendEmailSummary: vi.fn() },
       model: { complete: async () => ({
         model: 'test-model', content: '', totalTokens: 1,
         toolCalls: [{ id: 'call-outside', name: 'send_line_message', arguments: '{"destination":"line-user-outside","message":"No."}' }],
@@ -101,7 +101,7 @@ describe('Agent Rule writes', () => {
     await expect(runAgent({
       database: database.binding, runId: 'run-cap', agentRuleId: 'agent-rule-1', executionMode: 'approval',
       permittedLineDestinations: ['line-user-1'], permittedRecipientDestinations: [],
-      writes: { sendLine: vi.fn(), createScheduledEvent: vi.fn() },
+      writes: { sendLine: vi.fn(), createScheduledEvent: vi.fn(), sendEmailSummary: vi.fn() },
       model: { complete: async () => ({ model: 'test-model', content: '', toolCalls, totalTokens: 1 }) },
       connection: { apiKey: 'test-key', baseUrl: 'https://ai.example.com/v1', model: 'test-model' },
       prompt: 'Notify participants.',
@@ -120,7 +120,7 @@ describe('Agent Rule writes', () => {
     await expect(runAgent({
       database: database.binding, runId: 'run-event-cap', agentRuleId: 'agent-rule-1', executionMode: 'approval',
       permittedLineDestinations: [], permittedRecipientDestinations: ['guest@example.com'],
-      writes: { sendLine: vi.fn(), createScheduledEvent: vi.fn() },
+      writes: { sendLine: vi.fn(), createScheduledEvent: vi.fn(), sendEmailSummary: vi.fn() },
       model: { complete: async () => ({ model: 'test-model', content: '', toolCalls, totalTokens: 1 }) },
       connection: { apiKey: 'test-key', baseUrl: 'https://ai.example.com/v1', model: 'test-model' },
       prompt: 'Schedule.', source: { id: 'source-event-cap', sender: 'sender@example.com', subject: 'Events', body: 'Body', attachments: [] },
@@ -135,7 +135,7 @@ describe('Agent Rule writes', () => {
     const result = await runAgent({
       database: database.binding, runId: 'run-unattended', agentRuleId: 'agent-rule-1', executionMode: 'unattended',
       permittedLineDestinations: ['line-user-1'], permittedRecipientDestinations: ['guest@example.com'],
-      writes: { sendLine, createScheduledEvent },
+      writes: { sendLine, createScheduledEvent, sendEmailSummary: vi.fn() },
       model: { complete: async () => turn++ === 0 ? {
         model: 'test-model', content: '', totalTokens: 1, toolCalls: [
           { id: 'call-line', name: 'send_line_message', arguments: '{"destination":"line-user-1","message":"Bring shoes."}' },
@@ -152,5 +152,48 @@ describe('Agent Rule writes', () => {
       { tool: 'send_line_message', arguments: { destination: 'line-user-1', message: 'Bring shoes.' } },
       { tool: 'create_scheduled_event', arguments: expect.objectContaining({ destination: 'guest@example.com', title: 'Practice' }) },
     ]);
+  });
+
+  it('summarises to the chosen subset of permitted recipients rather than to every one of them', async () => {
+    database = createMigratedTestD1('organization');
+    const sendEmailSummary = vi.fn().mockResolvedValue({ outcome: 'succeeded' });
+    let turn = 0;
+    const result = await runAgent({
+      database: database.binding, runId: 'run-email', agentRuleId: 'agent-rule-1', executionMode: 'unattended',
+      permittedLineDestinations: [],
+      permittedRecipientDestinations: ['coach@example.com', 'treasurer@example.com', 'parents@example.com'],
+      writes: { sendLine: vi.fn(), createScheduledEvent: vi.fn(), sendEmailSummary },
+      model: { complete: async () => turn++ === 0 ? {
+        model: 'test-model', content: '', totalTokens: 1, toolCalls: [
+          { id: 'call-email', name: 'send_email_summary', arguments: '{"destination":"treasurer@example.com","subject":"参加費の入金期限","body":"8月20日までに入金してください。"}' },
+        ],
+      } : { model: 'test-model', content: 'done', toolCalls: [], totalTokens: 1 } },
+      connection: { apiKey: 'test-key', baseUrl: 'https://ai.example.com/v1', model: 'test-model' }, prompt: 'Summarise for whoever it concerns.',
+      source: { id: 'source-email', sender: 'sender@example.com', subject: 'Fees', body: 'Body', attachments: [] },
+    });
+
+    expect(sendEmailSummary).not.toHaveBeenCalled();
+    expect(result.plannedActions).toEqual([
+      { tool: 'send_email_summary', arguments: { destination: 'treasurer@example.com', subject: '参加費の入金期限', body: '8月20日までに入金してください。' } },
+    ]);
+  });
+
+  it('refuses an email summary addressed outside the permitted recipient set', async () => {
+    database = createMigratedTestD1('organization');
+    const run = runAgent({
+      database: database.binding, runId: 'run-email-outside', agentRuleId: 'agent-rule-1', executionMode: 'unattended',
+      permittedLineDestinations: [], permittedRecipientDestinations: ['coach@example.com'],
+      writes: { sendLine: vi.fn(), createScheduledEvent: vi.fn(), sendEmailSummary: vi.fn() },
+      model: { complete: async () => ({
+        model: 'test-model', content: '', totalTokens: 1,
+        toolCalls: [{ id: 'call-outside', name: 'send_email_summary', arguments: '{"destination":"stranger@example.com","subject":"S","body":"B"}' }],
+      }) },
+      connection: { apiKey: 'test-key', baseUrl: 'https://ai.example.com/v1', model: 'test-model' }, prompt: 'Summarise.',
+      source: { id: 'source-email-outside', sender: 'sender@example.com', subject: 'Fees', body: 'Body', attachments: [] },
+    });
+
+    await expect(run).rejects.toMatchObject({
+      message: 'Destination stranger@example.com is not permitted for send_email_summary.',
+    });
   });
 });

@@ -215,7 +215,17 @@ export const loadAccount = async (accountId: string): Promise<AccountRouteData> 
   return {
     state, account, automation, connections, dashboard, rules, prompts, agentRules, agentRuns, ruleRuns, lists, audit, tasks,
     taskContacts: contacts.filter((contact) => contact.state === 'active').map((contact) => ({ contactId: contact.id, displayName: contact.name })),
-    noticeTargets: noticeTargets.map((target) => ({ id: target.id, name: target.name, channels: target.channels })),
+    // Who a Rule's notice may be addressed to (ADR 0166). Email is the ordinary
+    // way to reach a person, so every active Contact holding an address is
+    // offered; a group or a room holds no address and is offered on the Channel
+    // the Channel Test found it reachable on. A Contact with neither is left
+    // out, because ticking it would do nothing.
+    noticeTargets: contacts.flatMap((contact) => {
+      if (contact.state !== 'active') return [];
+      if (contact.email) return [{ id: contact.id, name: contact.name, channels: ['email'] }];
+      const reachable = noticeTargets.find((target) => target.id === contact.id);
+      return reachable?.channels.length ? [{ id: contact.id, name: contact.name, channels: reachable.channels }] : [];
+    }),
     contactLists,
     contacts, lineDestinations, presets, attachmentFolder, guestRegistrations, responseWindow,
   };

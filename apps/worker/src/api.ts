@@ -1213,6 +1213,9 @@ const ruleExecutionForRequest = (input: {
       if (effect.kind === 'agent.send_line_message') {
         return writes.sendLine(effect.arguments as { destination: string; message: string });
       }
+      if (effect.kind === 'agent.send_email_summary') {
+        return writes.sendEmailSummary(effect.arguments as { destination: string; subject: string; body: string });
+      }
       if (effect.kind === 'agent.create_scheduled_event') {
         return writes.createScheduledEvent(effect.arguments as {
           destination: string;

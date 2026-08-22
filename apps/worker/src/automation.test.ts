@@ -28,6 +28,26 @@ afterEach(() => {
   fixture = undefined;
 });
 
+/**
+ * Points a Rule's one destination setting at the given Contacts (ADR 0166).
+ *
+ * The Contacts are the whole configuration: there is no list of addresses to
+ * keep in step with them.
+ */
+const seedNoticeContacts = (
+  account: AutomationTestApp['account'],
+  readers: Array<{ id: string; name: string; email?: string; lineDestinationId?: string }>,
+): void => {
+  for (const reader of readers) seedContact(account, reader);
+  account.execute(
+    "INSERT INTO contact_lists (id, account_id, name, description, created_at, updated_at) VALUES ('notice-list-1', 'organization-1', '要約の送り先', '', '2026-08-01', '2026-08-01')",
+  );
+  for (const reader of readers) {
+    account.execute('INSERT INTO contact_list_members (list_id, contact_id) VALUES (?, ?)', 'notice-list-1', reader.id);
+  }
+  account.execute("UPDATE rules SET notice_contact_list_id = 'notice-list-1' WHERE id = 'rule-1'");
+};
+
 const gmailBody = (value: string): string =>
   btoa(String.fromCharCode(...new TextEncoder().encode(value)))
     .replaceAll('+', '-')
@@ -1238,13 +1258,7 @@ describe('Account Automation Inbox scheduling', () => {
 
   it('delivers a Message Summary for a matched Source Message with no Event Candidate', async () => {
     fixture = await createAutomationTestApp({ ai: true });
-    fixture.account.execute(
-      "INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('recipients-1', 'organization-1', 'recipient', 'Readers', '2026-08-01', '2026-08-01')",
-    );
-    fixture.account.execute(
-      "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('reader-1', 'recipients-1', 'reader@example.com', 'Reader', 1)",
-    );
-    fixture.account.execute("INSERT INTO rule_permitted_recipient_lists (rule_id, list_id) VALUES ('rule-1', 'recipients-1')");
+    seedNoticeContacts(fixture.account, [{ id: 'contact-reader', name: '読者', email: 'reader@example.com' }]);
     const upstreamRequests: Array<{ url: string; body: string | undefined }> = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       upstreamRequests.push({ url, body: typeof init?.body === 'string' ? init.body : undefined });
@@ -1294,26 +1308,13 @@ describe('Account Automation Inbox scheduling', () => {
     });
   });
 
-  it('delivers a Message Summary to the deduplicated destinations from every permitted list', async () => {
+  it('emails the notice to every Contact chosen as the Rule’s send-to, and to nobody else', async () => {
     fixture = await createAutomationTestApp({ ai: true });
-    fixture.account.execute(
-      "INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('summary-readers-1', 'organization-1', 'recipient', 'Contacts', '2026-08-01', '2026-08-01')",
-    );
-    fixture.account.execute(
-      "INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('summary-readers-2', 'organization-1', 'recipient', 'Guests', '2026-08-01', '2026-08-01')",
-    );
-    fixture.account.execute(
-      "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('summary-reader-1', 'summary-readers-1', 'member@example.com', 'Contact', 1)",
-    );
-    fixture.account.execute(
-      "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('summary-reader-2', 'summary-readers-2', 'guest@example.com', 'Guest', 1)",
-    );
-    fixture.account.execute(
-      "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('summary-reader-duplicate', 'summary-readers-2', 'member@example.com', 'Contact duplicate', 1)",
-    );
-    fixture.account.execute(
-      "INSERT INTO rule_permitted_recipient_lists (rule_id, list_id) VALUES ('rule-1', 'summary-readers-1'), ('rule-1', 'summary-readers-2')",
-    );
+    seedContact(fixture.account, { id: 'contact-unchosen', name: '三郎', email: 'unchosen@example.com' });
+    seedNoticeContacts(fixture.account, [
+      { id: 'contact-member', name: '一郎', email: 'member@example.com' },
+      { id: 'contact-guest', name: '二郎', email: 'guest@example.com' },
+    ]);
     const upstreamRequests: Array<{ url: string; body: string | undefined }> = [];
     let deliveryIndex = 0;
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
@@ -1324,7 +1325,7 @@ describe('Account Automation Inbox scheduling', () => {
       }), { status: 200 });
       if (url.includes('/messages/gmail-message-permitted-summaries')) return sourceMessageResponse();
       if (url.includes('ai.example.com')) return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
-        summary: '許可された読者へ送る要約です。', events: [], tasks: [],
+        summary: '選ばれた読者へ送る要約です。', events: [], tasks: [],
       }) } }] }), { status: 200 });
       if (url.includes('/messages/send')) {
         deliveryIndex += 1;
@@ -1346,8 +1347,11 @@ describe('Account Automation Inbox scheduling', () => {
       const paddedRaw = `${raw.replaceAll('-', '+').replaceAll('_', '/')}${'='.repeat((4 - raw.length % 4) % 4)}`;
       return new TextDecoder().decode(Uint8Array.from(atob(paddedRaw), (character) => character.charCodeAt(0)));
     });
-    expect(deliveredMessages.join('\n')).toContain('To: member@example.com');
-    expect(deliveredMessages.join('\n')).toContain('To: guest@example.com');
+    const addressed = deliveredMessages.join('\n');
+    expect(addressed).toContain('To: member@example.com');
+    expect(addressed).toContain('To: guest@example.com');
+    expect(addressed).not.toContain('unchosen@example.com');
+    expect(addressed).toContain('選ばれた読者へ送る要約です。');
   });
 
   it('skips Message Summary channels with no permitted lists without failing the Source Message', async () => {
@@ -1376,13 +1380,10 @@ describe('Account Automation Inbox scheduling', () => {
 
   it('delivers exactly one Message Summary when one Source Message produces multiple Scheduled Events', async () => {
     fixture = await createAutomationTestApp({ ai: true, lineSecret: 'line-secret' });
-    fixture.account.execute(
-      "INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('line-readers-1', 'organization-1', 'line', 'LINE Readers', '2026-08-01', '2026-08-01')",
-    );
-    fixture.account.execute(
-      "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('line-reader-1', 'line-readers-1', 'Usummary-reader-1', 'LINE Reader', 1)",
-    );
-    fixture.account.execute("INSERT INTO rule_permitted_line_lists (rule_id, list_id) VALUES ('rule-1', 'line-readers-1')");
+    // A room holds no email address, so the one notice reaches it on LINE.
+    seedNoticeContacts(fixture.account, [
+      { id: 'contact-line-reader', name: 'LINE Reader', lineDestinationId: 'Usummary-reader-1' },
+    ]);
     const upstreamRequests: Array<{ url: string; body: string | undefined }> = [];
     let calendarIndex = 0;
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
@@ -1432,30 +1433,25 @@ describe('Account Automation Inbox scheduling', () => {
       fixture.request('/api/organizations/organization-1/audit/deliveries'),
       fixture.environment,
     );
-    await expect(audit.json()).resolves.toMatchObject({
-      data: [{
-        sourceMessageId: expect.any(String),
-        eventId: null,
-        channel: 'line',
-        outcome: 'succeeded',
-        externalId: 'line-summary-delivery-1',
-      }],
-    });
+    const delivered = (await audit.json() as { data: Array<{ channel: string; externalId: string | null }> }).data;
+    expect(delivered.filter(({ channel }) => channel === 'line')).toMatchObject([{
+      sourceMessageId: expect.any(String),
+      eventId: null,
+      channel: 'line',
+      outcome: 'succeeded',
+      externalId: 'line-summary-delivery-1',
+    }]);
   });
 
   it('states the Scheduled Events and the Tasks a Source Message produced in the one notice', async () => {
     fixture = await createAutomationTestApp({ ai: true, lineSecret: 'line-secret' });
-    fixture.account.execute(
-      "INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('line-readers-1', 'organization-1', 'line', 'LINE Readers', '2026-08-01', '2026-08-01')",
-    );
-    fixture.account.execute(
-      "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('line-reader-1', 'line-readers-1', 'Cnotice-group-1', 'Group', 1)",
-    );
-    fixture.account.execute("INSERT INTO rule_permitted_line_lists (rule_id, list_id) VALUES ('rule-1', 'line-readers-1')");
-    const createdContact = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/members', {
-      name: '山田花子', email: 'hanako@example.com', description: '会場を押さえる人',
-    }), fixture.environment);
-    const contactId = (await createdContact.json() as { data: { id: string } }).data.id;
+    // The group room is the chosen send-to and holds no email address, so the
+    // one notice reaches it on LINE. 山田花子 is named only as the Task assignee.
+    seedNoticeContacts(fixture.account, [
+      { id: 'contact-group', name: '連絡グループ', lineDestinationId: 'Cnotice-group-1' },
+    ]);
+    seedContact(fixture.account, { id: 'contact-hanako', name: '山田花子', email: 'hanako@example.com' });
+    const contactId = 'contact-hanako';
 
     const upstreamRequests: Array<{ url: string; body: string | undefined }> = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
@@ -1571,13 +1567,7 @@ describe('Account Automation Inbox scheduling', () => {
 
   it('delivers an Intake Notice containing only sender and subject when intake fails before extraction', async () => {
     fixture = await createAutomationTestApp({ ai: true });
-    fixture.account.execute(
-      "INSERT INTO lists (id, organization_id, kind, name, created_at, updated_at) VALUES ('intake-readers-1', 'organization-1', 'recipient', 'Intake Readers', '2026-08-01', '2026-08-01')",
-    );
-    fixture.account.execute(
-      "INSERT INTO list_items (id, list_id, value, label, enabled) VALUES ('intake-reader-1', 'intake-readers-1', 'intake-reader@example.com', 'Reader', 1)",
-    );
-    fixture.account.execute("INSERT INTO rule_permitted_recipient_lists (rule_id, list_id) VALUES ('rule-1', 'intake-readers-1')");
+    seedNoticeContacts(fixture.account, [{ id: 'contact-intake', name: '取り込み担当', email: 'intake-reader@example.com' }]);
     const upstreamRequests: Array<{ url: string; body: string | undefined }> = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       upstreamRequests.push({ url, body: typeof init?.body === 'string' ? init.body : undefined });

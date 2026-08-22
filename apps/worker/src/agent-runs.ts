@@ -11,7 +11,7 @@ import type { ExecutionMode } from './execution';
 export const MAX_AGENT_TOOL_CALLS = 12;
 export const AGENT_TOKEN_CEILING = 16_000;
 export const AGENT_TRANSCRIPT_RETENTION_DAYS = 90;
-export const AGENT_TOOL_WRITE_CAPS = Object.freeze({ send_line_message: 5, create_scheduled_event: 3 });
+export const AGENT_TOOL_WRITE_CAPS = Object.freeze({ send_line_message: 5, create_scheduled_event: 3, send_email_summary: 5 });
 
 export type ReadAgentToolName = 'read_source_message' | 'query_scheduled_events' | 'query_tasks' | 'query_attendance';
 export type WriteAgentToolName = keyof typeof AGENT_TOOL_WRITE_CAPS;
@@ -128,6 +128,7 @@ type AgentToolDefinition = { type: 'function'; function: { name: AgentToolName; 
 export const WRITE_AGENT_TOOLS: readonly AgentToolDefinition[] = [
   { type: 'function', function: { name: 'send_line_message', description: 'Send one LINE message to a permitted destination.', parameters: { type: 'object', properties: { destination: { type: 'string' }, message: { type: 'string' } }, required: ['destination', 'message'], additionalProperties: false } } },
   { type: 'function', function: { name: 'create_scheduled_event', description: 'Create one Scheduled Event for a permitted recipient destination.', parameters: { type: 'object', properties: { destination: { type: 'string' }, title: { type: 'string' }, startsAt: { type: 'string' }, endsAt: { type: 'string' }, location: { type: 'string' }, description: { type: 'string' } }, required: ['destination', 'title', 'startsAt', 'endsAt'], additionalProperties: false } } },
+  { type: 'function', function: { name: 'send_email_summary', description: 'Email one summary to a single permitted recipient destination. Call this once per recipient the summary is actually relevant to, and not at all when it is relevant to nobody.', parameters: { type: 'object', properties: { destination: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' } }, required: ['destination', 'subject', 'body'], additionalProperties: false } } },
 ];
 
 const ALL_AGENT_TOOLS: readonly AgentToolDefinition[] = [...READ_ONLY_AGENT_TOOLS, ...WRITE_AGENT_TOOLS];
@@ -153,7 +154,12 @@ const readToolResult = async (database: AccountDatabase, source: AgentRunSource,
 export interface AgentWritePort {
   sendLine(arguments_: { destination: string; message: string }): Promise<unknown>;
   createScheduledEvent(arguments_: { destination: string; title: string; startsAt: string; endsAt: string; location?: string; description?: string }): Promise<unknown>;
+  sendEmailSummary(arguments_: { destination: string; subject: string; body: string }): Promise<unknown>;
 }
+
+const WRITE_AGENT_TOOL_NAMES: readonly WriteAgentToolName[] = Object.keys(AGENT_TOOL_WRITE_CAPS) as WriteAgentToolName[];
+
+const isWriteAgentTool = (name: AgentToolName): name is WriteAgentToolName => WRITE_AGENT_TOOL_NAMES.includes(name as WriteAgentToolName);
 
 const writeArguments = (call: AgentToolCall): Record<string, unknown> => {
   const parsed = JSON.parse(call.arguments || '{}') as Record<string, unknown>;
@@ -182,7 +188,7 @@ export const runAgent = async (input: {
     { role: 'user', content: `Analyze Source Message ${input.source.id}.` },
   ];
   let toolCallCount = 0;
-  const writeCallCounts: Record<WriteAgentToolName, number> = { send_line_message: 0, create_scheduled_event: 0 };
+  const writeCallCounts: Record<WriteAgentToolName, number> = { send_line_message: 0, create_scheduled_event: 0, send_email_summary: 0 };
   let tokens = 0;
   let model = input.connection.model;
   const plannedActions: AgentRunResult['plannedActions'] = [];
@@ -203,7 +209,7 @@ export const runAgent = async (input: {
     if (toolCallCount > MAX_AGENT_TOOL_CALLS) throw failure(`Agent Rule tool-call maximum of ${MAX_AGENT_TOOL_CALLS} was exceeded.`);
     for (const call of completion.toolCalls) {
       try {
-        if (call.name !== 'send_line_message' && call.name !== 'create_scheduled_event') {
+        if (!isWriteAgentTool(call.name)) {
           messages.push({ role: 'tool', name: call.name, toolCallId: call.id, content: JSON.stringify(await readToolResult(database, input.source, call)) });
           continue;
         }
@@ -214,6 +220,9 @@ export const runAgent = async (input: {
         }
         const arguments_ = writeArguments(call);
         const permitted = call.name === 'send_line_message' ? input.permittedLineDestinations : input.permittedRecipientDestinations;
+        if (call.name === 'send_email_summary' && (typeof arguments_.subject !== 'string' || typeof arguments_.body !== 'string')) {
+          throw new Error('send_email_summary requires a subject and a body.');
+        }
         if (!permitted.includes(arguments_.destination as string)) throw new Error(`Destination ${arguments_.destination as string} is not permitted for ${call.name}.`);
         plannedActions.push({ tool: call.name, arguments: arguments_ });
         messages.push({ role: 'tool', name: call.name, toolCallId: call.id, content: JSON.stringify({ status: 'planned' }) });
@@ -243,6 +252,7 @@ export const runReadOnlyAgent = async (input: {
   writes: {
     sendLine: async () => { throw new Error('Read-only Agent Rule cannot write.'); },
     createScheduledEvent: async () => { throw new Error('Read-only Agent Rule cannot write.'); },
+    sendEmailSummary: async () => { throw new Error('Read-only Agent Rule cannot write.'); },
   },
 });
 
