@@ -10,7 +10,7 @@ describe('Google Calendar description', () => {
         { filename: '③RAC用登録シート.xlsx', url: 'https://docs.google.com/spreadsheets/d/1cMA9FAkO91jpi/edit?usp=drivesdk&rtpof=true' },
         { filename: '②26-27地区大会.pdf', url: 'https://drive.google.com/file/d/1Ee2OszLAVoOgqx/view?usp=drivesdk' },
       ],
-      attribution: 'Mail Automation が Gmail メッセージ 19fc6ffaec9d2256 から作成しました。',
+      attribution: 'FlareChat が Gmail メッセージ 19fc6ffaec9d2256 から作成しました。',
     });
 
     expect(description).toBe([
@@ -18,7 +18,7 @@ describe('Google Calendar description', () => {
       '<br><br>添付ファイル:',
       '<br><a href="https://docs.google.com/spreadsheets/d/1cMA9FAkO91jpi/edit?usp=drivesdk&amp;rtpof=true">③RAC用登録シート.xlsx</a>',
       '<br><a href="https://drive.google.com/file/d/1Ee2OszLAVoOgqx/view?usp=drivesdk">②26-27地区大会.pdf</a>',
-      '<br><br>Mail Automation が Gmail メッセージ 19fc6ffaec9d2256 から作成しました。',
+      '<br><br>FlareChat が Gmail メッセージ 19fc6ffaec9d2256 から作成しました。',
     ].join(''));
   });
 
@@ -26,8 +26,8 @@ describe('Google Calendar description', () => {
     expect(calendarEventDescription({
       summary: '   ',
       attachments: [],
-      attribution: 'Mail Automation が Gmail メッセージ gmail-1 から作成しました。',
-    })).toBe('Mail Automation が Gmail メッセージ gmail-1 から作成しました。');
+      attribution: 'FlareChat が Gmail メッセージ gmail-1 から作成しました。',
+    })).toBe('FlareChat が Gmail メッセージ gmail-1 から作成しました。');
   });
 
   it('escapes untrusted summary text and keeps its line breaks readable', () => {
@@ -43,13 +43,13 @@ describe('Google Calendar description', () => {
       summary: '例会のご案内です。',
       guestCounts: '外部からの参加登録: 1団体 2名（北クラブ 2名）',
       attachments: [{ filename: '登録用紙.xlsx', url: 'https://drive.example/sheet' }],
-      attribution: 'Mail Automation が Gmail メッセージ abc から作成しました。',
+      attribution: 'FlareChat が Gmail メッセージ abc から作成しました。',
     })).toBe([
       '例会のご案内です。',
       '<br><br>外部からの参加登録: 1団体 2名（北クラブ 2名）',
       '<br><br>添付ファイル:',
       '<br><a href="https://drive.example/sheet">登録用紙.xlsx</a>',
-      '<br><br>Mail Automation が Gmail メッセージ abc から作成しました。',
+      '<br><br>FlareChat が Gmail メッセージ abc から作成しました。',
     ].join(''));
   });
 

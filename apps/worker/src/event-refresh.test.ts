@@ -52,9 +52,36 @@ describe('the Source Attribution', () => {
     expect(attributedMessageId(sourceMessageAttribution('gmail-message-1'))).toBe('gmail-message-1');
   });
 
-  it('still reads the manual-test wording written before the sentence was unified', () => {
-    expect(attributedMessageId('Mail Automation の手動テストで Gmail メッセージ legacy-1 から作成しました。'))
+  it('writes the current product name', () => {
+    expect(sourceMessageAttribution('gmail-message-1'))
+      .toBe('FlareChat が Gmail メッセージ gmail-message-1 から作成しました。');
+  });
+
+  it('still reads the wording written under the old product name', () => {
+    expect(attributedMessageId('Mail Automation が Gmail メッセージ legacy-1 から作成しました。'))
       .toBe('legacy-1');
+  });
+
+  it('still reads the manual-test wording written before the sentence was unified', () => {
+    expect(attributedMessageId('Mail Automation の手動テストで Gmail メッセージ legacy-2 から作成しました。'))
+      .toBe('legacy-2');
+  });
+
+  it('correlates an old-name event and a new-name event with the same Source Message', () => {
+    const renamed = attributedMessageId(sourceMessageAttribution('gmail-shared'));
+    const legacy = attributedMessageId('Mail Automation が Gmail メッセージ gmail-shared から作成しました。');
+    expect(renamed).toBe('gmail-shared');
+    expect(legacy).toBe(renamed);
+  });
+
+  it('reads the old wording out of a full description carrying attachments', () => {
+    const description = [
+      '要約です。',
+      '添付ファイル:',
+      '<a href="https://drive.example/a">案内.pdf</a>',
+      'Mail Automation が Gmail メッセージ legacy-3 から作成しました。',
+    ].join('<br><br>');
+    expect(attributedMessageId(description)).toBe('legacy-3');
   });
 
   it('reads the sentence when a Public Attachment list precedes it', () => {

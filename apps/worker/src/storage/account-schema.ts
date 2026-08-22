@@ -262,7 +262,7 @@ export const events = sqliteTable('events', {
   /** The Calendar Revision last observed for this event, held as an optimistic lock on the next merge. */
   calendarEtag: text('calendar_etag'),
   /**
-   * The rendered description Mail Automation last wrote to Google Calendar. It
+   * The rendered description FlareChat last wrote to Google Calendar. It
    * differs from `description`, which holds the extracted Event Summary; the
    * difference between this and the live Calendar value is what identifies a
    * Manual Override.

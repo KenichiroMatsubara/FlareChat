@@ -27,7 +27,7 @@ export const saveAccountResponseWindowDays = async (
 };
 
 /**
- * The Calendar fields Mail Automation recorded the last time it wrote a
+ * The Calendar fields FlareChat recorded the last time it wrote a
  * Scheduled Event. The difference between these and the event's current Calendar
  * values is the evidence that a human edited it.
  */
@@ -61,7 +61,7 @@ const sameValue = (field: MergeableField, left: string, right: string): boolean 
 
 /**
  * Names the fields a human has taken over. A field whose live Calendar value has
- * drifted from the value Mail Automation last wrote was changed by somebody else,
+ * drifted from the value FlareChat last wrote was changed by somebody else,
  * whether in the GUI or directly on the organizer's calendar, and is a Manual
  * Override that no automated merge may overwrite.
  */

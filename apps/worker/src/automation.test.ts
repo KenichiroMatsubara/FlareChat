@@ -1738,7 +1738,7 @@ describe('Account Automation Inbox scheduling', () => {
       '式典の案内です。受付は開始30分前からです。',
       '<br><br>添付ファイル:',
       '<br><a href="https://drive.example/docx">式典案内.docx</a>',
-      '<br><br>Mail Automation が Gmail メッセージ gmail-message-docx から作成しました。',
+      '<br><br>FlareChat が Gmail メッセージ gmail-message-docx から作成しました。',
     ].join(''));
     const dashboard = await app.fetch(
       fixture.request('/api/organizations/organization-1/dashboard'),
@@ -2310,7 +2310,8 @@ describe('the Event Refresh exit', () => {
     expect(plan.entries[0]?.target?.id).toBe('calendar-event-1');
     expect(plan.entries[0]?.changedFields).toEqual(['title', 'description', 'location']);
     expect(plan.outOfWindow.map((event) => event.id)).toEqual(['calendar-event-far']);
-    expect(plan.desired[0]?.description).toContain('Mail Automation が Gmail メッセージ gmail-refresh-1 から作成しました。');
+    // The existing events carry the old product name; the plan rewrites them under the new one.
+    expect(plan.desired[0]?.description).toContain('FlareChat が Gmail メッセージ gmail-refresh-1 から作成しました。');
   });
 
   it('rewrites every field, adds the active roster as attendees, and preserves an existing attendee\'s response status', async () => {
@@ -2368,7 +2369,7 @@ describe('the Event Refresh exit', () => {
       { email: 'guest@example.com', responseStatus: 'accepted' },
       { email: 'first@example.com' },
     ]);
-    expect(String(patched?.body.description)).toContain('Mail Automation が Gmail メッセージ gmail-refresh-1 から作成しました。');
+    expect(String(patched?.body.description)).toContain('FlareChat が Gmail メッセージ gmail-refresh-1 から作成しました。');
     expect(fixture.account.row<{ title: string; location: string }>(
       'SELECT title, location FROM events WHERE google_event_id = ?', 'calendar-event-1',
     )).toMatchObject({ title: '30周年記念式典', location: '市民ホール' });

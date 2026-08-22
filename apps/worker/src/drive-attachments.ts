@@ -121,7 +121,7 @@ export interface ReusableDriveAttachment {
  * Finds a Public Attachment already stored in the Source Message's folder, so an
  * Event Refresh links the file that is in place instead of uploading a second
  * copy. Only a file this application created is visible under the `drive.file`
- * grant, so a match is by construction one Mail Automation published itself.
+ * grant, so a match is by construction one FlareChat published itself.
  */
 export const findPublishedDriveAttachment = async (input: {
   accessToken: string;
