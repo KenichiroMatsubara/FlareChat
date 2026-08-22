@@ -30,6 +30,9 @@ import accountOperatorChatMigration from '../migrations/organization/0022_operat
 import accountAccessTokensMigration from '../migrations/organization/0023_access_tokens.sql';
 import accountAutomationsMigration from '../migrations/organization/0024_automations.sql';
 import accountDiscordChannelMigration from '../migrations/organization/0025_discord_channel.sql';
+import accountContactDescriptionMigration from '../migrations/organization/0026_contact_description.sql';
+import accountNameTheContactMigration from '../migrations/organization/0027_name_the_contact.sql';
+import accountRuleNoticeContactsMigration from '../migrations/organization/0028_rule_notice_contacts.sql';
 
 type SchemaKind = 'control' | 'organization';
 
@@ -131,6 +134,9 @@ const ORGANIZATION_MIGRATIONS: readonly SchemaMigration[] = [
   { name: '0023_access_tokens.sql', sql: accountAccessTokensMigration },
   { name: '0024_automations.sql', sql: accountAutomationsMigration },
   { name: '0025_discord_channel.sql', sql: accountDiscordChannelMigration },
+  { name: '0026_contact_description.sql', sql: accountContactDescriptionMigration },
+  { name: '0027_name_the_contact.sql', sql: accountNameTheContactMigration },
+  { name: '0028_rule_notice_contacts.sql', sql: accountRuleNoticeContactsMigration },
 ];
 const LEGACY_MIGRATION_CHECKSUMS = new Map<string, ReadonlySet<string>>([
   ['0001_tasks.sql', new Set(['4b2f3889191d0eafbbe45b78103db7139c7ce2b937c02cbbb6824f5131d7429f'])],

@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0161
+---
+
 # Review Open Task Assignments When the Role Set Changes
 
 A change to an Organization's Operational Task Roles now opens a Task Reassignment Review, and an Admin may ask the AI for one proposed role per incomplete Task. Until now the role a Task carried was decided once, at extraction, by the role set that existed that day. An Organization that later split 幹事 into two roles, or renamed one so its description finally said what it means, was left with every earlier Task pointing at the old arrangement and no way forward but editing each Task by hand — which the GUI does not even offer.

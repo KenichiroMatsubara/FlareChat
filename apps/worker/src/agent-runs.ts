@@ -141,7 +141,7 @@ const readToolResult = async (database: AccountDatabase, source: AgentRunSource,
       return database.select({ id: events.id, title: events.title, startsAt: events.startsAt, endsAt: events.endsAt, location: events.location, status: events.status })
         .from(events).orderBy(asc(events.startsAt)).limit(100).all();
     case 'query_tasks':
-      return database.select({ id: tasks.id, title: tasks.title, deadline: tasks.deadline, completed: tasks.completed, assigneeRoleName: tasks.assigneeRoleName, description: tasks.description })
+      return database.select({ id: tasks.id, title: tasks.title, deadline: tasks.deadline, completed: tasks.completed, assignee: tasks.assigneeName, description: tasks.description })
         .from(tasks).orderBy(asc(tasks.deadline)).limit(100).all();
     case 'query_attendance':
       return database.select({ eventId: attendance.eventId, recipient: contacts.name, status: attendance.status, comment: attendance.comment })

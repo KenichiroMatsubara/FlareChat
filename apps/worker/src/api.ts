@@ -57,7 +57,6 @@ import { accessTokens, accessTokenTools, contactListMembers, contactLists } from
 import { mcpServers } from './storage/account-schema';
 import { createTaskWorkflow } from './tasks';
 import { createRuleExecution } from './execution';
-import { proposeTaskReassignments, TASK_REASSIGNMENT_LIMIT } from './task-reassignment';
 import { applyPreset, availablePresets, PresetConfigurationConflictError } from './presets';
 import { controlDatabase as drizzleControlDatabase, accountDatabase as drizzleAccountDatabase } from './storage/database';
 import { createAccountStore } from './storage/account-store';
@@ -90,10 +89,8 @@ import {
   rulePermittedLineLists,
   rulePermittedRecipientLists,
   rules as accountRules,
-  operationalTaskRoles,
   promptRevisions,
   prompts,
-  taskRoleAssignments,
 } from './storage/account-schema';
 
 const RECIPIENT_LINK_WINDOW_MS = 15 * 60 * 1_000;
@@ -247,7 +244,7 @@ const isTaskDetails = (value: unknown): value is TaskDetails => {
   const task = value as Partial<TaskDetails>;
   return typeof task.title === 'string' && Boolean(task.title.trim())
     && typeof task.deadline === 'string' && /^\d{4}-\d{2}-\d{2}$/u.test(task.deadline)
-    && typeof task.assigneeRoleId === 'string' && Boolean(task.assigneeRoleId.trim())
+    && typeof task.assigneeContactId === 'string' && Boolean(task.assigneeContactId.trim())
     && typeof task.description === 'string' && Boolean(task.description.trim());
 };
 
@@ -1303,7 +1300,7 @@ app.get('/api/organizations/:accountId/rules', async (context) => {
       revision: row.currentRevision,
       selectionPolicy: JSON.parse(row.selectionPolicy) as Record<string, unknown>,
       routingPolicy: JSON.parse(row.routingPolicy) as Record<string, unknown>,
-      taskRoleIds: JSON.parse(row.taskRoleIds) as string[],
+      noticeContactListId: row.noticeContactListId,
       permittedRecipientListIds: recipientLists.flatMap((reference) => reference.ruleId === row.id ? [reference.listId] : []),
       permittedLineListIds: lineLists.flatMap((reference) => reference.ruleId === row.id ? [reference.listId] : []),
       priority: row.priority,
@@ -1319,30 +1316,23 @@ app.post('/api/organizations/:accountId/rules', async (context) => {
   try {
     const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
     if (!access.database) throw new Error('Account database is not available.');
-    const input = await context.req.json<{ name?: string; state?: string; executionMode?: string; selectionPolicy?: Record<string, unknown>; routingPolicy?: Record<string, unknown>; taskRoleIds?: unknown; permittedRecipientListIds?: unknown; permittedLineListIds?: unknown; priority?: number }>();
+    const input = await context.req.json<{ name?: string; state?: string; executionMode?: string; selectionPolicy?: Record<string, unknown>; routingPolicy?: Record<string, unknown>; noticeContactListId?: unknown; permittedRecipientListIds?: unknown; permittedLineListIds?: unknown; priority?: number }>();
     const name = input.name?.trim();
     const state = (input.state ?? 'draft') as 'draft' | 'active' | 'suspended' | 'archived';
     if (!name) return failure(context, 'Rule name is required.');
     if (!['draft', 'active', 'suspended', 'archived'].includes(state)) return failure(context, 'Unsupported Rule State.');
     const executionMode = input.executionMode ?? 'unattended';
     if (!['read_only', 'approval', 'unattended'].includes(executionMode)) return failure(context, 'Unsupported Rule Execution Mode.');
-    if (input.taskRoleIds !== undefined && (!Array.isArray(input.taskRoleIds) || input.taskRoleIds.some((id) => typeof id !== 'string' || !id.trim()))) return failure(context, 'Task role IDs must be an array of stable identifiers.');
     if (input.permittedRecipientListIds !== undefined && (!Array.isArray(input.permittedRecipientListIds) || input.permittedRecipientListIds.some((id) => typeof id !== 'string' || !id.trim()))) return failure(context, 'Permitted Calendar Recipient List IDs must be an array of stable identifiers.');
     if (input.permittedLineListIds !== undefined && (!Array.isArray(input.permittedLineListIds) || input.permittedLineListIds.some((id) => typeof id !== 'string' || !id.trim()))) return failure(context, 'Permitted LINE Destination List IDs must be an array of stable identifiers.');
     const id = crypto.randomUUID();
     const timestamp = now();
     const selectionPolicy = JSON.stringify(input.selectionPolicy ?? {});
     const routingPolicy = JSON.stringify(input.routingPolicy ?? {});
-    const taskRoleIds = [...new Set((input.taskRoleIds ?? []) as string[])];
     const permittedRecipientListIds = [...new Set((input.permittedRecipientListIds ?? []) as string[])];
     const permittedLineListIds = [...new Set((input.permittedLineListIds ?? []) as string[])];
     const priority = Number.isInteger(input.priority) ? input.priority : 0;
     const database = drizzleAccountDatabase(access.database);
-    if (taskRoleIds.length) {
-      const existingRoles = await database.select({ id: operationalTaskRoles.id }).from(operationalTaskRoles)
-        .where(inArray(operationalTaskRoles.id, taskRoleIds)).all();
-      if (existingRoles.length !== taskRoleIds.length) return failure(context, 'Every Task role selected by a Rule must belong to the Account.', 409);
-    }
     const permittedListIds = [...permittedRecipientListIds, ...permittedLineListIds];
     if (permittedListIds.length) {
       const permittedLists = await database.select({ id: accountLists.id, kind: accountLists.kind })
@@ -1360,7 +1350,7 @@ app.post('/api/organizations/:accountId/rules', async (context) => {
         executionMode: executionMode as 'read_only' | 'approval' | 'unattended',
         selectionPolicy,
         routingPolicy,
-        taskRoleIds: JSON.stringify(taskRoleIds),
+        noticeContactListId: typeof input.noticeContactListId === 'string' && input.noticeContactListId.trim() ? input.noticeContactListId.trim() : null,
         priority,
         currentRevision: 1,
         createdAt: timestamp,
@@ -1373,13 +1363,12 @@ app.post('/api/organizations/:accountId/rules', async (context) => {
         executionMode: executionMode as 'read_only' | 'approval' | 'unattended',
         selectionPolicy,
         routingPolicy,
-        taskRoleIds: JSON.stringify(taskRoleIds),
         createdAt: timestamp,
       }),
       ...permittedRecipientListIds.map((listId) => database.insert(rulePermittedRecipientLists).values({ ruleId: id, listId })),
       ...permittedLineListIds.map((listId) => database.insert(rulePermittedLineLists).values({ ruleId: id, listId })),
     ]);
-    return json(context, { id, accountId: access.account.id, name, state, executionMode, revision: 1, selectionPolicy: input.selectionPolicy ?? {}, routingPolicy: input.routingPolicy ?? {}, taskRoleIds, permittedRecipientListIds, permittedLineListIds, priority, createdAt: timestamp, updatedAt: timestamp }, 201);
+    return json(context, { id, accountId: access.account.id, name, state, executionMode, revision: 1, selectionPolicy: input.selectionPolicy ?? {}, routingPolicy: input.routingPolicy ?? {}, noticeContactListId: typeof input.noticeContactListId === 'string' && input.noticeContactListId.trim() ? input.noticeContactListId.trim() : null, permittedRecipientListIds, permittedLineListIds, priority, createdAt: timestamp, updatedAt: timestamp }, 201);
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Rule could not be created.', 409);
   }
@@ -1389,12 +1378,13 @@ app.patch('/api/organizations/:accountId/rules/:ruleId', async (context) => {
   try {
     const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
     if (!access.database) throw new Error('Account database is not available.');
-    const input = await context.req.json<{ state?: string; executionMode?: string; permittedRecipientListIds?: unknown; permittedLineListIds?: unknown }>();
+    const input = await context.req.json<{ state?: string; executionMode?: string; noticeContactListId?: unknown; permittedRecipientListIds?: unknown; permittedLineListIds?: unknown }>();
     if (input.state !== undefined && !['draft', 'active', 'suspended', 'archived'].includes(input.state)) return failure(context, 'Unsupported Rule State.');
     if (input.executionMode !== undefined && !['read_only', 'approval', 'unattended'].includes(input.executionMode)) return failure(context, 'Unsupported Rule Execution Mode.');
     if (input.permittedRecipientListIds !== undefined && (!Array.isArray(input.permittedRecipientListIds) || input.permittedRecipientListIds.some((id) => typeof id !== 'string' || !id.trim()))) return failure(context, 'Permitted Calendar Recipient List IDs must be an array of stable identifiers.');
     if (input.permittedLineListIds !== undefined && (!Array.isArray(input.permittedLineListIds) || input.permittedLineListIds.some((id) => typeof id !== 'string' || !id.trim()))) return failure(context, 'Permitted LINE Destination List IDs must be an array of stable identifiers.');
-    if (input.state === undefined && input.executionMode === undefined && input.permittedRecipientListIds === undefined && input.permittedLineListIds === undefined) return failure(context, 'No supported Rule changes were provided.');
+    if (input.noticeContactListId !== undefined && input.noticeContactListId !== null && typeof input.noticeContactListId !== 'string') return failure(context, 'The notice Contact List must be a stable identifier or null.');
+    if (input.state === undefined && input.executionMode === undefined && input.noticeContactListId === undefined && input.permittedRecipientListIds === undefined && input.permittedLineListIds === undefined) return failure(context, 'No supported Rule changes were provided.');
     const database = drizzleAccountDatabase(access.database);
     const ruleId = context.req.param('ruleId');
     const existing = await database.select().from(accountRules)
@@ -1432,7 +1422,6 @@ app.patch('/api/organizations/:accountId/rules/:ruleId', async (context) => {
           executionMode: input.executionMode as 'read_only' | 'approval' | 'unattended',
           selectionPolicy: existing.selectionPolicy,
           routingPolicy: existing.routingPolicy,
-          taskRoleIds: existing.taskRoleIds,
           createdAt: timestamp,
         })]),
       ]);
@@ -1449,8 +1438,18 @@ app.patch('/api/organizations/:accountId/rules/:ruleId', async (context) => {
         ...permittedLineListIds.map((listId) => database.insert(rulePermittedLineLists).values({ ruleId, listId })),
       ]);
     }
+    if (input.noticeContactListId !== undefined) {
+      const noticeContactListId = (input.noticeContactListId as string | null) || null;
+      if (noticeContactListId && !await database.select({ id: contactLists.id }).from(contactLists)
+        .where(eq(contactLists.id, noticeContactListId)).get()) {
+        return failure(context, 'The notice Contact List must belong to this Account.', 409);
+      }
+      await database.update(accountRules).set({ noticeContactListId, updatedAt: now() })
+        .where(eq(accountRules.id, ruleId)).run();
+    }
     return json(context, {
       id: ruleId,
+      ...(input.noticeContactListId === undefined ? {} : { noticeContactListId: (input.noticeContactListId as string | null) || null }),
       ...(input.state === undefined ? {} : { state: input.state }),
       ...(input.executionMode === undefined ? {} : { executionMode: input.executionMode, revision }),
       ...(permittedRecipientListIds === undefined ? {} : { permittedRecipientListIds }),
@@ -1470,6 +1469,7 @@ app.get('/api/organizations/:accountId/members', async (context) => {
       name: contacts.name,
       email: contacts.email,
       state: contacts.state,
+      description: contacts.description,
       tags: contacts.tags,
       createdAt: contacts.createdAt,
       updatedAt: contacts.updatedAt,
@@ -1489,6 +1489,7 @@ app.get('/api/organizations/:accountId/members', async (context) => {
       name: string;
       email: string;
       state: 'active' | 'inactive';
+      description: string;
       tags: string[];
       createdAt: string;
       updatedAt: string;
@@ -1508,6 +1509,7 @@ app.get('/api/organizations/:accountId/members', async (context) => {
         name: row.name,
         email: row.email,
         state: row.state,
+        description: row.description,
         tags: JSON.parse(row.tags) as string[],
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
@@ -1663,7 +1665,7 @@ app.post('/api/organizations/:accountId/members', async (context) => {
   try {
     const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
     if (!access.database) throw new Error('Account database is not available.');
-    const input = await context.req.json<{ name?: string; email?: string; tags?: unknown; lineDestinationId?: string }>();
+    const input = await context.req.json<{ name?: string; email?: string; description?: string; tags?: unknown; lineDestinationId?: string }>();
     const name = input.name?.trim();
     const email = input.email?.trim().toLowerCase() ?? '';
     if (!name) return failure(context, 'Contact name is required.');
@@ -1701,6 +1703,7 @@ app.post('/api/organizations/:accountId/members', async (context) => {
       name,
       email,
       state: 'active',
+      description: input.description?.trim() ?? '',
       tags: JSON.stringify(normalizedTags),
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -1723,6 +1726,7 @@ app.post('/api/organizations/:accountId/members', async (context) => {
       name,
       email,
       state: 'active',
+      description: input.description?.trim() ?? '',
       tags: normalizedTags,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -1740,7 +1744,7 @@ app.patch('/api/organizations/:accountId/members/:contactId', async (context) =>
   try {
     const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
     if (!access.database) throw new Error('Account database is not available.');
-    const input = await context.req.json<{ name?: string; email?: string; tags?: unknown; state?: string }>();
+    const input = await context.req.json<{ name?: string; email?: string; description?: string; tags?: unknown; state?: string }>();
     const updates: Partial<typeof contacts.$inferInsert> = {};
     if (input.name !== undefined) {
       const name = input.name.trim();
@@ -1752,6 +1756,7 @@ app.patch('/api/organizations/:accountId/members/:contactId', async (context) =>
       if (email && !email.includes('@')) return failure(context, 'Contact email address must be valid when provided.');
       updates.email = email;
     }
+    if (input.description !== undefined) updates.description = input.description.trim();
     let tags: string[] | undefined;
     if (input.tags !== undefined) {
       if (!Array.isArray(input.tags) || input.tags.some((tag) => typeof tag !== 'string' || !tag.trim())) return failure(context, 'Contact tags must be non-empty strings.');
@@ -1772,6 +1777,7 @@ app.patch('/api/organizations/:accountId/members/:contactId', async (context) =>
       id: context.req.param('contactId'),
       ...(input.name === undefined ? {} : { name: input.name.trim() }),
       ...(input.email === undefined ? {} : { email: input.email.trim().toLowerCase() }),
+      ...(input.description === undefined ? {} : { description: input.description.trim() }),
       ...(tags === undefined ? {} : { tags }),
       ...(input.state === undefined ? {} : { state: input.state }),
     });
@@ -2059,95 +2065,6 @@ app.get('/api/organizations/:accountId/guest-registrations', async (context) => 
   }
 });
 
-app.post('/api/organizations/:accountId/task-roles', async (context) => {
-  try {
-    const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
-    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
-    const input = await context.req.json<{ displayName?: string; description?: string }>();
-    const displayName = input.displayName?.trim() ?? '';
-    const description = input.description?.trim() ?? '';
-    if (!displayName || displayName.length > 100) return failure(context, 'A role display name of at most 100 characters is required.');
-    if (!description || description.length > 500) return failure(context, 'A role description of at most 500 characters is required.');
-    const role = await createTaskWorkflow(drizzleAccountDatabase(access.database)).createRole({ displayName, description });
-    return json(context, role, 201);
-  } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Operational Task Role could not be created.', 409);
-  }
-});
-
-app.patch('/api/organizations/:accountId/task-roles/:roleId', async (context) => {
-  try {
-    const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
-    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
-    const input = await context.req.json<{ displayName?: string; description?: string }>();
-    const displayName = input.displayName?.trim();
-    const description = input.description?.trim();
-    if (displayName !== undefined && (!displayName || displayName.length > 100)) return failure(context, 'A role display name of at most 100 characters is required.');
-    if (description !== undefined && (!description || description.length > 500)) return failure(context, 'A role description of at most 500 characters is required.');
-    const role = await createTaskWorkflow(drizzleAccountDatabase(access.database)).updateRole(context.req.param('roleId'), {
-      ...(displayName === undefined ? {} : { displayName }),
-      ...(description === undefined ? {} : { description }),
-    });
-    if (!role) return failure(context, 'Operational Task Role was not found or no change was supplied.', 404);
-    return json(context, role);
-  } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Operational Task Role could not be updated.', 409);
-  }
-});
-
-app.delete('/api/organizations/:accountId/task-roles/:roleId', async (context) => {
-  try {
-    const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
-    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
-    if (!await createTaskWorkflow(drizzleAccountDatabase(access.database)).deleteRole(context.req.param('roleId'))) return failure(context, 'Operational Task Role was not found.', 404);
-    return json(context, { id: context.req.param('roleId'), removed: true });
-  } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Operational Task Role could not be removed.', 409);
-  }
-});
-
-app.put('/api/organizations/:accountId/task-roles/:roleId/assignment', async (context) => {
-  try {
-    const accountId = context.req.param('accountId');
-    const access = await accountForRequest(context.req.raw, context.env, accountId);
-    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
-    const roleId = context.req.param('roleId');
-    const database = drizzleAccountDatabase(access.database);
-    if (!await database.select({ id: operationalTaskRoles.id }).from(operationalTaskRoles).where(eq(operationalTaskRoles.id, roleId)).get()) return failure(context, 'Operational Task Role was not found.', 404);
-    const input = await context.req.json<{ contactId?: string }>();
-    if (!input.contactId) return failure(context, 'An active Contact is required.');
-    const contact = await database.select({ contactId: contacts.id, displayName: contacts.name })
-      .from(contacts).where(and(eq(contacts.id, input.contactId), eq(contacts.state, 'active'))).get();
-    if (!contact) return failure(context, 'Operational Task Roles can only be assigned to an active Contact.', 409);
-    await createTaskWorkflow(database).assignRole({
-      roleId,
-      contactId: contact.contactId,
-      displayName: contact.displayName,
-    });
-    return json(context, { roleId, ...contact });
-  } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Operational task role could not be saved.', 409);
-  }
-});
-
-app.get('/api/organizations/:accountId/task-roles', async (context) => {
-  try {
-    const accountId = context.req.param('accountId');
-    const access = await accountForRequest(context.req.raw, context.env, accountId);
-    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
-    const database = drizzleAccountDatabase(access.database);
-    const [assignable, roles, assignments] = await Promise.all([
-      database.select({ contactId: contacts.id, displayName: contacts.name }).from(contacts)
-        .where(eq(contacts.state, 'active')).orderBy(asc(contacts.name)).all(),
-      createTaskWorkflow(database).listRoles(),
-      database.select().from(taskRoleAssignments).all(),
-    ]);
-    return json(context, { contacts: assignable, roles, assignments });
-  } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Operational task roles could not be loaded.', 403);
-  }
-});
-
 app.get('/api/organizations/:accountId/tasks', async (context) => {
   try {
     const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
@@ -2160,66 +2077,6 @@ app.get('/api/organizations/:accountId/tasks', async (context) => {
     }));
   } catch (error) {
     return failure(context, error instanceof Error ? error.message : 'Tasks could not be loaded.', 403);
-  }
-});
-
-app.get('/api/organizations/:accountId/task-reassignments', async (context) => {
-  try {
-    const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
-    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
-    return json(context, await createTaskWorkflow(drizzleAccountDatabase(access.database)).reassignmentReview());
-  } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Task reassignment review could not be loaded.', 403);
-  }
-});
-
-/** Asks the Account's AI for a role per open Task. Nothing is written until an AccountIdentity accepts. */
-app.post('/api/organizations/:accountId/task-reassignments/suggestions', async (context) => {
-  try {
-    const accountId = context.req.param('accountId');
-    const access = await accountForRequest(context.req.raw, context.env, accountId);
-    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
-    const database = drizzleAccountDatabase(access.database);
-    const workflow = createTaskWorkflow(database);
-    const [openTasks, roles] = await Promise.all([workflow.list({ completed: false }), workflow.listRoles()]);
-    if (!openTasks.length) return json(context, { proposals: [], review: await workflow.reassignmentReview() });
-    const existing = await database.select().from(accountConnections)
-      .where(and(eq(accountConnections.kind, 'ai'), eq(accountConnections.status, 'active'))).limit(1).get();
-    if (!existing) return failure(context, 'OpenAI 互換 API を設定してください。', 409);
-    const credential = await connectionCredential(existing, await accountKeyForRequest(context.env, accountId), accountId, 'ai');
-    const model = credential.model?.trim();
-    const baseUrl = normalizedAiBaseUrl(credential.baseUrl || LEGACY_AI_BASE_URL);
-    if (!credential.apiKey || !model || !baseUrl) return failure(context, 'OpenAI 互換 API を設定してください。', 409);
-    const proposals = await proposeTaskReassignments({
-      apiKey: credential.apiKey,
-      baseUrl,
-      model,
-      tasks: openTasks.slice(0, TASK_REASSIGNMENT_LIMIT),
-      roles,
-    });
-    return json(context, { proposals, review: await workflow.reassignmentReview() });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'AIの割り当て案を取得できませんでした。';
-    return failure(context, message, message === 'Authentication is required.' ? 401 : 500);
-  }
-});
-
-/** Applies the proposals an AccountIdentity accepted and closes the review, even when none were accepted. */
-app.post('/api/organizations/:accountId/task-reassignments', async (context) => {
-  try {
-    const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
-    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
-    const input = await context.req.json<{ assignments?: unknown }>();
-    if (!Array.isArray(input.assignments)) return failure(context, 'Assignments must be an array of Task and role identifiers.');
-    const assignments = input.assignments as Array<{ taskId?: unknown; roleId?: unknown }>;
-    if (assignments.length > TASK_REASSIGNMENT_LIMIT) return failure(context, `A review applies at most ${TASK_REASSIGNMENT_LIMIT} Tasks.`);
-    if (assignments.some((assignment) => typeof assignment?.taskId !== 'string' || !assignment.taskId.trim()
-      || typeof assignment.roleId !== 'string' || !assignment.roleId.trim())) return failure(context, 'Every assignment needs a Task and a role identifier.');
-    const workflow = createTaskWorkflow(drizzleAccountDatabase(access.database));
-    const applied = await workflow.reassign(assignments as Array<{ taskId: string; roleId: string }>);
-    return json(context, { ...applied, review: await workflow.markReassignmentReviewed() });
-  } catch (error) {
-    return failure(context, error instanceof Error ? error.message : 'Tasks could not be reassigned.', 409);
   }
 });
 
@@ -2239,13 +2096,28 @@ app.patch('/api/organizations/:accountId/tasks/:taskId', async (context) => {
   try {
     const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
     if (!access.database) return failure(context, '組織DBに接続できません。', 503);
-    const input = await context.req.json<{ completed?: unknown; remarks?: unknown }>();
+    const input = await context.req.json<{ completed?: unknown; remarks?: unknown; assigneeContactId?: unknown }>();
     if (input.completed !== undefined && typeof input.completed !== 'boolean') return failure(context, 'Completed must be a boolean.');
     if (input.remarks !== undefined && (typeof input.remarks !== 'string' || input.remarks.length > 10_000)) return failure(context, 'Remarks must be at most 10,000 characters.');
-    const task = await createTaskWorkflow(drizzleAccountDatabase(access.database)).update(context.req.param('taskId'), {
-      ...(typeof input.completed === 'boolean' ? { completed: input.completed } : {}),
-      ...(typeof input.remarks === 'string' ? { remarks: input.remarks } : {}),
-    });
+    if (input.assigneeContactId !== undefined && input.assigneeContactId !== null && typeof input.assigneeContactId !== 'string') {
+      return failure(context, 'The assignee must be a Contact identifier or null.');
+    }
+    const workflow = createTaskWorkflow(drizzleAccountDatabase(access.database));
+    const taskId = context.req.param('taskId');
+    // Naming the assignee is a separate write, so a Task may be handed on and
+    // completed in one request without either half deciding the other's outcome.
+    let assigned: Awaited<ReturnType<typeof workflow.assign>> = null;
+    if (input.assigneeContactId !== undefined) {
+      assigned = await workflow.assign(taskId, (input.assigneeContactId as string | null) || null);
+      if (!assigned) return failure(context, 'Task or Contact was not found.', 404);
+    }
+    const changed = input.completed !== undefined || input.remarks !== undefined;
+    const task = changed
+      ? await workflow.update(taskId, {
+        ...(typeof input.completed === 'boolean' ? { completed: input.completed } : {}),
+        ...(typeof input.remarks === 'string' ? { remarks: input.remarks } : {}),
+      })
+      : assigned;
     if (!task) return failure(context, 'Task was not found or no change was supplied.', 404);
     return json(context, task);
   } catch (error) {

@@ -260,6 +260,7 @@ svg { flex: none; }
 .member-state { flex: none; padding: 3px 7px; border-radius: 9px; font-size: 9px; font-weight: 700; }
 .member-state.active { color: #2a6846; background: #e6f2e9; }
 .member-state.inactive { color: #747a73; background: #eceeeb; }
+.member-description { margin: 0; color: #50695a; font-size: 11px; line-height: 1.5; }
 .member-tags { display: flex; flex-wrap: wrap; gap: 5px; }
 .member-tags span { padding: 3px 7px; color: #50695a; background: #f0f4f0; border-radius: 8px; font-size: 9px; }
 .member-tags small { color: #8a918a; font-size: 9px; }
@@ -577,3 +578,7 @@ nav a.loading { opacity: .65; }
 .channel-test-messages { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .channel-test-ok { display: flex; align-items: center; gap: 0.4rem; color: var(--success, #15803d); overflow-wrap: anywhere; }
 .channel-test-schema, .channel-test-result { max-height: 16rem; overflow: auto; padding: 0.6rem 0.8rem; background: var(--surface-muted, #f3f4f6); border-radius: 0.6rem; font-size: 12px; white-space: pre-wrap; }
+
+.rule-notice-contacts { display: flex; flex-direction: column; gap: 6px; }
+.rule-notice-contacts label { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.rule-notice-contacts label small { color: #8a918a; font-size: 9px; letter-spacing: 0.04em; }

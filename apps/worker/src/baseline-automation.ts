@@ -61,7 +61,6 @@ export const ensureBaselineSchemaRule = async (
   const ruleId = crypto.randomUUID();
   const selectionPolicy = '{}';
   const routingPolicy = '{}';
-  const taskRoleIds = '[]';
   await database.batch([
     database.insert(rules).values({
       id: ruleId,
@@ -70,7 +69,6 @@ export const ensureBaselineSchemaRule = async (
       status: 'active',
       selectionPolicy,
       routingPolicy,
-      taskRoleIds,
       priority: -1,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -81,7 +79,6 @@ export const ensureBaselineSchemaRule = async (
       revision: 1,
       selectionPolicy,
       routingPolicy,
-      taskRoleIds,
       createdAt: timestamp,
     }),
     database.insert(settings).values({

@@ -8,18 +8,35 @@ import { runDueAccountAutomations } from '../automation-schedule';
 import { MCP_REMINDER_JOB_KIND, reminderJobHandler } from '../reminder-job';
 import type { Bindings } from '../types';
 
+/** The frequent tick: work that is late the moment its stated time passes. */
+export const DUE_WORK_CRON = '*/30 * * * *';
+
+/**
+ * The wider tick: reading each Automation Inbox for new Source Messages. Mail
+ * that arrived an hour ago is not late in the way a reminder due at 09:00 is, and
+ * every poll costs a Gmail history request per Account whether or not anything
+ * arrived, so it wakes on its own slower cadence.
+ */
+export const MAIL_POLL_CRON = '0 */3 * * *';
+
 /**
  * Deployment-facing background capability. Individual Job, attendance, Task
  * reminder, and Automation implementations stay behind this one
  * scheduled-use-case seam.
+ *
+ * Which cron woke the Worker decides what runs. A wake-up that names neither
+ * cadence — a local trigger, or a test — stands for both, so nothing is silently
+ * skipped by a caller that does not know the schedule.
  */
-export const runBackgroundWork = async (env: Bindings): Promise<void> => {
+export const runBackgroundWork = async (env: Bindings, cron?: string): Promise<void> => {
   await createDatabaseAccess(env).open({ kind: 'control' });
   const dueAt = new Date().toISOString();
-  await retryProvisioning(env);
-  await enqueueDueAccountAttendanceReminders(env, dueAt);
-  await enqueueDueAccountTaskReminders(env, dueAt);
-  await dispatchDueAccountJobs(env, dueAt, { [MCP_REMINDER_JOB_KIND]: reminderJobHandler(env) });
-  await runDueAccountAutomations(env, new Date(dueAt));
-  await createAutomation(env).runEnabledAccounts();
+  if (cron !== MAIL_POLL_CRON) {
+    await retryProvisioning(env);
+    await enqueueDueAccountAttendanceReminders(env, dueAt);
+    await enqueueDueAccountTaskReminders(env, dueAt);
+    await dispatchDueAccountJobs(env, dueAt, { [MCP_REMINDER_JOB_KIND]: reminderJobHandler(env) });
+    await runDueAccountAutomations(env, new Date(dueAt));
+  }
+  if (cron !== DUE_WORK_CRON) await createAutomation(env).runEnabledAccounts();
 };

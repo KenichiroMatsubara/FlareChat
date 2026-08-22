@@ -13,10 +13,6 @@ describe('Preset catalog', () => {
           expect.objectContaining({ kind: 'recipient', items: [] }),
           expect.objectContaining({ kind: 'line', items: [] }),
         ]),
-        operationalTaskRoles: expect.arrayContaining([
-          expect.objectContaining({ key: 'schedule' }),
-          expect.objectContaining({ key: 'treasury' }),
-        ]),
         schemaRules: [expect.objectContaining({ messageSummary: expect.any(Object) })],
         agentRules: [expect.objectContaining({ promptKey: expect.any(String) })],
       }),
@@ -48,9 +44,8 @@ describe('Preset application', () => {
         '/api/organizations/organization-1/presets/membership-organization/apply',
         {},
       ), fixture.environment);
-      const [lists, roles, rules, prompts, agentRules] = await Promise.all([
+      const [lists, rules, prompts, agentRules] = await Promise.all([
         app.fetch(fixture.request('/api/organizations/organization-1/lists'), fixture.environment),
-        app.fetch(fixture.request('/api/organizations/organization-1/task-roles'), fixture.environment),
         app.fetch(fixture.request('/api/organizations/organization-1/rules'), fixture.environment),
         app.fetch(fixture.request('/api/organizations/organization-1/prompts'), fixture.environment),
         app.fetch(fixture.request('/api/organizations/organization-1/agent-rules'), fixture.environment),
@@ -58,21 +53,16 @@ describe('Preset application', () => {
 
       expect(applied.status).toBe(201);
       await expect(applied.json()).resolves.toEqual({
-        data: { presetId: 'membership-organization', typedLists: 3, operationalTaskRoles: 2, prompts: 1, schemaRules: 1, agentRules: 1 },
+        data: { presetId: 'membership-organization', typedLists: 3, prompts: 1, schemaRules: 1, agentRules: 1 },
       });
       await expect(lists.json()).resolves.toMatchObject({ data: [
         { name: 'Calendar members' },
         { name: 'LINE members' },
         { name: 'Trusted announcement sources' },
       ] });
-      await expect(roles.json()).resolves.toMatchObject({ data: { roles: [
-        { displayName: 'Schedule' },
-        { displayName: 'Treasury' },
-      ] } });
       await expect(rules.json()).resolves.toMatchObject({ data: [{
         name: 'Membership announcements',
         state: 'draft',
-        taskRoleIds: [expect.any(String), expect.any(String)],
         permittedRecipientListIds: [expect.any(String)],
         permittedLineListIds: [expect.any(String)],
       }] });

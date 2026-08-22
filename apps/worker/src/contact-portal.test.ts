@@ -46,13 +46,9 @@ const seedTask = (test: TestApp, input: { id: string; title: string; contactId: 
      VALUES ('source-1', 'gmail-1', 'history-1', 'sender@example.com', '年次行事', '2026-08-01', 'processed')`,
   );
   test.account.execute(
-    `INSERT OR IGNORE INTO operational_task_roles (id, display_name, description, created_at, updated_at)
-     VALUES ('role-1', '会計', '支払期限を扱う', '2026-08-01', '2026-08-01')`,
-  );
-  test.account.execute(
     `INSERT INTO tasks (id, organization_id, source_message_id, source_message_subject, title, deadline,
-       assignee_role_id, assignee_role_name, assignee_member_id, assignee_name, description, completed, created_at, updated_at)
-     VALUES (?, 'organization-1', 'source-1', '年次行事', ?, '2026-08-20', 'role-1', '会計', ?, ?, '振込する', 0, ?, ?)`,
+       assignee_member_id, assignee_name, description, completed, created_at, updated_at)
+     VALUES (?, 'organization-1', 'source-1', '年次行事', ?, '2026-08-20', ?, ?, '振込する', 0, ?, ?)`,
     input.id,
     input.title,
     input.contactId,

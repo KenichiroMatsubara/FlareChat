@@ -49,11 +49,12 @@ export const chatInternalHandlers = (database: D1Database): ChatInternalHandlers
       location: events.location, status: events.status,
     }).from(events).orderBy(asc(events.startsAt)).limit(100).all(),
     query_contacts: async () => db.select({
-      id: contacts.id, name: contacts.name, email: contacts.email, state: contacts.state, tags: contacts.tags,
+      id: contacts.id, name: contacts.name, email: contacts.email, state: contacts.state,
+      description: contacts.description, tags: contacts.tags,
     }).from(contacts).orderBy(asc(contacts.name)).limit(500).all(),
     query_tasks: async () => db.select({
       id: tasks.id, title: tasks.title, deadline: tasks.deadline, completed: tasks.completed,
-      assigneeRoleName: tasks.assigneeRoleName, description: tasks.description,
+      assignee: tasks.assigneeName, description: tasks.description,
     }).from(tasks).orderBy(asc(tasks.deadline)).limit(100).all(),
     query_attendance: async () => db.select({
       eventId: attendance.eventId, contact: contacts.name, status: attendance.status, comment: attendance.comment,

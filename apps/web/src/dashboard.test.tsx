@@ -31,9 +31,7 @@ const dashboardProps = (): DashboardProps => ({
   mailTestRefreshRequest: null, mailTestRefreshPlan: null, mailTestRefreshOutcome: null,
   onPrepareRefresh: vi.fn(), onPlanRefresh: vi.fn(), onApplyRefresh: vi.fn(), onMailTestSubjectChange: vi.fn(), onSearchMailbox: vi.fn(),
   onPrepareMailbox: vi.fn(), onPreviewMailbox: vi.fn(), onPreviewDraftMailbox: vi.fn(), onCreateMailboxTestEvents: vi.fn(), onStartDraftRuleRun: vi.fn(), accountRules: [],
-  accountLists: [], onCreateRule: vi.fn(), onUpdateRule: vi.fn(), accountTasks: [], onUpdateTask: vi.fn(), taskRoles: [], taskRoleAssignments: [], taskContacts: [], onCreateTaskRole: vi.fn(), onUpdateTaskRole: vi.fn(), onDeleteTaskRole: vi.fn(), onAssignTaskRole: vi.fn(),
-  taskReassignment: { rolesChangedAt: null, reviewedAt: null, pending: false, openTasks: 0 }, taskReassignmentProposals: [], taskReassignmentSkipped: [],
-  onSuggestTaskReassignments: vi.fn(), onApplyTaskReassignments: vi.fn(), onDiscardTaskReassignments: vi.fn(),
+  accountLists: [], onCreateRule: vi.fn(), onUpdateRule: vi.fn(), accountTasks: [], onUpdateTask: vi.fn(), taskContacts: [], noticeTargets: [], contactLists: [], onSaveNoticeContacts: vi.fn(),
   prompts: [], agentRules: [], agentRuns: [], agentTranscript: null, ruleRuns: [], onDecideRuleRun: vi.fn(), onCreatePrompt: vi.fn(), onUpdatePrompt: vi.fn(), onDeletePrompt: vi.fn(), onCreateAgentRule: vi.fn(), onUpdateAgentRule: vi.fn(), onLoadAgentTranscript: vi.fn(),
   accountContacts: [], lineDestinations: [], onCreateContact: vi.fn(), onUpdateContact: vi.fn(),
   onSetLineDestination: vi.fn(), onUnlinkLineDestination: vi.fn(), onRegisterLineDestination: vi.fn(), onRemoveLineDestination: vi.fn(), onRefreshContacts: vi.fn(),
@@ -61,7 +59,7 @@ describe('responsive dashboard shell', () => {
   it('keeps every navigation target inside the collapsible panel', () => {
     const panel = /<div id="app-navigation" class="topbar-panel">(.*?)<\/header>/su.exec(markup())?.[1] ?? '';
     expect(panel).toContain('class="organization-picker"');
-    for (const label of ['自動化', '接続設定', 'ルール', 'メンバー', 'タスク', 'メールテスト', 'Rule Runs', '予定の再同期', 'ログアウト']) expect(panel).toContain(label);
+    for (const label of ['自動化', '接続設定', 'ルール', '連絡先', 'タスク', 'メールテスト', 'Rule Runs', '予定の再同期', 'ログアウト']) expect(panel).toContain(label);
   });
 
   it('stacks the AI request heading and its copy action on narrow screens', async () => {
@@ -114,59 +112,54 @@ describe('Automation Inbox processing guidance', () => {
   });
 });
 
-describe('Operational Task Roles', () => {
-  it('offers Account role CRUD, assignments, historical role names, and an unassigned filter', () => {
+describe('Task assignment', () => {
+  it('names the Contact each Task was given to and offers the roster to hand it on', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter initialEntries={['/organizations/org-1/tasks']}>
         <Dashboard
           {...dashboardProps()}
           page="tasks"
-          taskRoles={[{ id: 'role-registration', displayName: '参加登録担当', description: '出欠と申込期限を扱う' }]}
-          taskRoleAssignments={[{ roleId: 'role-registration', contactId: 'member-1', displayName: '山田' }]}
-          taskContacts={[{ contactId: 'member-1', displayName: '山田' }]}
+          taskContacts={[{ contactId: 'member-1', displayName: '山田' }, { contactId: 'member-2', displayName: '鈴木' }]}
           accountTasks={[{
             id: 'task-1', title: '登録状況を確認する', deadline: '2026-08-20',
-            assigneeRoleId: 'role-registration', assigneeRoleName: '旧・参加登録担当',
-            assigneeContactId: 'member-1', assigneeName: 'Owner', sourceMessageSubject: '年次行事',
+            assigneeContactId: 'member-1', assigneeName: '山田', sourceMessageSubject: '年次行事',
             description: '参加登録を取りまとめる', remarks: '', completed: false, completedAt: null,
           }]}
         />
       </MemoryRouter>,
     );
 
-    expect(html).toContain('Operational Task Roleを追加');
-    expect(html).toContain('参加登録担当');
-    expect(html).toContain('出欠と申込期限を扱う');
-    expect(html).toContain('名前と説明を編集');
-    expect(html).toContain('roleを削除');
-    expect(html).toContain('旧・参加登録担当');
+    expect(html).toContain('登録状況を確認する');
     expect(html).toContain('<option value="unassigned">未割り当て</option>');
+    expect(html).toContain('鈴木');
+    expect(html).not.toContain('Operational Task Role');
   });
 
-  it('lets an Automation Rule select the Account role subset it may assign', () => {
+  it('offers the Contacts a notice can reach as the summary destinations of a Rule', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter initialEntries={['/organizations/org-1/rules']}>
         <Dashboard
           {...dashboardProps()}
           page="rules"
-          taskRoles={[
-            { id: 'role-registration', displayName: '参加登録担当', description: '申込期限を扱う' },
-            { id: 'role-payment', displayName: '支払担当', description: '支払期限を扱う' },
+          noticeTargets={[
+            { id: 'contact-group', name: '要約送信グループ', channels: ['line'] },
+            { id: 'contact-yamada', name: '山田花子', channels: ['line'] },
           ]}
+          contactLists={[{ id: 'list-1', name: '要約の送り先', contactIds: ['contact-group'] }]}
           accountRules={[{
-            id: 'rule-1', accountId: 'org-1', name: '登録案内', state: 'active', executionMode: 'unattended', revision: 1,
-            selectionPolicy: {}, routingPolicy: {}, taskRoleIds: ['role-registration'], priority: 0,
+            id: 'rule-1', accountId: 'org-1', name: 'Announcements', state: 'active', executionMode: 'unattended', revision: 1,
+            selectionPolicy: {}, routingPolicy: {}, noticeContactListId: 'list-1',
             permittedRecipientListIds: [], permittedLineListIds: [],
-            createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z',
+            priority: 0, createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z',
           }]}
         />
       </MemoryRouter>,
     );
 
-    expect(html).toContain('割り当て可能なOperational Task Roles');
-    expect(html).toContain('参加登録担当');
-    expect(html).toContain('支払担当');
-    expect(html).toContain('選択Role: 参加登録担当');
+    expect(html).toContain('要約の送り先（連絡先）');
+    expect(html).toContain('要約送信グループ');
+    expect(html).toContain('山田花子');
+    expect(html).toContain('選択中: 要約送信グループ');
   });
 
   it('lets a member add and remove permitted destination lists in the Automation Rule editor', () => {
@@ -182,7 +175,7 @@ describe('Operational Task Roles', () => {
           ]}
           accountRules={[{
             id: 'rule-1', accountId: 'org-1', name: 'Announcements', state: 'active', executionMode: 'unattended', revision: 1,
-            selectionPolicy: {}, routingPolicy: {}, taskRoleIds: [],
+            selectionPolicy: {}, routingPolicy: {}, noticeContactListId: null,
             permittedRecipientListIds: ['recipients-members'],
             permittedLineListIds: ['line-members'],
             priority: 0, createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z',
@@ -294,6 +287,7 @@ describe('member roster', () => {
           accountContacts={[{
             id: 'recipient-1',
             accountId: 'org-1',
+            description: '',
             name: '山田 太郎',
             email: 'taro@example.com',
             state: 'active',
@@ -323,16 +317,16 @@ describe('member roster', () => {
       </MemoryRouter>,
     );
 
-    expect(html).toContain('メンバー管理');
+    expect(html).toContain('連絡先一覧');
     expect(html).toContain('鈴木 花子');
     expect(html).toContain('taro@example.com');
     expect(html).toContain('U1234…');
     expect(html).not.toContain('U1234567890');
     expect(html).toContain('メールアドレス（任意）');
     expect(html).toContain('後から設定できます');
-    expect(html).toContain('LINEからメンバーを追加');
+    expect(html).toContain('LINEから連絡先を追加');
     expect(html).toContain('LINE IDを手動で登録');
-    expect(html).toContain('本メンバーに登録');
+    expect(html).toContain('連絡先として登録');
     expect(html).toContain('保留中のLINE連絡先');
   });
 
@@ -397,6 +391,7 @@ describe('member roster', () => {
           accountContacts={[{
             id: 'recipient-1',
             accountId: 'org-1',
+            description: '',
             name: '手動 花子',
             email: 'manual@example.com',
             state: 'active',
@@ -658,75 +653,6 @@ describe('mailbox test prerequisites', () => {
   });
 });
 
-describe('AI Task reassignment', () => {
-  const tasksMarkup = (props: Partial<DashboardProps>): string => renderToStaticMarkup(
-    <MemoryRouter initialEntries={['/organizations/org-1/tasks']}>
-      <Dashboard
-        {...dashboardProps()}
-        page="tasks"
-        taskRoles={[
-          { id: 'role-registration', displayName: '参加登録担当', description: '出欠期限を扱う' },
-          { id: 'role-payment', displayName: '会計担当', description: '支払期限を扱う' },
-        ]}
-        {...props}
-      />
-    </MemoryRouter>,
-  );
-
-  it('keeps the reassignment action disabled until an Operational Task Role changes', () => {
-    const html = tasksMarkup({ taskReassignment: { rolesChangedAt: null, reviewedAt: null, pending: false, openTasks: 3 } });
-
-    expect(html).toContain('AIでタスクを再割り当て');
-    expect(html).toContain('roleを追加・変更・削除すると、未完了タスクの割り当て案をAIに出させられます。');
-    expect(/AIに割り当て案を出させる/u.test(html)).toBe(true);
-    expect(/<button type="button" class="primary" disabled="">AIに割り当て案を出させる<\/button>/u.test(html)).toBe(true);
-  });
-
-  it('enables the reassignment action once a changed role leaves open Tasks to review', () => {
-    const html = tasksMarkup({
-      taskReassignment: { rolesChangedAt: '2026-08-04T00:00:00.000Z', reviewedAt: null, pending: true, openTasks: 2 },
-    });
-
-    expect(html).toContain('未完了タスク2件の割り当て案をAIに出させられます。');
-    expect(/<button type="button" class="primary" disabled="">AIに割り当て案を出させる<\/button>/u.test(html)).toBe(false);
-  });
-
-  it('offers no reassignment when the changed roles leave nothing open to review', () => {
-    const html = tasksMarkup({
-      taskReassignment: { rolesChangedAt: '2026-08-04T00:00:00.000Z', reviewedAt: null, pending: true, openTasks: 0 },
-    });
-
-    expect(/<button type="button" class="primary" disabled="">AIに割り当て案を出させる<\/button>/u.test(html)).toBe(true);
-  });
-
-  it('shows each proposed role with its reason and preselects only the Tasks that would move', () => {
-    const html = tasksMarkup({
-      taskReassignment: { rolesChangedAt: '2026-08-04T00:00:00.000Z', reviewedAt: null, pending: true, openTasks: 2 },
-      taskReassignmentProposals: [
-        {
-          taskId: 'task-1', title: '参加費を支払う', deadline: '2026-08-25', sourceMessageSubject: '総会案内',
-          currentRoleId: 'role-registration', currentRoleName: '参加登録担当',
-          proposedRoleId: 'role-payment', proposedRoleName: '会計担当',
-          reason: '送金の期限だから', changed: true,
-        },
-        {
-          taskId: 'task-2', title: '出欠を回答する', deadline: '2026-08-20', sourceMessageSubject: '総会案内',
-          currentRoleId: 'role-registration', currentRoleName: '参加登録担当',
-          proposedRoleId: 'role-registration', proposedRoleName: '参加登録担当',
-          reason: '出欠の期限だから', changed: false,
-        },
-      ],
-    });
-
-    expect(html).toContain('2件のうち1件のroleを変更する案です。');
-    expect(html).toContain('送金の期限だから');
-    expect(html).toContain('（変更なし）');
-    expect(html).toContain('aria-label="参加費を支払うを会計担当に割り当てる"');
-    expect(html).toContain('選んだ1件を適用');
-    expect(html).toContain('この案を破棄');
-  });
-});
-
 describe('operation progress', () => {
   const pendingOnly = (...keys: string[]): DashboardProps['isPending'] => (key: string) => keys.includes(key);
   const dashboard = (props: Partial<DashboardProps>, page: NonNullable<DashboardProps['page']>, path = 'automation'): string =>
@@ -853,7 +779,7 @@ describe('operation progress', () => {
 
   it('reports the Task whose row is being written, not the whole table', () => {
     const task = (id: string, title: string) => ({
-      id, title, deadline: '2026-08-20', assigneeRoleId: 'role-1', assigneeRoleName: '会計担当',
+      id, title, deadline: '2026-08-20',
       assigneeContactId: 'member-1', assigneeName: '山田', sourceMessageSubject: '総会案内',
       description: '', remarks: '', completed: false, completedAt: null,
     });
@@ -864,26 +790,6 @@ describe('operation progress', () => {
 
     expect(html.match(/保存中…/gu)?.length).toBe(1);
     expect(html).toContain('aria-busy="true"');
-  });
-
-  it('reports an AI reassignment that is still being judged, and the Tasks it could not move', () => {
-    const judging = dashboard({
-      taskReassignment: { rolesChangedAt: '2026-08-04T00:00:00.000Z', reviewedAt: null, pending: true, openTasks: 4 },
-      isPending: pendingOnly(pendingKey.reassignmentSuggest),
-    }, 'tasks', 'tasks');
-    const skipped = dashboard({
-      taskReassignmentSkipped: ['task-1'],
-      accountTasks: [{
-        id: 'task-1', title: '参加費を支払う', deadline: '2026-08-20', assigneeRoleId: 'role-1', assigneeRoleName: '会計担当',
-        assigneeContactId: null, assigneeName: '未割り当て', sourceMessageSubject: '総会案内',
-        description: '', remarks: '', completed: false, completedAt: null,
-      }],
-    }, 'tasks', 'tasks');
-
-    expect(judging).toContain('未完了タスク4件をAIが判定中…');
-    expect(judging).toContain('AIの応答を待っています');
-    expect(skipped).toContain('1件は適用できませんでした');
-    expect(skipped).toContain('参加費を支払う');
   });
 
   it('names the running operation in the middle of the page, whatever is scrolled into view', () => {
@@ -897,7 +803,7 @@ describe('operation progress', () => {
 
   it('counts the other operations running behind the one it names', () => {
     const html = dashboard({
-      runningOperations: [pendingKey.taskUpdate('task-1'), pendingKey.taskRoleAssign('role-1')],
+      runningOperations: [pendingKey.taskUpdate('task-1'), pendingKey.contactUpdate('member-1')],
     }, 'tasks', 'tasks');
 
     expect(html).toContain('タスクを保存しています');
@@ -915,7 +821,7 @@ describe('operation progress', () => {
 
   it('reports the member whose card is being saved and the roster refresh separately', () => {
     const contact = (id: string, name: string) => ({
-      id, accountId: 'org-1', name, email: '', state: 'active' as const, tags: [],
+      id, accountId: 'org-1', name, email: '', state: 'active' as const, description: '', tags: [],
       createdAt: '', updatedAt: '', lineDestinations: [],
     });
     const html = dashboard({

@@ -88,7 +88,6 @@ export interface ContactPortalTask {
   taskId: string;
   title: string;
   deadline: string;
-  assigneeRoleName: string;
   assigneeName: string;
   sourceMessageSubject: string;
   description: string;
@@ -158,7 +157,8 @@ export interface AccountRule {
   revision: number;
   selectionPolicy: Record<string, unknown>;
   routingPolicy: Record<string, unknown>;
-  taskRoleIds: string[];
+  /** The Contact List this Rule's Source Message Notice reaches, or null. */
+  noticeContactListId: string | null;
   permittedRecipientListIds: string[];
   permittedLineListIds: string[];
   priority: number;
@@ -172,7 +172,7 @@ export interface AccountRuleInput {
   executionMode?: 'read_only' | 'approval' | 'unattended';
   selectionPolicy?: Record<string, unknown>;
   routingPolicy?: Record<string, unknown>;
-  taskRoleIds?: string[];
+  noticeContactListId?: string | null;
   permittedRecipientListIds?: string[];
   permittedLineListIds?: string[];
   priority?: number;
@@ -271,7 +271,6 @@ export interface PresetSummary {
 export interface PresetApplicationSummary {
   presetId: string;
   typedLists: number;
-  operationalTaskRoles: number;
   prompts: number;
   schemaRules: number;
   agentRules: number;
@@ -308,7 +307,7 @@ export interface MailboxTestPreview extends MailboxTestMatch {
   tasks: Array<{
     title: string;
     deadline: string;
-    assigneeRoleId: string;
+    assigneeContactId: string;
     description: string;
   }>;
   confirmationToken: string;
@@ -316,7 +315,7 @@ export interface MailboxTestPreview extends MailboxTestMatch {
 }
 
 export interface AccountTask {
-  id: string; title: string; deadline: string; assigneeRoleId: string; assigneeRoleName: string; assigneeContactId: string | null; assigneeName: string; sourceMessageSubject: string; description: string; remarks: string; completed: boolean; completedAt: string | null;
+  id: string; title: string; deadline: string; assigneeContactId: string | null; assigneeName: string; sourceMessageSubject: string; description: string; remarks: string; completed: boolean; completedAt: string | null;
 }
 
 export interface ContactLineDestination {
@@ -334,6 +333,8 @@ export interface AccountContact {
   name: string;
   email: string;
   state: 'active' | 'inactive';
+  /** What kind of Contact this is, in the Account's own words. */
+  description: string;
   tags: string[];
   createdAt: string;
   updatedAt: string;
@@ -348,6 +349,7 @@ export interface AccountLineDestination extends ContactLineDestination {
 export interface AccountContactInput {
   name: string;
   email?: string;
+  description?: string;
   tags?: string[];
   lineDestinationId?: string;
 }
@@ -357,31 +359,6 @@ export interface ContactLineDestinationInput {
   kind?: 'user' | 'group' | 'room';
   displayName?: string;
 }
-
-/** Whether the open Tasks still have to be reviewed against a changed role set. */
-export interface TaskReassignmentReview {
-  rolesChangedAt: string | null;
-  reviewedAt: string | null;
-  pending: boolean;
-  openTasks: number;
-}
-
-export interface TaskAssignmentProposal {
-  taskId: string;
-  title: string;
-  deadline: string;
-  sourceMessageSubject: string;
-  currentRoleId: string;
-  currentRoleName: string;
-  proposedRoleId: string;
-  proposedRoleName: string;
-  reason: string;
-  changed: boolean;
-}
-
-export interface OperationalTaskRole { id: string; displayName: string; description: string; }
-export interface TaskRoleAssignment { roleId: string; contactId: string; displayName: string; }
-export interface TaskRoleConfiguration { contacts: Array<{ contactId: string; displayName: string }>; roles: OperationalTaskRole[]; assignments: TaskRoleAssignment[]; }
 
 /** The OpenAI-compatible JSON body prepared for review; credentials are never included. */
 export interface MailboxTestAiRequest extends MailboxTestMatch {
@@ -573,20 +550,12 @@ export const api = {
   ): Promise<{ id: string; removed: boolean }> => request(`/api/organizations/${encodeURIComponent(accountId)}/line-destinations/${encodeURIComponent(lineDestinationId)}`, {
     method: 'DELETE',
   }),
-  accountTaskRoles: (accountId: string): Promise<TaskRoleConfiguration> => request(`/api/organizations/${encodeURIComponent(accountId)}/task-roles`),
-  createAccountTaskRole: (accountId: string, input: { displayName: string; description: string }): Promise<OperationalTaskRole> => request(`/api/organizations/${encodeURIComponent(accountId)}/task-roles`, { method: 'POST', body: JSON.stringify(input) }),
-  updateAccountTaskRole: (accountId: string, roleId: string, input: { displayName?: string; description?: string }): Promise<OperationalTaskRole> => request(`/api/organizations/${encodeURIComponent(accountId)}/task-roles/${encodeURIComponent(roleId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
-  removeAccountTaskRole: (accountId: string, roleId: string): Promise<{ id: string; removed: boolean }> => request(`/api/organizations/${encodeURIComponent(accountId)}/task-roles/${encodeURIComponent(roleId)}`, { method: 'DELETE' }),
-  assignAccountTaskRole: (accountId: string, roleId: string, contactId: string): Promise<TaskRoleAssignment> => request(`/api/organizations/${encodeURIComponent(accountId)}/task-roles/${encodeURIComponent(roleId)}/assignment`, { method: 'PUT', body: JSON.stringify({ contactId }) }),
-  updateAccountTask: (accountId: string, taskId: string, input: { completed?: boolean; remarks?: string }): Promise<AccountTask> => request(`/api/organizations/${encodeURIComponent(accountId)}/tasks/${encodeURIComponent(taskId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
-  accountTaskReassignment: (accountId: string): Promise<TaskReassignmentReview> => request(`/api/organizations/${encodeURIComponent(accountId)}/task-reassignments`),
-  suggestAccountTaskReassignments: (accountId: string): Promise<{ proposals: TaskAssignmentProposal[]; review: TaskReassignmentReview }> => request(`/api/organizations/${encodeURIComponent(accountId)}/task-reassignments/suggestions`, { method: 'POST', body: JSON.stringify({}) }),
-  applyAccountTaskReassignments: (accountId: string, assignments: Array<{ taskId: string; roleId: string }>): Promise<{ tasks: AccountTask[]; skipped: string[]; review: TaskReassignmentReview }> => request(`/api/organizations/${encodeURIComponent(accountId)}/task-reassignments`, { method: 'POST', body: JSON.stringify({ assignments }) }),
+  updateAccountTask: (accountId: string, taskId: string, input: { completed?: boolean; remarks?: string; assigneeContactId?: string | null }): Promise<AccountTask> => request(`/api/organizations/${encodeURIComponent(accountId)}/tasks/${encodeURIComponent(taskId)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   createAccountRule: (accountId: string, input: AccountRuleInput): Promise<AccountRule> => request(`/api/organizations/${encodeURIComponent(accountId)}/rules`, {
     method: 'POST',
     body: JSON.stringify(input),
   }),
-  updateAccountRule: (accountId: string, ruleId: string, input: Partial<Pick<AccountRule, 'state' | 'executionMode' | 'permittedRecipientListIds' | 'permittedLineListIds'>>): Promise<Partial<AccountRule> & { id: string }> => request(`/api/organizations/${encodeURIComponent(accountId)}/rules/${encodeURIComponent(ruleId)}`, {
+  updateAccountRule: (accountId: string, ruleId: string, input: Partial<Pick<AccountRule, 'state' | 'executionMode' | 'noticeContactListId' | 'permittedRecipientListIds' | 'permittedLineListIds'>>): Promise<Partial<AccountRule> & { id: string }> => request(`/api/organizations/${encodeURIComponent(accountId)}/rules/${encodeURIComponent(ruleId)}`, {
     method: 'PATCH',
     body: JSON.stringify(input),
   }),

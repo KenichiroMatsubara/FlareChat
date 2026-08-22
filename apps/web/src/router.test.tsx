@@ -196,7 +196,7 @@ describe('Contact Portal progress', () => {
       location: '本部', registrationDeadline: null, status: 'unanswered' as const, comment: '', open: true,
     }],
     tasks: [{
-      taskId: 'task-1', title: '参加費を支払う', deadline: '2026-08-25', assigneeRoleName: '会計担当',
+      taskId: 'task-1', title: '参加費を支払う', deadline: '2026-08-25',
       assigneeName: '山田', sourceMessageSubject: '総会案内', description: '', remarks: '', completed: false, mine: true,
     }],
   };

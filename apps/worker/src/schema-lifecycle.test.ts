@@ -155,7 +155,7 @@ describe('Schema Lifecycle', () => {
 
     expect(receipt).toMatchObject({
       kind: 'organization',
-      currentMigration: '0025_discord_channel.sql',
+      currentMigration: '0028_rule_notice_contacts.sql',
       appliedMigrations: [
         '0001_tasks.sql',
         '0002_line_destination_roster.sql',
@@ -182,6 +182,9 @@ describe('Schema Lifecycle', () => {
         '0023_access_tokens.sql',
         '0024_automations.sql',
         '0025_discord_channel.sql',
+        '0026_contact_description.sql',
+        '0027_name_the_contact.sql',
+        '0028_rule_notice_contacts.sql',
       ],
     });
     expect(database.rows<{ display_name: string }>(
@@ -214,7 +217,7 @@ describe('Schema Lifecycle', () => {
       category: 'migration_apply_failed',
       kind: 'organization',
       currentMigration: '0000_initial.sql',
-      expectedMigration: '0025_discord_channel.sql',
+      expectedMigration: '0028_rule_notice_contacts.sql',
     });
 
     database.execute('DROP INDEX tasks_source_role_deadline_title_idx');
@@ -223,7 +226,7 @@ describe('Schema Lifecycle', () => {
       kind: 'organization',
       database: database.binding,
     })).resolves.toMatchObject({
-      currentMigration: '0025_discord_channel.sql',
+      currentMigration: '0028_rule_notice_contacts.sql',
     });
   });
 
@@ -244,7 +247,7 @@ describe('Schema Lifecycle', () => {
       category: 'checksum_mismatch',
       kind: 'organization',
       currentMigration: '0000_initial.sql',
-      expectedMigration: '0025_discord_channel.sql',
+      expectedMigration: '0028_rule_notice_contacts.sql',
     });
   });
 
@@ -260,7 +263,7 @@ describe('Schema Lifecycle', () => {
     await expect(schemaLifecycle.ensureCurrent({
       kind: 'organization',
       database: database.binding,
-    })).resolves.toMatchObject({ currentMigration: '0025_discord_channel.sql' });
+    })).resolves.toMatchObject({ currentMigration: '0028_rule_notice_contacts.sql' });
   });
 
   it('accepts the legacy Operational Task Roles checksum recorded by the local schema lifecycle', async () => {
@@ -275,10 +278,10 @@ describe('Schema Lifecycle', () => {
     await expect(schemaLifecycle.ensureCurrent({
       kind: 'organization',
       database: database.binding,
-    })).resolves.toMatchObject({ currentMigration: '0025_discord_channel.sql' });
+    })).resolves.toMatchObject({ currentMigration: '0028_rule_notice_contacts.sql' });
   });
 
-  it('migrates existing Tasks into Account-owned role records and unassigns the Control identities they named', async () => {
+  it('carries a Task named by a legacy role across to an unassigned Contact assignment', async () => {
     const database = databaseBeforeOperationalTaskRoles();
     database.execute("INSERT INTO source_messages (id, gmail_message_id, gmail_history_id, sender, subject, received_at, state) VALUES ('source-1', 'gmail-1', 'history-1', 'sender@example.com', '年次行事', '2026-08-01', 'processed')");
     database.execute("INSERT INTO task_role_assignments (role, identity_id, display_name, assigned_at, updated_at) VALUES ('legacy-registration', 'identity-1', 'Owner', '2026-08-01', '2026-08-01')");
@@ -286,13 +289,12 @@ describe('Schema Lifecycle', () => {
 
     await schemaLifecycle.ensureCurrent({ kind: 'organization', database: database.binding });
 
-    expect(database.rows<{ id: string; display_name: string }>('SELECT id, display_name FROM operational_task_roles')).toEqual([
-      { id: 'legacy-registration', display_name: 'legacy-registration' },
-    ]);
-    expect(database.rows<{ assignee_role_id: string; assignee_role_name: string; assignee_name: string; assignee_member_id: string | null }>('SELECT assignee_role_id, assignee_role_name, assignee_name, assignee_member_id FROM tasks')).toEqual([
-      { assignee_role_id: 'legacy-registration', assignee_role_name: 'legacy-registration', assignee_name: '未割り当て', assignee_member_id: null },
-    ]);
-    expect(database.rows('SELECT role_id, member_id FROM task_role_assignments')).toEqual([]);
+    expect(database.rows<{ title: string; assignee_name: string; assignee_member_id: string | null }>(
+      'SELECT title, assignee_name, assignee_member_id FROM tasks',
+    )).toEqual([{ title: '登録する', assignee_name: '未割り当て', assignee_member_id: null }]);
+    expect(database.rows<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('operational_task_roles', 'task_role_assignments', 'task_role_revisions')",
+    )).toEqual([]);
     expect(database.rows('PRAGMA foreign_key_check')).toEqual([]);
   });
 
@@ -410,8 +412,8 @@ describe('Schema Lifecycle', () => {
     ]);
 
     expect(receipts).toEqual([
-      expect.objectContaining({ currentMigration: '0025_discord_channel.sql' }),
-      expect.objectContaining({ currentMigration: '0025_discord_channel.sql' }),
+      expect.objectContaining({ currentMigration: '0028_rule_notice_contacts.sql' }),
+      expect.objectContaining({ currentMigration: '0028_rule_notice_contacts.sql' }),
     ]);
   });
 });
