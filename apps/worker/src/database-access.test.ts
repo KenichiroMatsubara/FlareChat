@@ -35,7 +35,7 @@ describe('Database Access', () => {
       databaseId: 'database-example',
     });
 
-    expect(ready.schema.currentMigration).toBe('0025_discord_channel.sql');
+    expect(ready.schema.currentMigration).toBe('0028_rule_notice_contacts.sql');
     await expect(ready.raw.prepare(
       'SELECT display_name FROM line_destinations',
     ).all()).resolves.toMatchObject({ success: true });

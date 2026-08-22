@@ -25,18 +25,6 @@
       "items": []
     }
   ],
-  "operationalTaskRoles": [
-    {
-      "key": "schedule",
-      "displayName": "Schedule",
-      "description": "Coordinates registrations, attendance, and event deadlines."
-    },
-    {
-      "key": "treasury",
-      "displayName": "Treasury",
-      "description": "Coordinates payment and reimbursement deadlines."
-    }
-  ],
   "prompts": [
     {
       "key": "membership-assistant",
@@ -52,11 +40,14 @@
       "sourceListKey": "trusted-sources",
       "selectionPolicy": {},
       "routingPolicy": {},
-      "taskRoleKeys": ["schedule", "treasury"],
       "priority": 0,
       "messageSummary": {
-        "recipientListKeys": ["calendar-members"],
-        "lineListKeys": ["line-members"]
+        "recipientListKeys": [
+          "calendar-members"
+        ],
+        "lineListKeys": [
+          "line-members"
+        ]
       }
     }
   ],
@@ -68,8 +59,12 @@
       "executionMode": "approval",
       "promptKey": "membership-assistant",
       "selectionPolicy": {},
-      "recipientListKeys": ["calendar-members"],
-      "lineListKeys": ["line-members"],
+      "recipientListKeys": [
+        "calendar-members"
+      ],
+      "lineListKeys": [
+        "line-members"
+      ],
       "priority": 0
     }
   ]

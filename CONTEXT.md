@@ -38,7 +38,7 @@ A Contact registers attendance, writes comments, and completes the Tasks assigne
 
 An unfinished Task notifies its assignee alone at the same seven, three, and one day milestones the attendance reminders use.
 
-Adding, renaming, redescribing, or removing an Operational Task Role opens a Task Reassignment Review, because Tasks already extracted were routed by a role set that no longer exists. The review offers one AI proposal per incomplete Task, naming a role and the evidence that chose it; completed Tasks are history and are never revisited. Nothing moves until the Account accepts a proposal, and accepting one takes the assignee from the role's current holder. Accepting none still closes the review, so a deliberate decision to leave the Tasks alone is not asked for again.
+A Task names the Contact it was given to, and nothing stands between the two. The extraction is shown the Account's active Contacts, each with the description the Account wrote for it, and names one of them or states that none fits; the assignee's name is copied onto the Task when it is created, so a Task keeps saying who it was given to after that Contact is renamed or removed. An Account may hand a Task to a different Contact, or take it off every Contact, at any time.
 
 An Account setup session expires fifteen minutes after the Automation Inbox grant while the installer confirms the editable Account name. If confirmation is not completed in time, FlareChat revokes and deletes the Google credential and creates no Account D1 database.
 
@@ -135,7 +135,7 @@ One address at which a Contact is reachable on one Channel through one Connectio
 _Avoid_: member address, LINE destination, recipient, webhook source
 
 **Contact**:
-An addressable entity owned by an Account, identified by a name, its Channel Handles, its status, and Account-defined tags. It may be a person, a group, a room, or a channel; it receives deliveries, may hold Operational Task Roles, and never signs in.
+An addressable entity owned by an Account, identified by a name, its Channel Handles, its status, an Account-written description of what it is, and Account-defined tags. It may be a person, a group, a room, or a channel; it receives deliveries, may be given Tasks, and never signs in. Nothing about it presumes a person: the description says what this Contact is, and the Channel Handle says whether it addresses one person or a shared group or room.
 _Avoid_: member, recipient profile, user, account, person
 
 **Handle Link**:
@@ -227,7 +227,7 @@ An Account-owned, separately identified set of instructions referenced by Agent 
 _Avoid_: system message, template
 
 **Preset**:
-A self-contained sample configuration—rules, Prompts, Operational Task Roles, and empty typed lists—copied once into an Account and thereafter unlinked from the product release that supplied it.
+A self-contained sample configuration—rules, Prompts, and empty typed lists—copied once into an Account and thereafter unlinked from the product release that supplied it.
 _Avoid_: template, default configuration
 
 **Rule Revision**:
@@ -279,8 +279,12 @@ The plain-text account of one Event Candidate alone, produced by the same extrac
 _Avoid_: event notes, per-event digest
 
 **Message Summary**:
-The single plain-text account of one Source Message and its accepted attachments produced by that message's one extraction, delivered on its own schedule whether or not the message yielded any Event Candidate.
+The single plain-text account of one Source Message and its accepted attachments produced by that message's one extraction, delivered whether or not the message yielded any Event Candidate.
 _Avoid_: description, digest, snippet
+
+**Source Message Notice**:
+The one message a Source Message's readers receive: its Message Summary, then the Scheduled Events it produced, then the Tasks it raised, composed as one text and delivered once to the Contacts its Automation Rule names, each reached on the Channel it is reachable on. It is delivered only after those events and Tasks are applied, so it never announces work that did not happen, and a section with nothing in it is left out.
+_Avoid_: digest, summary mail, notification
 
 **Intake Notice**:
 The sender-and-subject-only notification substituted for a Message Summary when a Source Message becomes an Automation Exception before a summary exists.
@@ -438,14 +442,6 @@ _Avoid_: user, attendee
 An Account-owned, deadline-bearing work item extracted once from a Source Message and tracked until completed.
 _Avoid_: reminder, to-do
 
-**Operational Task Role**:
-An Account-defined responsibility used to route a Task, distinct from Account ownership. Every Account defines its own set; an Automation Rule selects the subset it may assign, and a Task Assignment names the holder once per Account rather than once per rule.
-_Avoid_: member role, permission
-
 **Task Assignment**:
-The current Contact who holds an Operational Task Role; each Task retains the assignee identity and name captured when it was created.
-_Avoid_: recipient assignment, authorization
-
-**Task Reassignment Review**:
-The open question of whether the incomplete Tasks still match the Operational Task Roles, raised by any change to the role set and settled only by the Account accepting or rejecting the AI's proposal for each Task.
-_Avoid_: rebalancing, bulk reassignment
+The Contact one Task was given to, named by the extraction from the Account's own Contacts and changeable by the Account afterwards. Each Task keeps the assignee name captured when it was created, so history still reads correctly after the roster changes.
+_Avoid_: role, responsibility, permission, authorization

@@ -68,10 +68,10 @@ describe('application entry', () => {
     )).toEqual([{ name: '0005_member_logins.sql' }]);
     expect(fixture.account.rows<{ name: string }>(
       'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1',
-    )).toEqual([{ name: '0025_discord_channel.sql' }]);
+    )).toEqual([{ name: '0028_rule_notice_contacts.sql' }]);
     expect(secondAccount.rows<{ name: string }>(
       'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1',
-    )).toEqual([{ name: '0025_discord_channel.sql' }]);
+    )).toEqual([{ name: '0028_rule_notice_contacts.sql' }]);
   });
 
   it('reports the exact Account schema mismatch without revoking the session', async () => {
@@ -95,7 +95,7 @@ describe('application entry', () => {
         databaseId: 'database-1',
         bindingName: 'ORG_ORGANIZATION1',
         currentMigration: '9999_future.sql',
-        expectedMigration: '0025_discord_channel.sql',
+        expectedMigration: '0028_rule_notice_contacts.sql',
         requestId: expect.any(String),
       },
     });

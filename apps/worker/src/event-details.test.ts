@@ -5,23 +5,23 @@ import { describe, expect, it, vi } from 'vitest';
 import { buildAiEventDetailsRequest, extractAiEventDetails, validatedEventDetails, validatedMailExtraction } from './event-details';
 
 describe('OpenAI-compatible Event Details validation', () => {
-  it('builds the task role enum and semantic guidance from the roles allowed by the Account Rule', async () => {
+  it('builds the assignee enum and guidance from the Contacts this Account holds', async () => {
     const request = await buildAiEventDetailsRequest({
       source: '案内',
-      taskRoles: [
-        { id: 'role-registration', displayName: '参加登録担当', description: '出欠と申込期限を扱う' },
-        { id: 'role-payment', displayName: '支払担当', description: '請求と支払期限を扱う' },
+      roster: [
+        { id: 'contact-yamada', name: '山田花子', description: '出欠と申込期限を見ている人' },
+        { id: 'contact-group', name: '会員グループ', description: '' },
       ],
     });
     const taskSchema = request.response_format.json_schema.schema.properties?.tasks?.items;
 
-    expect(taskSchema?.properties?.assigneeRoleId?.enum).toEqual([
-      'role-registration',
-      'role-payment',
+    expect(taskSchema?.properties?.assigneeContactId?.enum).toEqual([
+      'contact-yamada',
+      'contact-group',
       'unassigned',
     ]);
-    expect(request.messages[0]?.content).toContain('role-registration: 参加登録担当 — 出欠と申込期限を扱う');
-    expect(request.messages[0]?.content).toContain('role-payment: 支払担当 — 請求と支払期限を扱う');
+    expect(request.messages[0]?.content).toContain('contact-yamada: 山田花子 — 出欠と申込期限を見ている人');
+    expect(request.messages[0]?.content).toContain('contact-group: 会員グループ');
     expect(request.messages[0]?.content).toContain('unassigned');
   });
 
@@ -46,7 +46,7 @@ describe('OpenAI-compatible Event Details validation', () => {
     expect(request.messages[0]?.content).toContain('Do not complete a date that omits its year');
   });
 
-  it('keeps the extraction and falls back only an unknown task role to unassigned with a warning', () => {
+  it('keeps the extraction and falls back only an unknown assignee to unassigned with a warning', () => {
     const extraction = validatedMailExtraction(JSON.stringify({
       summary: '年次行事と二つの期限の案内です。',
       events: [{
@@ -54,19 +54,19 @@ describe('OpenAI-compatible Event Details validation', () => {
         timeZone: 'Asia/Tokyo', location: '会館', description: '年次行事',
       }],
       tasks: [
-        { title: '登録する', deadline: '2026-08-20', assigneeRoleId: 'role-registration', description: '参加登録を行う' },
-        { title: '資料を確認する', deadline: '2026-08-25', assigneeRoleId: 'role-removed', description: '資料を確認する' },
+        { title: '登録する', deadline: '2026-08-20', assigneeContactId: 'contact-yamada', description: '参加登録を行う' },
+        { title: '資料を確認する', deadline: '2026-08-25', assigneeContactId: 'contact-removed', description: '資料を確認する' },
       ],
-    }), [{ id: 'role-registration', displayName: '参加登録担当', description: '申込期限を扱う' }]);
+    }), [{ id: 'contact-yamada', name: '山田花子', description: '申込期限を見ている人' }]);
 
     expect(extraction).toMatchObject({
       summary: '年次行事と二つの期限の案内です。',
       events: [{ title: '年次行事' }],
       tasks: [
-        { title: '登録する', assigneeRoleId: 'role-registration' },
-        { title: '資料を確認する', assigneeRoleId: 'unassigned' },
+        { title: '登録する', assigneeContactId: 'contact-yamada' },
+        { title: '資料を確認する', assigneeContactId: 'unassigned' },
       ],
-      warnings: [{ code: 'task_role_unmatched', requestedRoleId: 'role-removed' }],
+      warnings: [{ code: 'task_assignee_unmatched', requestedContactId: 'contact-removed' }],
     });
   });
 
@@ -367,16 +367,16 @@ describe('OpenAI-compatible Event Details validation', () => {
         { title: '30周年記念祝宴', startsAt: '2026-05-30T17:30:00+09:00', endsAt: '2026-05-30T19:30:00+09:00', timeZone: 'Asia/Tokyo', location: 'スノーピークカフェ', description: '祝宴' },
       ],
       tasks: [
-        { title: '出席登録を完了する', deadline: '2026-05-10', assigneeRoleId: 'role-registration', description: '登録用紙を返信する' },
-        { title: '参加費を振り込む', deadline: '2026-05-15', assigneeRoleId: 'role-payment', description: '指定口座へ振込する' },
+        { title: '出席登録を完了する', deadline: '2026-05-10', assigneeContactId: 'contact-yamada', description: '登録用紙を返信する' },
+        { title: '参加費を振り込む', deadline: '2026-05-15', assigneeContactId: 'contact-suzuki', description: '指定口座へ振込する' },
       ],
     }), [
-      { id: 'role-registration', displayName: '参加登録担当', description: '参加登録を扱う' },
-      { id: 'role-payment', displayName: '支払担当', description: '支払を扱う' },
+      { id: 'contact-yamada', name: '山田花子', description: '参加登録を見ている人' },
+      { id: 'contact-suzuki', name: '鈴木一郎', description: '支払を見ている人' },
     ])).toMatchObject({
       summary: '30周年記念式典と祝宴の案内です。出席登録と参加費振込が必要です。',
       events: [{ title: '30周年記念式典' }, { title: '30周年記念祝宴' }],
-      tasks: [{ assigneeRoleId: 'role-registration' }, { assigneeRoleId: 'role-payment' }],
+      tasks: [{ assigneeContactId: 'contact-yamada' }, { assigneeContactId: 'contact-suzuki' }],
     });
   });
 });

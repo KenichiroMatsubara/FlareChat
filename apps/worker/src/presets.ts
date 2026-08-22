@@ -9,7 +9,6 @@ import {
   agentRules,
   listItems,
   lists,
-  operationalTaskRoles,
   promptRevisions,
   prompts,
   rulePermittedLineLists,
@@ -17,9 +16,7 @@ import {
   ruleRevisions,
   rules,
   settings,
-  taskRoleRevisions,
 } from './storage/account-schema';
-import { TASK_ROLE_REVISION_ID } from './tasks';
 
 export interface PresetDocument {
   id: string;
@@ -31,11 +28,6 @@ export interface PresetDocument {
     name: string;
     description: string;
     items: Array<{ value: string; label: string }>;
-  }>;
-  operationalTaskRoles: Array<{
-    key: string;
-    displayName: string;
-    description: string;
   }>;
   prompts: Array<{
     key: string;
@@ -49,7 +41,6 @@ export interface PresetDocument {
     sourceListKey: string;
     selectionPolicy: Record<string, unknown>;
     routingPolicy: Record<string, unknown>;
-    taskRoleKeys: string[];
     priority: number;
     messageSummary: { recipientListKeys: string[]; lineListKeys: string[] };
   }>;
@@ -73,7 +64,6 @@ export const availablePresets = (): readonly PresetDocument[] => catalog;
 export interface PresetApplicationSummary {
   presetId: string;
   typedLists: number;
-  operationalTaskRoles: number;
   prompts: number;
   schemaRules: number;
   agentRules: number;
@@ -120,34 +110,29 @@ export const applyPreset = async (
       .where(eq(settings.key, applicationSettingKey)).get();
     if (previous) return JSON.parse(previous.value) as PresetApplicationSummary;
   }
-  const [existingLists, existingRoles, existingPrompts, existingSchemaRules, existingAgentRules] = await Promise.all([
+  const [existingLists, existingPrompts, existingSchemaRules, existingAgentRules] = await Promise.all([
     database.select({ name: lists.name }).from(lists).all(),
-    database.select({ name: operationalTaskRoles.displayName }).from(operationalTaskRoles).all(),
     database.select({ name: prompts.name }).from(prompts).all(),
     database.select({ name: rules.name }).from(rules).all(),
     database.select({ name: agentRules.name }).from(agentRules).all(),
   ]);
-  const configured = [existingLists, existingRoles, existingPrompts, existingSchemaRules, existingAgentRules]
+  const configured = [existingLists, existingPrompts, existingSchemaRules, existingAgentRules]
     .some((rows) => rows.length > 0);
   if (configured && options.conflictPolicy !== 'duplicate') throw new PresetConfigurationConflictError();
   const timestamp = new Date().toISOString();
   const listIds = new Map(preset.typedLists.map((list) => [list.key, crypto.randomUUID()]));
-  const roleIds = new Map(preset.operationalTaskRoles.map((role) => [role.key, crypto.randomUUID()]));
   const promptIds = new Map(preset.prompts.map((prompt) => [prompt.key, crypto.randomUUID()]));
   const usedListNames = new Set(existingLists.map(({ name }) => name));
-  const usedRoleNames = new Set(existingRoles.map(({ name }) => name));
   const usedPromptNames = new Set(existingPrompts.map(({ name }) => name));
   const usedSchemaRuleNames = new Set(existingSchemaRules.map(({ name }) => name));
   const usedAgentRuleNames = new Set(existingAgentRules.map(({ name }) => name));
   const listNames = new Map(preset.typedLists.map((list) => [list.key, copiedName(list.name, usedListNames)]));
-  const roleNames = new Map(preset.operationalTaskRoles.map((role) => [role.key, copiedName(role.displayName, usedRoleNames)]));
   const promptNames = new Map(preset.prompts.map((prompt) => [prompt.key, copiedName(prompt.name, usedPromptNames)]));
   const schemaRuleNames = new Map(preset.schemaRules.map((rule) => [rule.key, copiedName(rule.name, usedSchemaRuleNames)]));
   const agentRuleNames = new Map(preset.agentRules.map((rule) => [rule.key, copiedName(rule.name, usedAgentRuleNames)]));
   const summary: PresetApplicationSummary = {
     presetId: preset.id,
     typedLists: preset.typedLists.length,
-    operationalTaskRoles: preset.operationalTaskRoles.length,
     prompts: preset.prompts.length,
     schemaRules: preset.schemaRules.length,
     agentRules: preset.agentRules.length,
@@ -169,19 +154,6 @@ export const applyPreset = async (
       label: item.label,
       enabled: true,
     }))),
-    ...preset.operationalTaskRoles.map((role) => database.insert(operationalTaskRoles).values({
-      id: requiredReference(roleIds, role.key, 'Operational Task Role'),
-      displayName: requiredReference(roleNames, role.key, 'Operational Task Role name'),
-      description: role.description,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    })),
-    ...(preset.operationalTaskRoles.length ? [database.insert(taskRoleRevisions)
-      .values({ id: TASK_ROLE_REVISION_ID, revision: 1, reviewedRevision: 0, changedAt: timestamp, reviewedAt: null })
-      .onConflictDoUpdate({
-        target: taskRoleRevisions.id,
-        set: { revision: sql`${taskRoleRevisions.revision} + 1`, changedAt: timestamp },
-      })] : []),
     ...preset.prompts.flatMap((prompt) => {
       const promptId = requiredReference(promptIds, prompt.key, 'Prompt');
       return [
@@ -191,7 +163,6 @@ export const applyPreset = async (
     }),
     ...preset.schemaRules.flatMap((rule) => {
       const ruleId = crypto.randomUUID();
-      const taskRoleIds = rule.taskRoleKeys.map((key) => requiredReference(roleIds, key, 'Operational Task Role'));
       const permittedRecipientListIds = rule.messageSummary.recipientListKeys.map((key) => requiredReference(listIds, key, 'Calendar Recipient List'));
       const permittedLineListIds = rule.messageSummary.lineListKeys.map((key) => requiredReference(listIds, key, 'LINE Destination List'));
       const selectionPolicy = JSON.stringify(rule.selectionPolicy);
@@ -205,12 +176,11 @@ export const applyPreset = async (
           sourceListId: requiredReference(listIds, rule.sourceListKey, 'Source List'),
           selectionPolicy,
           routingPolicy,
-          taskRoleIds: JSON.stringify(taskRoleIds),
           priority: rule.priority,
           createdAt: timestamp,
           updatedAt: timestamp,
         }),
-        database.insert(ruleRevisions).values({ id: crypto.randomUUID(), ruleId, revision: 1, selectionPolicy, routingPolicy, taskRoleIds: JSON.stringify(taskRoleIds), createdAt: timestamp }),
+        database.insert(ruleRevisions).values({ id: crypto.randomUUID(), ruleId, revision: 1, selectionPolicy, routingPolicy, createdAt: timestamp }),
         ...permittedRecipientListIds.map((listId) => database.insert(rulePermittedRecipientLists).values({ ruleId, listId })),
         ...permittedLineListIds.map((listId) => database.insert(rulePermittedLineLists).values({ ruleId, listId })),
       ];

@@ -25,7 +25,6 @@ export interface PortalTask {
   taskId: string;
   title: string;
   deadline: string;
-  assigneeRoleName: string;
   assigneeName: string;
   sourceMessageSubject: string;
   description: string;
@@ -129,7 +128,6 @@ export const portalView = async (input: {
       taskId: tasks.id,
       title: tasks.title,
       deadline: tasks.deadline,
-      assigneeRoleName: tasks.assigneeRoleName,
       assigneeName: tasks.assigneeName,
       assigneeContactId: tasks.assigneeContactId,
       sourceMessageSubject: tasks.sourceMessageSubject,

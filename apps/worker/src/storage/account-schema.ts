@@ -40,7 +40,8 @@ export const rules = sqliteTable('rules', {
   sourceListId: text('source_list_id').references(() => lists.id),
   selectionPolicy: text('selection_policy').notNull().default('{}'),
   routingPolicy: text('routing_policy').notNull().default('{}'),
-  taskRoleIds: text('task_role_ids').notNull().default('[]'),
+  /** The Contact List this Rule's Source Message Notice reaches (ADR 0162). */
+  noticeContactListId: text('notice_contact_list_id').references(() => contactLists.id),
   priority: integer('priority').notNull().default(0),
   scheduleMinutes: integer('schedule_minutes').notNull().default(5),
   requireAttendance: integer('require_attendance', { mode: 'boolean' }).notNull().default(false),
@@ -141,7 +142,6 @@ export const ruleRevisions = sqliteTable('rule_revisions', {
   executionMode: text('execution_mode', { enum: ['read_only', 'approval', 'unattended'] }).notNull().default('unattended'),
   selectionPolicy: text('selection_policy').notNull(),
   routingPolicy: text('routing_policy').notNull(),
-  taskRoleIds: text('task_role_ids').notNull().default('[]'),
   createdAt: text('created_at').notNull(),
 }, (table) => [
   uniqueIndex('rule_revisions_rule_revision_idx').on(table.ruleId, table.revision),
@@ -406,35 +406,6 @@ export const automationWarnings = sqliteTable('automation_warnings', {
 ]);
 
 /** An Account-defined responsibility used to route extracted Tasks. */
-export const operationalTaskRoles = sqliteTable('operational_task_roles', {
-  id: text('id').primaryKey(),
-  displayName: text('display_name').notNull(),
-  description: text('description').notNull(),
-  createdAt: text('created_at').notNull(),
-  updatedAt: text('updated_at').notNull(),
-});
-
-/** An Account-local projection of the active contact assigned an Operational Task Role. */
-export const taskRoleAssignments = sqliteTable('task_role_assignments', {
-  roleId: text('role_id').primaryKey().references(() => operationalTaskRoles.id, { onDelete: 'cascade' }),
-  contactId: text('member_id').notNull().references(() => contacts.id, { onDelete: 'cascade' }),
-  displayName: text('display_name').notNull(),
-  assignedAt: text('assigned_at').notNull(),
-  updatedAt: text('updated_at').notNull(),
-});
-
-/**
- * When the Account's Operational Task Role set last changed, and when an
- * AccountIdentity last reviewed the open Tasks against it. One row, keyed `current`.
- */
-export const taskRoleRevisions = sqliteTable('task_role_revisions', {
-  id: text('id').primaryKey(),
-  revision: integer('revision').notNull().default(0),
-  reviewedRevision: integer('reviewed_revision').notNull().default(0),
-  changedAt: text('changed_at').notNull(),
-  reviewedAt: text('reviewed_at'),
-});
-
 export const tasks = sqliteTable('tasks', {
   id: text('id').primaryKey(),
   accountId: text('organization_id').notNull(),
@@ -442,9 +413,7 @@ export const tasks = sqliteTable('tasks', {
   sourceMessageSubject: text('source_message_subject').notNull(),
   title: text('title').notNull(),
   deadline: text('deadline').notNull(),
-  assigneeRoleId: text('assignee_role_id').notNull(),
-  assigneeRoleName: text('assignee_role_name').notNull(),
-  assigneeContactId: text('assignee_member_id'),
+  assigneeContactId: text('assignee_member_id').references(() => contacts.id),
   assigneeName: text('assignee_name').notNull().default('未割り当て'),
   description: text('description').notNull(),
   remarks: text('remarks').notNull().default(''),
@@ -454,7 +423,7 @@ export const tasks = sqliteTable('tasks', {
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
   check('tasks_completed_check', sql`${table.completed} in (0, 1)`),
-  uniqueIndex('tasks_source_role_deadline_title_idx').on(table.sourceMessageId, table.assigneeRoleId, table.deadline, table.title),
+  uniqueIndex('tasks_source_deadline_title_idx').on(table.sourceMessageId, table.deadline, table.title),
   index('tasks_order_idx').on(table.completed, table.deadline),
   index('tasks_assignee_idx').on(table.assigneeContactId),
 ]);
@@ -473,6 +442,8 @@ export const contacts = sqliteTable('members', {
   name: text('name').notNull(),
   email: text('email').notNull(),
   state: text('state', { enum: ['active', 'inactive'] }).notNull().default('active'),
+  /** What kind of Contact this is, in the Account's own words. */
+  description: text('description').notNull().default(''),
   tags: text('tags').notNull().default('[]'),
   googleSubject: text('google_subject'),
   createdAt: text('created_at').notNull(),

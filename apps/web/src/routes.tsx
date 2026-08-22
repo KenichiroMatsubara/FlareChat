@@ -5,7 +5,7 @@ import { isRouteErrorResponse, NavLink, Outlet, useLoaderData, useNavigate, useN
 import type { AppState } from '@mail/domain';
 
 import { api } from './api';
-import type { ContactAttendanceStatus, ContactPortal, AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, AccountAgentRule, AccountConnections, AccountDashboard, AccountLineDestination, AccountMembership, AccountPrompt, AccountContact, AccountContactInput, AccountRule, AccountRuleInput, AccountTask, AccountTypedList, PresetSummary, ContactLineDestinationInput, RuleRun, TaskAssignmentProposal, TaskReassignmentReview, TaskRoleConfiguration } from './api';
+import type { ContactAttendanceStatus, ContactPortal, AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, AuthMe, DeliveryAuditRecord, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, AccountAgentRule, AccountConnections, AccountDashboard, AccountLineDestination, AccountMembership, AccountPrompt, AccountContact, AccountContactInput, AccountRule, AccountRuleInput, AccountTask, AccountTypedList, PresetSummary, ContactLineDestinationInput, RuleRun } from './api';
 import { defaultAccountName, setupPhaseLabel, SignedOutEntry } from './entry';
 import { pendingKey, usePendingOperations, type PendingOperations } from './pending';
 import { PendingOverlay } from './progress';
@@ -175,8 +175,9 @@ export interface AccountRouteData {
   lists: AccountTypedList[];
   audit: DeliveryAuditRecord[];
   tasks: AccountTask[];
-  taskRoles: TaskRoleConfiguration;
-  taskReassignment: TaskReassignmentReview;
+  taskContacts: Array<{ contactId: string; displayName: string }>;
+  noticeTargets: Array<{ id: string; name: string; channels: string[] }>;
+  contactLists: Array<{ id: string; name: string; contactIds: string[] }>;
   contacts: AccountContact[];
   lineDestinations: AccountLineDestination[];
   presets: PresetSummary[];
@@ -190,7 +191,7 @@ export const loadAccount = async (accountId: string): Promise<AccountRouteData> 
   if (state.kind !== 'ready') throw new Response('Account is not ready', { status: 409 });
   const account = state.accounts.find((value) => value.accountId === accountId);
   if (!account) throw new Response('Account was not found', { status: 404 });
-  const [automation, connections, dashboard, rules, prompts, agentRules, agentRuns, ruleRuns, lists, audit, tasks, taskRoles, taskReassignment, contacts, lineDestinations, presets, attachmentFolder, guestRegistrations, responseWindow] = await Promise.all([
+  const [automation, connections, dashboard, rules, prompts, agentRules, agentRuns, ruleRuns, lists, audit, tasks, contacts, lineDestinations, presets, attachmentFolder, guestRegistrations, responseWindow, noticeTargets, contactLists] = await Promise.all([
     api.currentAutomation(accountId),
     api.accountConnections(accountId),
     api.accountDashboard(accountId),
@@ -202,22 +203,23 @@ export const loadAccount = async (accountId: string): Promise<AccountRouteData> 
     api.accountLists(accountId),
     api.accountDeliveryAudit(accountId),
     api.accountTasks(accountId),
-    api.accountTaskRoles(accountId),
-    api.accountTaskReassignment(accountId),
     api.accountContacts(accountId),
     api.accountLineDestinations(accountId),
     api.presets(),
     api.accountAttachmentFolder(accountId),
     api.accountGuestRegistrations(accountId),
     api.accountResponseWindow(accountId),
+    api.channelTestTargets(accountId),
+    api.contactLists(accountId),
   ]);
-  return { state, account, automation, connections, dashboard, rules, prompts, agentRules, agentRuns, ruleRuns, lists, audit, tasks, taskRoles, taskReassignment, contacts, lineDestinations, presets, attachmentFolder, guestRegistrations, responseWindow };
+  return {
+    state, account, automation, connections, dashboard, rules, prompts, agentRules, agentRuns, ruleRuns, lists, audit, tasks,
+    taskContacts: contacts.filter((contact) => contact.state === 'active').map((contact) => ({ contactId: contact.id, displayName: contact.name })),
+    noticeTargets: noticeTargets.map((target) => ({ id: target.id, name: target.name, channels: target.channels })),
+    contactLists,
+    contacts, lineDestinations, presets, attachmentFolder, guestRegistrations, responseWindow,
+  };
 };
-
-const roleChangeOpensReassignment = (current: AccountRouteData): AccountRouteData => ({
-  ...current,
-  taskReassignment: { ...current.taskReassignment, pending: true, rolesChangedAt: new Date().toISOString() },
-});
 
 interface AccountContextValue extends AccountRouteData, PendingOperations {
   summary: AutomationSummary | null;
@@ -236,7 +238,8 @@ interface AccountContextValue extends AccountRouteData, PendingOperations {
   planRefresh: () => void;
   applyRefresh: (candidateIndexes: number[]) => void;
   createRule: (input: AccountRuleInput) => Promise<void>;
-  updateRule: (ruleId: string, input: Partial<Pick<AccountRule, 'state' | 'executionMode' | 'permittedRecipientListIds' | 'permittedLineListIds'>>) => Promise<void>;
+  saveNoticeContacts: (ruleId: string, contactIds: string[]) => Promise<void>;
+  updateRule: (ruleId: string, input: Partial<Pick<AccountRule, 'state' | 'executionMode' | 'noticeContactListId' | 'permittedRecipientListIds' | 'permittedLineListIds'>>) => Promise<void>;
   agentTranscript: AgentRunTranscript | null;
   createPrompt: (input: { name: string; instructions: string }) => Promise<void>;
   updatePrompt: (promptId: string, input: { name?: string; instructions?: string }) => Promise<void>;
@@ -246,15 +249,6 @@ interface AccountContextValue extends AccountRouteData, PendingOperations {
   loadAgentTranscript: (runId: string) => void;
   decideRuleRun: (runId: string, decision: 'approve' | 'reject') => void;
   updateTask: (taskId: string, input: { completed?: boolean; remarks?: string }) => void;
-  createTaskRole: (input: { displayName: string; description: string }) => Promise<void>;
-  updateTaskRole: (roleId: string, input: { displayName?: string; description?: string }) => Promise<void>;
-  deleteTaskRole: (roleId: string) => Promise<void>;
-  assignTaskRole: (roleId: string, contactId: string) => void;
-  taskReassignmentProposals: TaskAssignmentProposal[];
-  taskReassignmentSkipped: string[];
-  suggestTaskReassignments: () => void;
-  applyTaskReassignments: (assignments: Array<{ taskId: string; roleId: string }>) => void;
-  discardTaskReassignments: () => void;
   createContact: (input: AccountContactInput) => Promise<AccountContact | null>;
   updateContact: (contactId: string, input: Partial<Pick<AccountContact, 'name' | 'email' | 'tags' | 'state'>>) => Promise<void>;
   setLineDestination: (contactId: string, input: ContactLineDestinationInput) => Promise<void>;
@@ -330,8 +324,6 @@ export const AccountLayout = () => {
   const [mailTestRefreshPlan, setMailTestRefreshPlan] = useState<MailboxTestRefreshPlan | null>(null);
   const [mailTestRefreshOutcome, setMailTestRefreshOutcome] = useState<MailboxTestRefreshOutcome | null>(null);
   const [agentTranscript, setAgentTranscript] = useState<AgentRunTranscript | null>(null);
-  const [taskReassignmentProposals, setTaskReassignmentProposals] = useState<TaskAssignmentProposal[]>([]);
-  const [taskReassignmentSkipped, setTaskReassignmentSkipped] = useState<string[]>([]);
 
   useEffect(() => {
     setData(initial);
@@ -341,8 +333,6 @@ export const AccountLayout = () => {
     setLineChannelSecret('');
     setAiApiKey('');
     setSummary(null);
-    setTaskReassignmentProposals([]);
-    setTaskReassignmentSkipped([]);
   }, [initial]);
 
   const accountId = data.account.accountId;
@@ -467,9 +457,30 @@ export const AccountLayout = () => {
     const rule = await api.createAccountRule(accountId, input);
     setData((current) => ({ ...current, rules: [...current.rules, rule] }));
   });
-  const updateRule = async (ruleId: string, input: Partial<Pick<AccountRule, 'state' | 'executionMode' | 'permittedRecipientListIds' | 'permittedLineListIds'>>): Promise<void> => runOperation(pendingKey.ruleUpdate(ruleId), async () => {
+  const updateRule = async (ruleId: string, input: Partial<Pick<AccountRule, 'state' | 'executionMode' | 'noticeContactListId' | 'permittedRecipientListIds' | 'permittedLineListIds'>>): Promise<void> => runOperation(pendingKey.ruleUpdate(ruleId), async () => {
     const updated = await api.updateAccountRule(accountId, ruleId, input);
     setData((current) => ({ ...current, rules: current.rules.map((rule) => rule.id === ruleId ? { ...rule, ...updated } : rule) }));
+  });
+  /**
+   * Names who a Rule tells, as Contacts. The set is stored as the Rule's own
+   * Contact List, so the platform keeps one named-set concept (ADR 0162).
+   */
+  const saveNoticeContacts = async (ruleId: string, contactIds: string[]): Promise<void> => runOperation(pendingKey.ruleNoticeContacts(ruleId), async () => {
+    const rule = data.rules.find((entry) => entry.id === ruleId);
+    if (!contactIds.length) {
+      const updated = await api.updateAccountRule(accountId, ruleId, { noticeContactListId: null });
+      setData((current) => ({ ...current, rules: current.rules.map((entry) => entry.id === ruleId ? { ...entry, ...updated } : entry) }));
+      return;
+    }
+    const listId = rule?.noticeContactListId ?? crypto.randomUUID();
+    await api.saveContactList(accountId, listId, { name: `${rule?.name ?? 'ルール'} の要約送り先`, contactIds });
+    const updated = await api.updateAccountRule(accountId, ruleId, { noticeContactListId: listId });
+    const contactLists = await api.contactLists(accountId);
+    setData((current) => ({
+      ...current,
+      contactLists,
+      rules: current.rules.map((entry) => entry.id === ruleId ? { ...entry, ...updated } : entry),
+    }));
   });
   const createPrompt = async (input: { name: string; instructions: string }): Promise<void> => runOperation(pendingKey.promptCreate, async () => {
     const prompt = await api.createAccountPrompt(accountId, input);
@@ -502,39 +513,6 @@ export const AccountLayout = () => {
     const task = await api.updateAccountTask(accountId, taskId, input);
     setData((current) => ({ ...current, tasks: current.tasks.map((currentTask) => currentTask.id === task.id ? task : currentTask) }));
   });
-  const createTaskRole = async (input: { displayName: string; description: string }): Promise<void> => runOperation(pendingKey.taskRoleCreate, async () => {
-    const role = await api.createAccountTaskRole(accountId, input);
-    setData((current) => roleChangeOpensReassignment({ ...current, taskRoles: { ...current.taskRoles, roles: [...current.taskRoles.roles, role] } }));
-  });
-  const updateTaskRole = async (roleId: string, input: { displayName?: string; description?: string }): Promise<void> => runOperation(pendingKey.taskRoleUpdate(roleId), async () => {
-    const role = await api.updateAccountTaskRole(accountId, roleId, input);
-    setData((current) => roleChangeOpensReassignment({ ...current, taskRoles: { ...current.taskRoles, roles: current.taskRoles.roles.map((item) => item.id === role.id ? role : item) } }));
-  });
-  const deleteTaskRole = async (roleId: string): Promise<void> => runOperation(pendingKey.taskRoleDelete(roleId), async () => {
-    await api.removeAccountTaskRole(accountId, roleId);
-    setData((current) => roleChangeOpensReassignment({ ...current, taskRoles: { ...current.taskRoles, roles: current.taskRoles.roles.filter((role) => role.id !== roleId), assignments: current.taskRoles.assignments.filter((assignment) => assignment.roleId !== roleId) } }));
-  });
-  const assignTaskRole = (roleId: string, contactId: string) => void runOperation(pendingKey.taskRoleAssign(roleId), async () => {
-    const assignment = await api.assignAccountTaskRole(accountId, roleId, contactId);
-    setData((current) => ({ ...current, taskRoles: { ...current.taskRoles, assignments: [...current.taskRoles.assignments.filter((currentAssignment) => currentAssignment.roleId !== roleId), assignment] } }));
-  });
-  const suggestTaskReassignments = () => void runOperation(pendingKey.reassignmentSuggest, async () => {
-    setTaskReassignmentSkipped([]);
-    const suggested = await api.suggestAccountTaskReassignments(accountId);
-    setTaskReassignmentProposals(suggested.proposals);
-    setData((current) => ({ ...current, taskReassignment: suggested.review }));
-  });
-  const applyTaskReassignments = (assignments: Array<{ taskId: string; roleId: string }>) => void runOperation(pendingKey.reassignmentApply, async () => {
-    const applied = await api.applyAccountTaskReassignments(accountId, assignments);
-    const reassigned = new Map(applied.tasks.map((task) => [task.id, task]));
-    setTaskReassignmentProposals([]);
-    setTaskReassignmentSkipped(applied.skipped);
-    setData((current) => ({ ...current, tasks: current.tasks.map((task) => reassigned.get(task.id) ?? task), taskReassignment: applied.review }));
-  });
-  const discardTaskReassignments = (): void => {
-    setTaskReassignmentProposals([]);
-    setTaskReassignmentSkipped([]);
-  };
   const reloadContacts = async (): Promise<void> => {
     const [contacts, lineDestinations] = await Promise.all([
       api.accountContacts(accountId),
@@ -580,18 +558,17 @@ export const AccountLayout = () => {
   const refreshContacts = () => void runOperation(pendingKey.contactRefresh, reloadContacts);
   const applyPreset = (presetId: string, conflictPolicy?: 'duplicate') => void runOperation(pendingKey.presetApply(presetId), async () => {
     await api.applyAccountPreset(accountId, presetId, conflictPolicy);
-    const [rules, prompts, agentRules, lists, taskRoles] = await Promise.all([
+    const [rules, prompts, agentRules, lists] = await Promise.all([
       api.accountRules(accountId),
       api.accountPrompts(accountId),
       api.accountAgentRules(accountId),
       api.accountLists(accountId),
-      api.accountTaskRoles(accountId),
     ]);
-    setData((current) => ({ ...current, rules, prompts, agentRules, lists, taskRoles }));
+    setData((current) => ({ ...current, rules, prompts, agentRules, lists }));
   });
   const logout = () => void runOperation(pendingKey.logout, async () => { await api.logout(); navigate('/', { replace: true }); });
   const reauthenticate = () => void runOperation(pendingKey.reauthenticate, async () => { window.location.assign((await api.reauthorizeAutomationInbox(accountId)).authorizationUrl); });
-  const value: AccountContextValue = { ...data, ...operations, summary, setEnabled, runAutomation, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, previewDraftMailbox, createMailboxTestEvents, startDraftRuleRun, createRule, updateRule, agentTranscript, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, decideRuleRun, updateTask, createTaskRole, updateTaskRole, deleteTaskRole, assignTaskRole, taskReassignmentProposals, taskReassignmentSkipped, suggestTaskReassignments, applyTaskReassignments, discardTaskReassignments, createContact, updateContact, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshContacts, applyPreset, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, draftRulePreview, mailTestCreatedEventIds, mailTestRuleRunIds, mailTestRefreshRequest, mailTestRefreshPlan, mailTestRefreshOutcome, prepareRefresh, planRefresh, applyRefresh, attachmentFolderPath, setAttachmentFolderPath, saveAttachmentFolderPath, responseWindowDays, setResponseWindowDays, saveResponseWindowDays, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
+  const value: AccountContextValue = { ...data, ...operations, summary, setEnabled, runAutomation, saveLineConnection, saveAiConnection, testAi, searchMailbox, prepareMailbox, previewMailbox, previewDraftMailbox, createMailboxTestEvents, startDraftRuleRun, createRule, updateRule, saveNoticeContacts, agentTranscript, createPrompt, updatePrompt, deletePrompt, createAgentRule, updateAgentRule, loadAgentTranscript, decideRuleRun, updateTask, createContact, updateContact, setLineDestination, unlinkLineDestination, registerLineDestination, removeLineDestination, refreshContacts, applyPreset, lineChannelAccessToken, lineChannelSecret, aiApiKey, aiModel, aiBaseUrl, aiTestPrompt, aiTestResult, mailTestSubject, mailTestMatches, mailTestAiRequest, mailTestPreview, draftRulePreview, mailTestCreatedEventIds, mailTestRuleRunIds, mailTestRefreshRequest, mailTestRefreshPlan, mailTestRefreshOutcome, prepareRefresh, planRefresh, applyRefresh, attachmentFolderPath, setAttachmentFolderPath, saveAttachmentFolderPath, responseWindowDays, setResponseWindowDays, saveResponseWindowDays, setLineChannelAccessToken, setLineChannelSecret, setAiApiKey, setAiModel, setAiBaseUrl, setAiTestPrompt, setMailTestSubject, logout, reauthenticate };
   return <AccountContext.Provider value={value}><Outlet /></AccountContext.Provider>;
 };
 
@@ -666,6 +643,9 @@ export const AccountPage = ({ page }: { page: AccountPage }) => {
     accountLists={value.lists}
     onCreateRule={value.createRule}
     onUpdateRule={value.updateRule}
+    noticeTargets={value.noticeTargets}
+    contactLists={value.contactLists}
+    onSaveNoticeContacts={value.saveNoticeContacts}
     prompts={value.prompts}
     agentRules={value.agentRules}
     agentRuns={value.agentRuns}
@@ -680,19 +660,7 @@ export const AccountPage = ({ page }: { page: AccountPage }) => {
     onLoadAgentTranscript={value.loadAgentTranscript}
     accountTasks={value.tasks}
     onUpdateTask={value.updateTask}
-    taskRoles={value.taskRoles.roles}
-    taskRoleAssignments={value.taskRoles.assignments}
-    taskContacts={value.taskRoles.contacts}
-    onCreateTaskRole={value.createTaskRole}
-    onUpdateTaskRole={value.updateTaskRole}
-    onDeleteTaskRole={value.deleteTaskRole}
-    onAssignTaskRole={value.assignTaskRole}
-    taskReassignment={value.taskReassignment}
-    taskReassignmentProposals={value.taskReassignmentProposals}
-    taskReassignmentSkipped={value.taskReassignmentSkipped}
-    onSuggestTaskReassignments={value.suggestTaskReassignments}
-    onApplyTaskReassignments={value.applyTaskReassignments}
-    onDiscardTaskReassignments={value.discardTaskReassignments}
+    taskContacts={value.taskContacts}
     accountContacts={value.contacts}
     lineDestinations={value.lineDestinations}
     onCreateContact={value.createContact}
@@ -785,15 +753,15 @@ export const ContactPortalJoinRoute = () => {
   };
   return <SetupCard>
     <div className="setup-brand"><strong>Mail Automation</strong><small>CONTACT PORTAL</small></div>
-    <p className="eyebrow">JOIN</p><h1>メンバーページを開く</h1>
+    <p className="eyebrow">JOIN</p><h1>連絡先ページを開く</h1>
     {error && <p className="setup-error">{error}</p>}
     {state.kind === 'signed_out'
       ? <>
-        <p className="setup-copy">Googleでログインすると、このリンクのメンバーとしてアカウントが結び付きます。以降はこのアカウントだけで入れます。</p>
+        <p className="setup-copy">Googleでログインすると、このリンクの連絡先としてアカウントが結び付きます。以降はこのアカウントだけで入れます。</p>
         <button className="primary" onClick={() => void signIn()} disabled={busy}>{busy ? 'Googleへ接続中…' : 'Googleでログイン'}</button>
       </>
       : <>
-        <p className="setup-copy">{state.identity.email} をこのメンバーに結び付けます。リンクは一度だけ使えます。</p>
+        <p className="setup-copy">{state.identity.email} をこの連絡先に結び付けます。リンクは一度だけ使えます。</p>
         <button className="primary" onClick={() => void join()} disabled={busy}>{busy ? '確認中…' : 'このアカウントで開始する'}</button>
       </>}
   </SetupCard>;
@@ -868,7 +836,7 @@ export const ContactPortalView = ({ portal, running, pending, settled, error, on
         return <article key={task.taskId} className={`portal-task ${task.mine ? 'mine' : ''}`} aria-busy={completing || remarking}>
           <div>
             <h3>{task.title}</h3>
-            <p>{task.assigneeRoleName} ・ {task.assigneeName} ・ 期限 {task.deadline}</p>
+            <p>{task.assigneeName} ・ 期限 {task.deadline}</p>
             <p className="portal-task-source">{task.sourceMessageSubject}</p>
           </div>
           {task.mine
@@ -901,7 +869,7 @@ export const ContactPortalRoute = () => {
   const { running, pending, settled, error, run } = usePendingOperations();
   const reload = async (): Promise<void> => { setPortal(await api.contactPortal()); };
   useEffect(() => {
-    void reload().catch((cause: unknown) => setLoadError(cause instanceof Error ? cause.message : 'メンバーページを開けませんでした。'));
+    void reload().catch((cause: unknown) => setLoadError(cause instanceof Error ? cause.message : '連絡先ページを開けませんでした。'));
   }, []);
   const answer = (key: string, work: () => Promise<unknown>): void => void run(key, async () => { await work(); await reload(); });
   if (!portal) return <SetupCard>{loadError ? <p className="setup-error">{loadError}</p> : <div className="loading"><RefreshCw className="spin" size={18} />読み込み中…</div>}</SetupCard>;

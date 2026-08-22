@@ -24,13 +24,9 @@ const databaseWithTask = (input: {
      VALUES ('source-1', 'gmail-1', 'history-1', 'sender@example.com', '年次行事', '2026-08-01', 'processed')`,
   );
   database.execute(
-    `INSERT INTO operational_task_roles (id, display_name, description, created_at, updated_at)
-     VALUES ('role-1', '会計', '支払期限を扱う', '2026-08-01', '2026-08-01')`,
-  );
-  database.execute(
     `INSERT INTO tasks (id, organization_id, source_message_id, source_message_subject, title, deadline,
-       assignee_role_id, assignee_role_name, assignee_member_id, assignee_name, description, completed, created_at, updated_at)
-     VALUES ('task-1', 'organization-1', 'source-1', '年次行事', '参加費を振り込む', ?, 'role-1', '会計', ?, '山田花子', '指定口座へ送金する', ?, '2026-08-01', '2026-08-01')`,
+       assignee_member_id, assignee_name, description, completed, created_at, updated_at)
+     VALUES ('task-1', 'organization-1', 'source-1', '年次行事', '参加費を振り込む', ?, ?, '山田花子', '指定口座へ送金する', ?, '2026-08-01', '2026-08-01')`,
     input.deadline,
     input.assigned === false ? null : 'member-1',
     input.completed ? 1 : 0,

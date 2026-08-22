@@ -381,6 +381,8 @@ export const sendOnChannel = async (input: {
   contactId: string;
   channel: string;
   texts: readonly string[];
+  /** The Source Message this send answers, so its Delivery Record names it. */
+  sourceMessageId?: string | null;
   fetch?: ChannelFetch;
 }): Promise<ChannelDelivery> => {
   if (!isChannelName(input.channel)) throw new Error(`This product does not reach a Contact on ${input.channel} yet.`);

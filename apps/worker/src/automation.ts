@@ -1,9 +1,9 @@
-import { and, count, eq, inArray, isNotNull } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, isNotNull } from 'drizzle-orm';
 
 import { decrypt, encrypt, masterKey, unwrapAccountKey } from './cryptography';
 import { completeBaselineSkippedRepair, ensureBaselineSchemaRule } from './baseline-automation';
 import { fromBase64Url } from './encoding';
-import { buildAiEventDetailsRequest, type AiEventDetailsRequest, type EventDetails, type MailExtraction, type TaskRoleDescription } from './event-details';
+import { buildAiEventDetailsRequest, type AiEventDetailsRequest, type ContactDescription, type EventDetails, type MailExtraction } from './event-details';
 import { calendarEventDescription } from './event-description';
 import type { AttachmentLink } from './event-description';
 import {
@@ -34,12 +34,13 @@ import {
 } from './event-merge';
 import type { RecordedEventFields } from './event-merge';
 import { guestCountsLine } from './guests';
+import { sourceMessageNotice } from './notice';
 import { canApplyCalendarUpdate } from './calendar-revisions';
 import { writeRecoveryReceipt } from './recovery-receipts';
 import { resolveSourceMessageFolder } from './attachment-folders';
 import { createTaskWorkflow } from './tasks';
 import { createRuleExecution, type ExecutionMode, type RuleEffectPort } from './execution';
-import { channelCredentials, sendOnDestination, sendToDestinations, type ChannelCredentials } from './channel';
+import { channelCredentials, contactChannels, sendOnChannel, sendOnDestination, sendToDestinations, type ChannelCredentials } from './channel';
 import { activeContactInvitees, deliverSourceMessageEmail, recordDeliveryAttempt, recordEventInvitations } from './delivery';
 import type { PublishedDriveAttachment, SourceAttachment, SourceAttachmentContent } from './drive-attachments';
 import { GoogleGrantRejectedError } from './google';
@@ -70,6 +71,8 @@ import {
   agentRulePermittedRecipientLists,
   agentRuns,
   connections,
+  contactListMembers,
+  contacts,
   deliveries,
   automationWarnings,
   eventAttachments,
@@ -78,12 +81,12 @@ import {
   guestRegistrations,
   googleConnections,
   listItems,
-  operationalTaskRoles,
   prompts,
   rulePermittedLineLists,
   rulePermittedRecipientLists,
   rules as automationRules,
   sourceMessages,
+  tasks,
 } from './storage/account-schema';
 import type { GoogleConnectionRecord } from './storage/account-schema';
 
@@ -171,9 +174,10 @@ export interface ActiveRule {
   priority: number;
   executionMode: ExecutionMode;
   selectionPolicy: Record<string, unknown>;
-  taskRoleIds?: string[];
   permittedRecipientListIds?: string[];
   permittedLineListIds?: string[];
+  /** The Contact List this Rule's notice reaches, resolved to handles at delivery (ADR 0162). */
+  noticeContactListId?: string | null;
 }
 
 interface ActiveAgentRule {
@@ -301,7 +305,7 @@ const activeSchemaRules = async (database: D1Database): Promise<ActiveRule[]> =>
     priority: automationRules.priority,
     executionMode: automationRules.executionMode,
     selectionPolicy: automationRules.selectionPolicy,
-    taskRoleIds: automationRules.taskRoleIds,
+    noticeContactListId: automationRules.noticeContactListId,
   }).from(automationRules).where(eq(automationRules.status, 'active')).orderBy(automationRules.priority).all();
   const ruleIds = rows.map(({ id }) => id);
   const [recipientReferences, lineReferences] = ruleIds.length ? await Promise.all([
@@ -316,7 +320,7 @@ const activeSchemaRules = async (database: D1Database): Promise<ActiveRule[]> =>
         priority: row.priority,
         executionMode: row.executionMode,
         selectionPolicy: JSON.parse(row.selectionPolicy) as Record<string, unknown>,
-        taskRoleIds: JSON.parse(row.taskRoleIds) as string[],
+        noticeContactListId: row.noticeContactListId,
         permittedRecipientListIds: recipientReferences.flatMap((reference) => reference.ruleId === row.id ? [reference.listId] : []),
         permittedLineListIds: lineReferences.flatMap((reference) => reference.ruleId === row.id ? [reference.listId] : []),
       }];
@@ -527,24 +531,85 @@ const deliverSourceMessageNotice = async (input: {
     })));
   }
   const permittedLineListIds = input.rule.permittedLineListIds ?? [];
-  if (!permittedLineListIds.length) return;
+  if (!permittedLineListIds.length && !input.rule.noticeContactListId) return;
   const credentials = await accountChannelCredentials(input.env, input.accountId, input.database);
-  if (!credentials.line) return;
-  const destinations = await db.select({ destinationId: listItems.value }).from(listItems).where(and(
-    inArray(listItems.listId, permittedLineListIds),
-    eq(listItems.enabled, true),
-  )).all();
-  await sendToDestinations({
-    database: input.database,
-    credentials,
-    channel: 'line',
-    destinations: destinations.map(({ destinationId }) => destinationId),
-    texts: [input.body],
-    sourceMessageId: input.sourceMessageId,
-  });
+  if (permittedLineListIds.length && credentials.line) {
+    const destinations = await db.select({ destinationId: listItems.value }).from(listItems).where(and(
+      inArray(listItems.listId, permittedLineListIds),
+      eq(listItems.enabled, true),
+    )).all();
+    await sendToDestinations({
+      database: input.database,
+      credentials,
+      channel: 'line',
+      destinations: destinations.map(({ destinationId }) => destinationId),
+      texts: [input.body],
+      sourceMessageId: input.sourceMessageId,
+    });
+  }
+  if (input.rule.noticeContactListId) {
+    await deliverNoticeToContacts({
+      database: input.database,
+      credentials,
+      contactListId: input.rule.noticeContactListId,
+      body: input.body,
+      sourceMessageId: input.sourceMessageId,
+    });
+  }
+};
+
+/**
+ * Reaches every Contact of the Rule's Contact List once (ADR 0162).
+ *
+ * The handle is resolved from the Contact rather than written into a list, so a
+ * Contact that gains a Channel is reachable on it wherever the list is used. A
+ * Contact is reached on the first Channel it holds a handle for, in the order
+ * the product carries them, and one with no handle at all is skipped: there is
+ * nowhere to deliver, and inventing a destination would only record a failure
+ * that never left.
+ */
+const deliverNoticeToContacts = async (input: {
+  database: D1Database;
+  credentials: ChannelCredentials;
+  contactListId: string;
+  body: string;
+  sourceMessageId: string;
+}): Promise<void> => {
+  const members = await drizzleAccountDatabase(input.database).select({ contactId: contactListMembers.contactId })
+    .from(contactListMembers).where(eq(contactListMembers.listId, input.contactListId)).all();
+  for (const contactId of [...new Set(members.map(({ contactId }) => contactId))]) {
+    const channels = await contactChannels({ database: input.database, contactId });
+    const channel = channels[0];
+    if (!channel) continue;
+    try {
+      await sendOnChannel({
+        database: input.database,
+        credentials: input.credentials,
+        contactId,
+        channel,
+        texts: [input.body],
+        sourceMessageId: input.sourceMessageId,
+      });
+    } catch {
+      // A refusal is already recorded as a failed Delivery Record; the rest of
+      // the roster must still hear about the Source Message.
+    }
+  }
 };
 
 /** Uses the Account-scoped OpenAI-compatible connection when it is configured. */
+/**
+ * The Contacts an extraction may name as a Task's assignee (ADR 0161). Only
+ * active ones: naming a Contact the Account has switched off would produce a
+ * Task nobody is reminded about.
+ */
+const assignableContacts = async (database: D1Database): Promise<ContactDescription[]> =>
+  drizzleAccountDatabase(database).select({
+    id: contacts.id,
+    name: contacts.name,
+    description: contacts.description,
+  }).from(contacts).where(eq(contacts.state, 'active')).orderBy(asc(contacts.name)).all();
+
 const aiExtraction = async (
   env: Bindings,
   accountId: string,
@@ -552,7 +617,7 @@ const aiExtraction = async (
   source: string,
   attachments: SourceAttachmentContent[],
   convertedAttachments: ConvertedAttachment[] | undefined,
-  taskRoles: TaskRoleDescription[],
+  roster: ContactDescription[],
   receivedAt: string | undefined,
   dependencies: AutomationDependencies,
 ): Promise<MailExtraction | null | undefined> => {
@@ -571,7 +636,7 @@ const aiExtraction = async (
       attachments,
       ...(convertedAttachments === undefined ? {} : { convertedAttachments }),
       ...(receivedAt === undefined ? {} : { receivedAt }),
-      taskRoles,
+      roster,
       markdown: env.AI,
     });
   } catch {
@@ -604,12 +669,7 @@ const preparePrimarySchema = async (input: {
 }): Promise<PrimarySchemaPreparation> => {
   const rule = selectActiveRule(input.rules ?? await activeSchemaRules(input.database), input.source);
   if (!rule) return { kind: 'no_matching_rule' };
-  const roles = await drizzleAccountDatabase(input.database).select({
-    id: operationalTaskRoles.id,
-    displayName: operationalTaskRoles.displayName,
-    description: operationalTaskRoles.description,
-  }).from(operationalTaskRoles).all();
-  const allowedRoleIds = new Set(rule.taskRoleIds ?? []);
+  const roster = await assignableContacts(input.database);
   const extraction = await aiExtraction(
     input.env,
     input.accountId,
@@ -617,7 +677,7 @@ const preparePrimarySchema = async (input: {
     input.extractionSource,
     input.attachments,
     input.convertedAttachments,
-    roles.filter((role) => allowedRoleIds.has(role.id)),
+    roster,
     input.receivedAt,
     input.dependencies,
   );
@@ -859,7 +919,6 @@ const extractMailboxTestPackage = async (
   attachments: SourceAttachmentContent[],
   receivedAt: string | undefined,
   dependencies: AutomationDependencies,
-  allowedTaskRoleIds?: ReadonlySet<string>,
 ): Promise<MailExtraction | null> => {
   const connection = await drizzleAccountDatabase(database).select().from(connections)
     .where(and(eq(connections.kind, 'ai'), eq(connections.status, 'active'))).limit(1).get();
@@ -867,11 +926,7 @@ const extractMailboxTestPackage = async (
   const key = await accountKeyFor(env, accountId);
   const credential = JSON.parse(await decrypt(JSON.parse(connection.credential), key, `organization-connection:${accountId}:ai`)) as AiCredential;
   if (!credential.apiKey || !credential.model) throw new Error('先に OpenAI 互換 API を設定してください。');
-  const taskRoles = (await drizzleAccountDatabase(database).select({
-    id: operationalTaskRoles.id,
-    displayName: operationalTaskRoles.displayName,
-    description: operationalTaskRoles.description,
-  }).from(operationalTaskRoles).all()).filter((role) => !allowedTaskRoleIds || allowedTaskRoleIds.has(role.id));
+  const roster = await assignableContacts(database);
   return dependencies.ai.extract({
     apiKey: credential.apiKey,
     baseUrl: credential.baseUrl || LEGACY_AI_BASE_URL,
@@ -879,7 +934,7 @@ const extractMailboxTestPackage = async (
     source,
     attachments,
     ...(receivedAt === undefined ? {} : { receivedAt }),
-    taskRoles,
+    roster,
     markdown: env.AI,
   });
 };
@@ -905,7 +960,7 @@ const previewSchemaDraftRule = async (input: {
   }
   const extraction = await extractMailboxTestPackage(
     input.env, input.accountId, input.database, source.source, source.attachments,
-    source.receivedAt, productionDependencies, new Set(JSON.parse(rule.taskRoleIds) as string[]),
+    source.receivedAt, productionDependencies,
   );
   if (!extraction) throw new Error('メールから安全な予定を抽出できませんでした。日付・開始時刻・終了時刻を確認してください。');
   return {
@@ -916,7 +971,6 @@ const previewSchemaDraftRule = async (input: {
       priority: rule.priority,
       executionMode: rule.executionMode,
       selectionPolicy: JSON.parse(rule.selectionPolicy) as Record<string, unknown>,
-      taskRoleIds: JSON.parse(rule.taskRoleIds) as string[],
     },
     extraction,
   };
@@ -927,16 +981,12 @@ const previewMailboxTestAiRequest = async (
   env: Bindings,
   input: { database: D1Database; source: string; attachments: SourceAttachmentContent[]; receivedAt?: string },
 ): Promise<AiEventDetailsRequest> => {
-  const taskRoles = await drizzleAccountDatabase(input.database).select({
-    id: operationalTaskRoles.id,
-    displayName: operationalTaskRoles.displayName,
-    description: operationalTaskRoles.description,
-  }).from(operationalTaskRoles).all();
+  const roster = await assignableContacts(input.database);
   return buildAiEventDetailsRequest({
     source: input.source,
     attachments: input.attachments,
     ...(input.receivedAt === undefined ? {} : { receivedAt: input.receivedAt }),
-    taskRoles,
+    roster,
     markdown: env.AI,
   });
 };
@@ -1774,12 +1824,26 @@ interface SchemaExtractionEffectArguments {
   agentFailed: boolean;
 }
 
-const schemaPlannedEffects = (arguments_: SchemaExtractionEffectArguments) => [
-  ...(arguments_.extraction.warnings.length ? [{ key: 'record-warnings', kind: 'schema.record_warnings', arguments: arguments_ as unknown as Record<string, unknown>, dependsOn: [] }] : []),
-  { key: 'deliver-summary', kind: 'schema.deliver_summary', arguments: arguments_ as unknown as Record<string, unknown>, dependsOn: [] },
-  ...(arguments_.extraction.tasks.length ? [{ key: 'create-tasks', kind: 'schema.create_tasks', arguments: arguments_ as unknown as Record<string, unknown>, dependsOn: [] }] : []),
-  { key: 'apply-events', kind: 'schema.apply_events', arguments: arguments_ as unknown as Record<string, unknown>, dependsOn: [] },
-];
+/**
+ * The notice states the Scheduled Events and Tasks this Source Message produced,
+ * so it is planned last and waits for the effects that produce them. A notice
+ * sent before them would either announce work that had not happened or arrive as
+ * a second message the reader has to correlate with the first.
+ */
+const schemaPlannedEffects = (arguments_: SchemaExtractionEffectArguments) => {
+  const createsTasks = arguments_.extraction.tasks.length > 0;
+  return [
+    ...(arguments_.extraction.warnings.length ? [{ key: 'record-warnings', kind: 'schema.record_warnings', arguments: arguments_ as unknown as Record<string, unknown>, dependsOn: [] }] : []),
+    ...(createsTasks ? [{ key: 'create-tasks', kind: 'schema.create_tasks', arguments: arguments_ as unknown as Record<string, unknown>, dependsOn: [] }] : []),
+    { key: 'apply-events', kind: 'schema.apply_events', arguments: arguments_ as unknown as Record<string, unknown>, dependsOn: [] },
+    {
+      key: 'deliver-summary',
+      kind: 'schema.deliver_summary',
+      arguments: arguments_ as unknown as Record<string, unknown>,
+      dependsOn: ['apply-events', ...(createsTasks ? ['create-tasks'] : [])],
+    },
+  ];
+};
 
 /** Applies only the frozen output of Schema Rule planning; it never invokes AI. */
 const applySchemaExtraction = async (
@@ -1935,7 +1999,19 @@ const schemaRuleEffectPort = (input: {
         dependencies: input.dependencies, env: input.env, database: input.database,
         accountId: arguments_.accountId, googleAccessToken: input.accessToken,
         sourceMessageId: arguments_.sourceMessageId, rule: arguments_.rule,
-        subject: `Message Summary: ${arguments_.subject}`, body: arguments_.extraction.summary,
+        subject: `Message Summary: ${arguments_.subject}`,
+        body: sourceMessageNotice({
+          summary: arguments_.extraction.summary,
+          // An Event Response's extracted events locate the Scheduled Event it
+          // answers and create nothing, so only an invitation has events to state.
+          events: arguments_.extraction.kind === 'response' ? [] : arguments_.extraction.events,
+          // The Tasks are read back rather than restated from the extraction,
+          // because the assignee is resolved from the roles when they are created.
+          tasks: await db.select({
+            title: tasks.title, deadline: tasks.deadline, assigneeName: tasks.assigneeName,
+          }).from(tasks).where(eq(tasks.sourceMessageId, arguments_.sourceMessageId))
+            .orderBy(asc(tasks.deadline), asc(tasks.createdAt)).all(),
+        }),
       });
     } else if (effect.kind === 'schema.create_tasks') {
       await createTaskWorkflow(db).createFromSourceMessage({
@@ -2044,7 +2120,6 @@ const startSchemaDraftRuleRun = async (input: {
     priority: row.priority,
     executionMode: row.executionMode,
     selectionPolicy: JSON.parse(row.selectionPolicy) as Record<string, unknown>,
-    taskRoleIds: JSON.parse(row.taskRoleIds) as string[],
     permittedRecipientListIds: recipientReferences.map(({ listId }) => listId),
     permittedLineListIds: lineReferences.map(({ listId }) => listId),
   };
@@ -2073,11 +2148,7 @@ const startSchemaDraftRuleRun = async (input: {
       state: 'processed',
     }).run();
   }
-  const allowedRoles = new Set(rule.taskRoleIds ?? []);
-  const extraction: MailExtraction = {
-    ...input.extraction,
-    tasks: input.extraction.tasks.filter((task) => allowedRoles.has(task.assigneeRoleId)),
-  };
+  const extraction: MailExtraction = input.extraction;
   const arguments_: SchemaExtractionEffectArguments = {
     accountId: input.accountId,
     sourceMessageId,

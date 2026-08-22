@@ -85,6 +85,9 @@ describe('canonical D1 schemas', () => {
       '0023_access_tokens.sql',
       '0024_automations.sql',
       '0025_discord_channel.sql',
+      '0026_contact_description.sql',
+      '0027_name_the_contact.sql',
+      '0028_rule_notice_contacts.sql',
     ]);
   });
 

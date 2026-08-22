@@ -2,7 +2,7 @@ import { CalendarClock, CheckSquare, CircleAlert, LogOut, Mail, Menu, MessageSqu
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
-import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, OperationalTaskRole, AccountAgentRule, AccountConnections, AccountLineDestination, AccountMembership, AccountPrompt, AccountContact, AccountContactInput, AccountRule, AccountRuleInput, AccountTask, AccountTypedList, PresetSummary, ContactLineDestinationInput, RuleRun, TaskAssignmentProposal, TaskReassignmentReview, TaskRoleAssignment } from './api';
+import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, AccountAgentRule, AccountConnections, AccountLineDestination, AccountMembership, AccountPrompt, AccountContact, AccountContactInput, AccountRule, AccountRuleInput, AccountTask, AccountTypedList, PresetSummary, ContactLineDestinationInput, RuleRun } from './api';
 import { AutomationPage, ConnectionsPage, EventRefreshPage, MailboxTestPage, ContactsPage, RuleRunsPage, RulesPage, TasksPage } from './dashboard-pages';
 import { ChannelTestPage } from './channel-test';
 import { ChatPage } from './chat';
@@ -38,7 +38,7 @@ const navigationItems: readonly NavigationItem[] = [
   { to: '../automations', label: '定期実行', icon: <CalendarClock size={16} /> },
   { to: '../connections', label: '接続設定', icon: <Settings size={16} /> },
   { to: '../rules', label: 'ルール', icon: <SlidersHorizontal size={16} /> },
-  { to: '../members', label: 'メンバー', icon: <UsersRound size={16} /> },
+  { to: '../members', label: '連絡先', icon: <UsersRound size={16} /> },
   { to: '../tasks', label: 'タスク', icon: <CheckSquare size={16} /> },
   { to: '../mailbox-test', label: 'メールテスト', icon: <Mail size={16} /> },
   { to: '../channel-test', label: '送信テスト', icon: <Send size={16} /> },
@@ -115,7 +115,12 @@ export interface DashboardProps {
   accountRules: AccountRule[];
   accountLists: AccountTypedList[];
   onCreateRule: (input: AccountRuleInput) => Promise<void>;
-  onUpdateRule: (ruleId: string, input: Partial<Pick<AccountRule, 'state' | 'executionMode' | 'permittedRecipientListIds' | 'permittedLineListIds'>>) => Promise<void>;
+  /** The Contacts a notice can actually reach, and the Channels each is reachable on. */
+  noticeTargets: Array<{ id: string; name: string; channels: string[] }>;
+  /** The named sets of Contacts this Account holds, so a Rule can say who it tells. */
+  contactLists: Array<{ id: string; name: string; contactIds: string[] }>;
+  onSaveNoticeContacts: (ruleId: string, contactIds: string[]) => Promise<void>;
+  onUpdateRule: (ruleId: string, input: Partial<Pick<AccountRule, 'state' | 'executionMode' | 'noticeContactListId' | 'permittedRecipientListIds' | 'permittedLineListIds'>>) => Promise<void>;
   prompts: AccountPrompt[];
   agentRules: AccountAgentRule[];
   agentRuns: AgentRunIndex[];
@@ -129,25 +134,13 @@ export interface DashboardProps {
   onUpdateAgentRule: (agentRuleId: string, input: { state?: 'draft' | 'active' | 'suspended' | 'archived'; executionMode?: 'read_only' | 'approval' | 'unattended'; permittedRecipientListIds?: string[]; permittedLineListIds?: string[] }) => Promise<void>;
   onLoadAgentTranscript: (runId: string) => void;
   accountTasks: AccountTask[];
-  onUpdateTask: (taskId: string, input: { completed?: boolean; remarks?: string }) => void;
-  taskRoles: OperationalTaskRole[];
-  taskRoleAssignments: TaskRoleAssignment[];
+  onUpdateTask: (taskId: string, input: { completed?: boolean; remarks?: string; assigneeContactId?: string | null }) => void;
   taskContacts: Array<{ contactId: string; displayName: string }>;
-  onCreateTaskRole: (input: { displayName: string; description: string }) => Promise<void>;
-  onUpdateTaskRole: (roleId: string, input: { displayName?: string; description?: string }) => Promise<void>;
-  onDeleteTaskRole: (roleId: string) => Promise<void>;
-  onAssignTaskRole: (roleId: string, contactId: string) => void;
-  taskReassignment: TaskReassignmentReview;
-  taskReassignmentProposals: TaskAssignmentProposal[];
   /** Task ids an accepted proposal could not be applied to. */
-  taskReassignmentSkipped: string[];
-  onSuggestTaskReassignments: () => void;
-  onApplyTaskReassignments: (assignments: Array<{ taskId: string; roleId: string }>) => void;
-  onDiscardTaskReassignments: () => void;
   accountContacts: AccountContact[];
   lineDestinations: AccountLineDestination[];
   onCreateContact: (input: AccountContactInput) => Promise<AccountContact | null>;
-  onUpdateContact: (contactId: string, input: Partial<Pick<AccountContact, 'name' | 'email' | 'tags' | 'state'>>) => Promise<void>;
+  onUpdateContact: (contactId: string, input: Partial<Pick<AccountContact, 'name' | 'email' | 'description' | 'tags' | 'state'>>) => Promise<void>;
   onSetLineDestination: (contactId: string, input: ContactLineDestinationInput) => Promise<void>;
   onUnlinkLineDestination: (contactId: string, lineDestinationId: string) => Promise<void>;
   onRegisterLineDestination: (input: ContactLineDestinationInput) => Promise<void>;
