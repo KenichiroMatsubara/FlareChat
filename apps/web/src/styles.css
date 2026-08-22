@@ -13,6 +13,7 @@
   --green: #2e6a4f;
   --paper: #fff;
   --topbar-height: 60px;
+  --sidebar-width: 236px;
   --page-gutter: clamp(16px, 4vw, 24px);
 }
 
@@ -39,7 +40,8 @@ svg { flex: none; }
 .app-brand strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-brand > span { display: grid; place-items: center; width: 31px; height: 31px; background: #2f7250; border-radius: 8px; }
 
-/* Collapsed navigation: a drawer below the bar on narrow viewports, an inline row from 861px up. */
+/* Navigation: a drawer below the bar on narrow viewports, a standing side bar from 1101px up. */
+.app-body { display: flex; flex: 1; align-items: stretch; min-height: 0; }
 .topbar-toggle { display: grid; place-items: center; width: 42px; height: 42px; margin-left: auto; color: #dde8df; background: rgba(255,255,255,.09); border: 0; border-radius: 10px; }
 .topbar-toggle:hover { color: white; background: rgba(255,255,255,.17); }
 .topbar-panel { position: fixed; inset: var(--topbar-height) 0 auto 0; z-index: 45; display: grid; align-content: start; gap: 3px; max-height: calc(100dvh - var(--topbar-height)); overflow-y: auto; padding: 12px 14px calc(14px + env(safe-area-inset-bottom)); visibility: hidden; opacity: 0; background: #1e3728; border-top: 1px solid rgba(255,255,255,.09); box-shadow: 0 24px 44px rgba(9,17,12,.34); transform: translateY(-10px); transition: opacity .16s ease, transform .16s ease, visibility .16s; }
@@ -47,13 +49,15 @@ svg { flex: none; }
 .topbar-scrim { position: fixed; inset: 0; z-index: 35; width: 100%; padding: 0; border: 0; background: rgba(12,20,14,.5); }
 .organization-picker { display: grid; }
 .organization-picker select { width: 100%; min-height: 46px; padding: 0 32px 0 12px; color: #e4eee4; background: #294532; border: 1px solid #55745e; border-radius: 9px; font-size: 16px; }
-.app-topbar nav { display: grid; gap: 3px; }
-.app-topbar nav a { display: flex; align-items: center; gap: 9px; min-height: 46px; padding: 0 12px; color: #d9e5da; border-left: 3px solid transparent; border-radius: 9px; font-size: 14px; text-decoration: none; }
-.app-topbar nav a:hover, .app-topbar nav a.active { color: white; background: rgba(255,255,255,.08); border-left-color: #84c59a; }
-.topbar-logout { display: flex; align-items: center; gap: 9px; min-height: 46px; margin-top: 7px; padding: 0 12px; color: #d9e5da; background: transparent; border: 0; border-top: 1px solid rgba(255,255,255,.12); font-size: 14px; }
+.topbar-panel nav { display: grid; gap: 3px; }
+.topbar-panel .nav-group { margin: 14px 0 3px; padding: 0 12px; color: #7f9c88; font-size: 10px; font-weight: 700; letter-spacing: 1.4px; }
+.topbar-panel .nav-group:first-child { margin-top: 4px; }
+.topbar-panel nav a { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 0 12px; color: #d9e5da; border-left: 3px solid transparent; border-radius: 9px; font-size: 14px; text-decoration: none; white-space: nowrap; }
+.topbar-panel nav a:hover, .topbar-panel nav a.active { color: white; background: rgba(255,255,255,.08); border-left-color: #84c59a; }
+.topbar-logout { display: flex; align-items: center; gap: 9px; min-height: 42px; margin-top: 14px; padding: 0 12px; color: #d9e5da; background: transparent; border: 0; border-top: 1px solid rgba(255,255,255,.12); font-size: 14px; white-space: nowrap; }
 .topbar-logout:hover { color: white; }
 
-.app-content { display: grid; align-content: start; gap: 18px; width: 100%; max-width: 1328px; margin: 0 auto; padding: clamp(26px, 5vw, 52px) max(var(--page-gutter), env(safe-area-inset-right)) clamp(52px, 9vw, 80px) max(var(--page-gutter), env(safe-area-inset-left)); }
+.app-content { display: grid; flex: 1; align-content: start; gap: 18px; width: 100%; min-width: 0; max-width: 1328px; margin: 0 auto; padding: clamp(26px, 5vw, 52px) max(var(--page-gutter), env(safe-area-inset-right)) clamp(52px, 9vw, 80px) max(var(--page-gutter), env(safe-area-inset-left)); }
 .page-layout { display: grid; gap: clamp(15px, 2.6vw, 24px); }
 .page-title p { margin: 0; color: #558166; font-size: 10px; font-weight: 700; letter-spacing: 1.5px; }
 .page-title h1 { margin: 7px 0; color: #24372a; font-size: clamp(24px, 5.5vw, 32px); letter-spacing: -.8px; line-height: 1.2; }
@@ -337,18 +341,15 @@ svg { flex: none; }
 .preset-choice small { margin-top: 3px; color: #718073; font-size: 10px; font-weight: 400; line-height: 1.5; }
 .preset-choice p { margin: 0; color: #718073; font-size: 10px; line-height: 1.5; }
 
-/* Inline top bar from 861px up */
+/* Standing side bar from 1101px up */
 @media (min-width: 1101px) {
   :root { --topbar-height: 64px; }
   .topbar-toggle, .topbar-scrim { display: none; }
-  .app-brand { min-width: 235px; }
-  .topbar-panel { position: static; z-index: auto; display: flex; flex: 1; align-self: stretch; align-items: center; gap: 4px; max-height: none; overflow: visible; padding: 0; visibility: visible; opacity: 1; background: none; border: 0; box-shadow: none; transform: none; transition: none; }
-  .organization-picker { margin-right: 20px; }
-  .organization-picker select { max-width: 190px; min-height: 0; padding: 7px 28px 7px 10px; font-size: 11px; }
-  .app-topbar nav { display: flex; align-self: stretch; gap: 4px; }
-  .app-topbar nav a { min-height: 0; padding: 0 14px; border-left: 0; border-bottom: 3px solid transparent; border-radius: 0; font-size: 12px; }
-  .app-topbar nav a:hover, .app-topbar nav a.active { border-left-color: transparent; border-bottom-color: #84c59a; }
-  .topbar-logout { min-height: 0; margin: 0 0 0 auto; padding: 0 14px; border-top: 0; font-size: 12px; }
+  .app-topbar { padding-left: 26px; }
+  .topbar-panel { position: sticky; top: var(--topbar-height); z-index: auto; display: flex; flex-direction: column; flex: none; align-self: flex-start; gap: 0; width: var(--sidebar-width); height: calc(100dvh - var(--topbar-height)); max-height: none; padding: 16px 14px calc(16px + env(safe-area-inset-bottom)); visibility: visible; opacity: 1; border-top: 0; border-right: 1px solid rgba(255,255,255,.08); box-shadow: none; transform: none; transition: none; }
+  .organization-picker select { min-height: 40px; padding: 0 30px 0 11px; font-size: 13px; }
+  .topbar-panel .nav-group:first-child { margin-top: 18px; }
+  .topbar-logout { margin-top: auto; }
 }
 
 .ai-request { max-height: 420px; margin: 0; padding: 14px; overflow: auto; color: #2d4034; background: #f4f8f4; border: 1px solid #dce9de; border-radius: 9px; font-size: 11px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -441,7 +442,7 @@ nav a.loading { opacity: .65; }
 }
 
 @media (pointer: coarse) {
-  .primary, .secondary, .topbar-logout, .app-topbar nav a { min-height: 46px; }
+  .primary, .secondary, .topbar-logout, .topbar-panel nav a { min-height: 46px; }
   .quiet-button { min-height: 40px; }
   .switch { width: 46px; height: 27px; }
   .switch span::before { width: 21px; height: 21px; }

@@ -57,9 +57,23 @@ describe('responsive dashboard shell', () => {
   });
 
   it('keeps every navigation target inside the collapsible panel', () => {
-    const panel = /<div id="app-navigation" class="topbar-panel">(.*?)<\/header>/su.exec(markup())?.[1] ?? '';
+    const panel = /<div id="app-navigation" class="topbar-panel">(.*?)<main /su.exec(markup())?.[1] ?? '';
     expect(panel).toContain('class="organization-picker"');
     for (const label of ['自動化', '接続設定', 'ルール', '連絡先', 'タスク', 'メールテスト', 'Rule Runs', '予定の再同期', 'ログアウト']) expect(panel).toContain(label);
+  });
+
+  it('separates daily work from settings and from the verification tooling', () => {
+    const headings = [...markup().matchAll(/<p class="nav-group">(.*?)<\/p>/gu)].map((match) => match[1]);
+
+    expect(headings).toEqual(['運用', '設定', '検証']);
+  });
+
+  it('stands the navigation beside the page instead of crowding the top bar on desktop', async () => {
+    const stylesheet = await readFile(new URL('./styles.css', import.meta.url), 'utf8');
+
+    expect(stylesheet).toContain('.topbar-panel nav a { display: flex;');
+    expect(stylesheet).toMatch(/\.topbar-panel nav a \{[^}]*white-space: nowrap;/u);
+    expect(stylesheet).toMatch(/@media \(min-width: 1101px\) \{[\s\S]*?\.topbar-panel \{[^}]*width: var\(--sidebar-width\);/u);
   });
 
   it('stacks the AI request heading and its copy action on narrow screens', async () => {
