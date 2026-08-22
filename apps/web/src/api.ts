@@ -324,7 +324,7 @@ export interface ReminderSettings {
   days: number[];
 }
 
-/** One attendance reminder the fixed milestones will send, as the GUI previews it. */
+/** One attendance reminder the configured milestones will send, as the GUI previews it. */
 export interface ScheduledAttendanceReminder {
   eventId: string;
   eventTitle: string;
@@ -540,9 +540,9 @@ export const api = {
 
   attendanceReminders: (accountId: string): Promise<ReminderSettings> => request(`/api/organizations/${encodeURIComponent(accountId)}/attendance-reminders`),
 
-  saveAttendanceReminders: (accountId: string, enabled: boolean): Promise<ReminderSettings> => request(`/api/organizations/${encodeURIComponent(accountId)}/attendance-reminders`, {
+  saveAttendanceReminders: (accountId: string, input: { days?: readonly number[]; enabled?: boolean }): Promise<ReminderSettings> => request(`/api/organizations/${encodeURIComponent(accountId)}/attendance-reminders`, {
     method: 'PUT',
-    body: JSON.stringify({ enabled }),
+    body: JSON.stringify(input),
   }),
 
   scheduledAttendanceReminders: (accountId: string): Promise<ScheduledAttendanceReminder[]> => request(`/api/organizations/${encodeURIComponent(accountId)}/attendance-reminders/schedule`),

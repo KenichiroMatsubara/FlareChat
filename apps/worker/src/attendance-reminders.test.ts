@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  accountAttendanceReminderDays,
   accountAttendanceRemindersEnabled,
   enqueueDueAttendanceReminders,
+  saveAccountAttendanceReminderDays,
   saveAccountAttendanceRemindersEnabled,
   upcomingAttendanceReminders,
 } from './attendance-reminders';
@@ -142,5 +144,45 @@ describe('the attendance reminder switch', () => {
     });
 
     await expect(upcomingAttendanceReminders(database.binding, '2026-07-20T00:00:00.000Z')).resolves.toEqual([]);
+  });
+});
+
+describe('the attendance reminder milestones an Account chooses', () => {
+  const seeded = (): TestD1Database => {
+    const database = createMigratedTestD1('organization');
+    openDatabases.push(database);
+    database.execute(
+      `INSERT INTO settings (key, value, updated_at) VALUES ('attendance_reminders_enabled', 'true', '2026-08-01')`,
+    );
+    seedScheduledEvent(database, { id: 'event-1', attendanceDeadline: '2026-08-03T00:00:00.000Z' });
+    seedAttendanceRegistration(database, { eventId: 'event-1', contactId: 'contact-1', destination: 'Ucontact-1' });
+    return database;
+  };
+
+  it('reminds on the product default until an Account chooses its own', async () => {
+    const database = seeded();
+
+    await expect(accountAttendanceReminderDays(accountDatabase(database.binding))).resolves.toEqual([7, 3, 1]);
+  });
+
+  it('queues on a chosen milestone and no longer on one it dropped', async () => {
+    const database = seeded();
+    await saveAccountAttendanceReminderDays(accountDatabase(database.binding), [14, 0], '2026-07-01T00:00:00.000Z');
+
+    await expect(enqueueDueAttendanceReminders(database.binding, '2026-07-31T00:00:00.000Z')).resolves.toBe(0);
+    await expect(enqueueDueAttendanceReminders(database.binding, '2026-07-20T00:00:00.000Z')).resolves.toBe(1);
+    await expect(enqueueDueAttendanceReminders(database.binding, '2026-08-03T00:00:00.000Z')).resolves.toBe(1);
+  });
+
+  it('previews the chosen milestones, and sends nothing at all when none are left', async () => {
+    const database = seeded();
+    await saveAccountAttendanceReminderDays(accountDatabase(database.binding), [14], '2026-07-01T00:00:00.000Z');
+
+    const scheduled = await upcomingAttendanceReminders(database.binding, '2026-07-01T00:00:00.000Z');
+    expect(scheduled.map((reminder) => [reminder.sendOn, reminder.milestone])).toEqual([['2026-07-20', 14]]);
+
+    await saveAccountAttendanceReminderDays(accountDatabase(database.binding), [], '2026-07-01T00:00:00.000Z');
+    await expect(upcomingAttendanceReminders(database.binding, '2026-07-01T00:00:00.000Z')).resolves.toEqual([]);
+    await expect(enqueueDueAttendanceReminders(database.binding, '2026-07-20T00:00:00.000Z')).resolves.toBe(0);
   });
 });

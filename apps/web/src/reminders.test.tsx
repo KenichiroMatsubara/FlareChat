@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
-import { MilestoneSummary, ReminderSchedule, milestoneLabel, taskPreviewRows } from './reminders';
+import { MilestoneEditor, ReminderSchedule, milestoneLabel, taskPreviewRows } from './reminders';
 import type { ScheduledTaskReminder } from './api';
 
 const reminder = (overrides: Partial<ScheduledTaskReminder>): ScheduledTaskReminder => ({
@@ -25,17 +25,35 @@ describe('Task reminder milestones', () => {
     expect(milestoneLabel(-1)).toBe('締め切り1日後');
   });
 
-  it('lists the milestones in the order they fire', () => {
-    const markup = renderToStaticMarkup(<MilestoneSummary days={[7, 3, 1, 0, -1]} />);
+  it('lists the milestones in the order they fire, and offers to remove each', () => {
+    const markup = renderToStaticMarkup(
+      <MilestoneEditor days={[7, 3, 1, 0, -1]} busy={false} label="タスク" minimum={-30} onChange={() => undefined} />,
+    );
 
     expect(markup).toContain('締め切り7日前');
     expect(markup).toContain('締め切り当日');
     expect(markup).toContain('締め切り1日後');
+    expect(markup).toContain('タスクの締め切り7日前のリマインドを削除');
     expect(markup.indexOf('締め切り7日前')).toBeLessThan(markup.indexOf('締め切り当日'));
   });
 
-  it('says an empty set reminds never rather than rendering an empty list', () => {
-    expect(renderToStaticMarkup(<MilestoneSummary days={[]} />)).toContain('リマインドしません。');
+  it('offers the same editor to the attendance cadence, named for it', () => {
+    const markup = renderToStaticMarkup(
+      <MilestoneEditor days={[7]} busy={false} label="出欠" minimum={0} onChange={() => undefined} />,
+    );
+
+    expect(markup).toContain('出欠をリマインドする日');
+    expect(markup).toContain('出欠の締め切り7日前のリマインドを削除');
+    expect(markup).toContain('min="0"');
+  });
+
+  it('says nothing is set rather than rendering an empty list, and still takes a new day', () => {
+    const markup = renderToStaticMarkup(
+      <MilestoneEditor days={[]} busy={false} label="タスク" minimum={-30} onChange={() => undefined} />,
+    );
+
+    expect(markup).toContain('リマインドする日が設定されていません。');
+    expect(markup).toContain('追加');
   });
 });
 

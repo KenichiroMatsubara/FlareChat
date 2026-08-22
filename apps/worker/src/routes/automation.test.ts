@@ -182,6 +182,39 @@ describe('Account Automation routes', () => {
     await expect(enabled.json()).resolves.toMatchObject({ data: { enabled: true, days: [5] } });
   });
 
+  it('answers the default attendance milestones until an Account chooses its own', async () => {
+    fixture = createTestApp();
+
+    const saved = await automationRoutes.fetch(
+      fixture.jsonRequest('/organizations/organization-1/attendance-reminders', { days: [1, 14, 0, 1] }, 'PUT'),
+      fixture.environment,
+    );
+    const reread = await automationRoutes.fetch(
+      fixture.request('/organizations/organization-1/attendance-reminders'),
+      fixture.environment,
+    );
+
+    expect(saved.status).toBe(200);
+    await expect(reread.json()).resolves.toMatchObject({ data: { enabled: false, days: [14, 1, 0] } });
+  });
+
+  it('refuses an attendance milestone past the deadline, which can no longer be answered', async () => {
+    fixture = createTestApp();
+
+    const rejected = await automationRoutes.fetch(
+      fixture.jsonRequest('/organizations/organization-1/attendance-reminders', { days: [-1] }, 'PUT'),
+      fixture.environment,
+    );
+
+    const reread = await automationRoutes.fetch(
+      fixture.request('/organizations/organization-1/attendance-reminders'),
+      fixture.environment,
+    );
+
+    expect(rejected.status).toBe(400);
+    await expect(reread.json()).resolves.toMatchObject({ data: { days: [7, 3, 1] } });
+  });
+
   it('turns the attendance reminders on and off', async () => {
     fixture = createTestApp();
 

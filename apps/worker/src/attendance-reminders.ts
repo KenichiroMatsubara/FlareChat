@@ -1,9 +1,16 @@
-import { ATTENDANCE_REMINDER_DAYS, displayLineDestinationId, shouldSendAttendanceReminder } from '@mail/domain';
+import { DEFAULT_ATTENDANCE_REMINDER_DAYS, displayLineDestinationId, shouldSendAttendanceReminder } from '@mail/domain';
 import { and, eq, isNotNull } from 'drizzle-orm';
 import { ATTENDANCE_REMINDER_JOB_KIND } from './attendance-reminder-job';
 import { createDatabaseAccess } from './database-access';
 import { attendanceReminderNotice } from './notice';
-import { ATTENDANCE_REMINDERS_ENABLED_SETTING, accountRemindersEnabled, saveAccountRemindersEnabled } from './reminder-switch';
+import {
+  ATTENDANCE_REMINDERS_ENABLED_SETTING,
+  ATTENDANCE_REMINDER_DAYS_SETTING,
+  accountReminderDays,
+  accountRemindersEnabled,
+  saveAccountReminderDays,
+  saveAccountRemindersEnabled,
+} from './reminder-settings';
 import type { Bindings } from './types';
 import { controlDatabase, accountDatabase as drizzleAccountDatabase } from './storage/database';
 import type { AccountDatabase } from './storage/database';
@@ -28,6 +35,21 @@ export const saveAccountAttendanceRemindersEnabled = (
   enabled: boolean,
   updatedAt: string,
 ): Promise<void> => saveAccountRemindersEnabled(database, ATTENDANCE_REMINDERS_ENABLED_SETTING, enabled, updatedAt);
+
+/**
+ * The milestones this Account asks for an answer on, falling back to the
+ * product default. ADR 0164 gives attendance the cadence a Task already had,
+ * because a Response Deadline an Account sets itself is exactly the deadline it
+ * knows best how far ahead to chase.
+ */
+export const accountAttendanceReminderDays = (database: AccountDatabase): Promise<readonly number[]> =>
+  accountReminderDays(database, ATTENDANCE_REMINDER_DAYS_SETTING, DEFAULT_ATTENDANCE_REMINDER_DAYS);
+
+export const saveAccountAttendanceReminderDays = (
+  database: AccountDatabase,
+  days: readonly number[],
+  updatedAt: string,
+): Promise<void> => saveAccountReminderDays(database, ATTENDANCE_REMINDER_DAYS_SETTING, days, updatedAt);
 
 /** The unanswered, LINE-reachable Registrations both the queue and the preview read. */
 const attendanceReminderCandidates = async (db: AccountDatabase): Promise<ReminderCandidate[]> => await db.select({
@@ -72,12 +94,15 @@ export const upcomingAttendanceReminders = async (
   database: D1Database,
   now: string,
 ): Promise<ScheduledAttendanceReminder[]> => {
-  const rows = await attendanceReminderCandidates(drizzleAccountDatabase(database));
+  const db = drizzleAccountDatabase(database);
+  const milestones = await accountAttendanceReminderDays(db);
+  if (milestones.length === 0) return [];
+  const rows = await attendanceReminderCandidates(db);
   const today = day(Date.parse(now));
   const scheduled: ScheduledAttendanceReminder[] = [];
   for (const row of rows) {
     if (row.status !== 'unanswered') continue;
-    for (const milestone of ATTENDANCE_REMINDER_DAYS) {
+    for (const milestone of milestones) {
       const sendOn = day(Date.parse(row.attendanceDeadline) - milestone * 86_400_000);
       if (sendOn < today) continue;
       scheduled.push({
@@ -101,12 +126,14 @@ export const upcomingAttendanceReminders = async (
 export const enqueueDueAttendanceReminders = async (database: D1Database, now: string): Promise<number> => {
   const db = drizzleAccountDatabase(database);
   if (!await accountAttendanceRemindersEnabled(db)) return 0;
+  const milestones = await accountAttendanceReminderDays(db);
+  if (milestones.length === 0) return 0;
   const rows = await attendanceReminderCandidates(db);
   let queued = 0;
   for (const row of rows) {
     const milestone = Math.floor((Date.parse(row.attendanceDeadline) - Date.parse(now)) / 86_400_000);
     const idempotencyKey = `attendance-reminder:${row.eventId}:${row.contactId}:${milestone}`;
-    if (!shouldSendAttendanceReminder({ status: row.status, daysUntilDeadline: milestone, alreadySent: false })) continue;
+    if (!shouldSendAttendanceReminder({ status: row.status, daysUntilDeadline: milestone, alreadySent: false, milestones })) continue;
     const timestamp = now;
     const result = await db.insert(jobs).values({
       id: crypto.randomUUID(),
