@@ -33,7 +33,7 @@ describe('Cloudflare control plane', () => {
       CLOUDFLARE_WORKER_NAME: 'flarechat',
     });
     expect(config.keep_vars).toBe(true);
-    expect(config.triggers?.crons).toEqual(['*/30 * * * *']);
+    expect(config.triggers?.crons).toEqual(['*/30 * * * *', '0 */3 * * *']);
     expect(config.unsafe?.metadata?.keep_bindings).toEqual(expect.arrayContaining([
       'd1',
       'plain_text',
