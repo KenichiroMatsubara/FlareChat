@@ -82,7 +82,7 @@ describe('Fleet Migration', () => {
     } as unknown as Bindings);
 
     expect(receipt).toMatchObject({
-      targetMigration: '0028_rule_notice_contacts.sql',
+      targetMigration: '0029_agent_email_summary.sql',
       migratedDatabases: 2,
     });
     expect(active.rows<{ display_name: string }>(
@@ -141,7 +141,7 @@ describe('Fleet Migration', () => {
     } as unknown as Bindings);
 
     expect(receipt).toMatchObject({
-      targetMigration: '0028_rule_notice_contacts.sql',
+      targetMigration: '0029_agent_email_summary.sql',
       migratedDatabases: 1,
     });
     expect(applied.has('0004_manual_line_destination_source.sql')).toBe(true);

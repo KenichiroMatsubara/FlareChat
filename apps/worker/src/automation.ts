@@ -40,7 +40,7 @@ import { writeRecoveryReceipt } from './recovery-receipts';
 import { resolveSourceMessageFolder } from './attachment-folders';
 import { createTaskWorkflow } from './tasks';
 import { createRuleExecution, type ExecutionMode, type RuleEffectPort } from './execution';
-import { channelCredentials, contactChannels, sendOnChannel, sendOnDestination, sendToDestinations, type ChannelCredentials } from './channel';
+import { channelCredentials, contactChannels, sendOnChannel, sendOnDestination, type ChannelCredentials } from './channel';
 import { activeContactInvitees, deliverSourceMessageEmail, recordDeliveryAttempt, recordEventInvitations } from './delivery';
 import type { PublishedDriveAttachment, SourceAttachment, SourceAttachmentContent } from './drive-attachments';
 import { GoogleGrantRejectedError } from './google';
@@ -501,7 +501,19 @@ const accountChannelCredentials = async (
   }
 };
 
-/** Resolves one Rule's configured readers and delivers one Source Message-level notice to each destination. */
+/**
+ * Delivers one Source Message-level notice to the Contacts the Rule names.
+ *
+ * The Rule has exactly one destination setting: the Contacts an operator ticked
+ * in the GUI (ADR 0162, ADR 0166). Nothing infers a recipient — who reads this
+ * Rule's notices is a decision the Account makes once, on a screen, and the run
+ * only carries it out.
+ *
+ * Each Contact is reached once. Email is used when the Contact has an address,
+ * because that is what an Account picking people expects to happen; a Contact
+ * holding only a Channel handle — a group or a room (ADR 0139) — is reached
+ * there instead. A Contact with neither is skipped rather than invented for.
+ */
 const deliverSourceMessageNotice = async (input: {
   dependencies: AutomationDependencies;
   env: Bindings;
@@ -513,45 +525,31 @@ const deliverSourceMessageNotice = async (input: {
   subject: string;
   body: string;
 }): Promise<void> => {
+  if (!input.rule.noticeContactListId) return;
   const db = drizzleAccountDatabase(input.database);
-  const permittedRecipientListIds = input.rule.permittedRecipientListIds ?? [];
-  if (permittedRecipientListIds.length) {
-    const recipients = await db.select({ destination: listItems.value }).from(listItems).where(and(
-      inArray(listItems.listId, permittedRecipientListIds),
-      eq(listItems.enabled, true),
-    )).all();
-    await Promise.all([...new Set(recipients.map(({ destination }) => destination))].map((destination) => deliverSourceMessageEmail({
-      database: input.database,
-      google: input.dependencies.google,
-      accessToken: input.googleAccessToken,
-      sourceMessageId: input.sourceMessageId,
-      destination,
-      subject: input.subject,
-      body: input.body,
-    })));
-  }
-  const permittedLineListIds = input.rule.permittedLineListIds ?? [];
-  if (!permittedLineListIds.length && !input.rule.noticeContactListId) return;
+  const readers = await db.select({ contactId: contactListMembers.contactId, email: contacts.email })
+    .from(contactListMembers)
+    .innerJoin(contacts, eq(contacts.id, contactListMembers.contactId))
+    .where(eq(contactListMembers.listId, input.rule.noticeContactListId)).all();
+  if (!readers.length) return;
   const credentials = await accountChannelCredentials(input.env, input.accountId, input.database);
-  if (permittedLineListIds.length && credentials.line) {
-    const destinations = await db.select({ destinationId: listItems.value }).from(listItems).where(and(
-      inArray(listItems.listId, permittedLineListIds),
-      eq(listItems.enabled, true),
-    )).all();
-    await sendToDestinations({
+  for (const reader of new Map(readers.map((reader) => [reader.contactId, reader])).values()) {
+    if (reader.email) {
+      await deliverSourceMessageEmail({
+        database: input.database,
+        google: input.dependencies.google,
+        accessToken: input.googleAccessToken,
+        sourceMessageId: input.sourceMessageId,
+        destination: reader.email,
+        subject: input.subject,
+        body: input.body,
+      });
+      continue;
+    }
+    await deliverNoticeToContact({
       database: input.database,
       credentials,
-      channel: 'line',
-      destinations: destinations.map(({ destinationId }) => destinationId),
-      texts: [input.body],
-      sourceMessageId: input.sourceMessageId,
-    });
-  }
-  if (input.rule.noticeContactListId) {
-    await deliverNoticeToContacts({
-      database: input.database,
-      credentials,
-      contactListId: input.rule.noticeContactListId,
+      contactId: reader.contactId,
       body: input.body,
       sourceMessageId: input.sourceMessageId,
     });
@@ -559,41 +557,35 @@ const deliverSourceMessageNotice = async (input: {
 };
 
 /**
- * Reaches every Contact of the Rule's Contact List once (ADR 0162).
+ * Reaches one Contact on the Channel it holds a handle for (ADR 0162).
  *
  * The handle is resolved from the Contact rather than written into a list, so a
- * Contact that gains a Channel is reachable on it wherever the list is used. A
- * Contact is reached on the first Channel it holds a handle for, in the order
- * the product carries them, and one with no handle at all is skipped: there is
- * nowhere to deliver, and inventing a destination would only record a failure
- * that never left.
+ * Contact that gains a Channel is reachable on it wherever it is named. One with
+ * no handle at all is skipped: there is nowhere to deliver, and inventing a
+ * destination would only record a failure that never left.
  */
-const deliverNoticeToContacts = async (input: {
+const deliverNoticeToContact = async (input: {
   database: D1Database;
   credentials: ChannelCredentials;
-  contactListId: string;
+  contactId: string;
   body: string;
   sourceMessageId: string;
 }): Promise<void> => {
-  const members = await drizzleAccountDatabase(input.database).select({ contactId: contactListMembers.contactId })
-    .from(contactListMembers).where(eq(contactListMembers.listId, input.contactListId)).all();
-  for (const contactId of [...new Set(members.map(({ contactId }) => contactId))]) {
-    const channels = await contactChannels({ database: input.database, contactId });
-    const channel = channels[0];
-    if (!channel) continue;
-    try {
-      await sendOnChannel({
-        database: input.database,
-        credentials: input.credentials,
-        contactId,
-        channel,
-        texts: [input.body],
-        sourceMessageId: input.sourceMessageId,
-      });
-    } catch {
-      // A refusal is already recorded as a failed Delivery Record; the rest of
-      // the roster must still hear about the Source Message.
-    }
+  const channels = await contactChannels({ database: input.database, contactId: input.contactId });
+  const channel = channels[0];
+  if (!channel) return;
+  try {
+    await sendOnChannel({
+      database: input.database,
+      credentials: input.credentials,
+      contactId: input.contactId,
+      channel,
+      texts: [input.body],
+      sourceMessageId: input.sourceMessageId,
+    });
+  } catch {
+    // A refusal is already recorded as a failed Delivery Record; the rest of
+    // the roster must still hear about the Source Message.
   }
 };
 
@@ -750,6 +742,15 @@ const createAgentWritePort = (input: {
     const delivery = await recordDeliveryAttempt(input.database, { eventId, sourceMessageId: input.sourceMessageId, destination: arguments_.destination, channel: 'calendar', outcome, externalId: googleEventId });
     return delivery;
   },
+  sendEmailSummary: async ({ destination, subject, body }) => deliverSourceMessageEmail({
+    database: input.database,
+    google: input.dependencies.google,
+    accessToken: input.googleAccessToken,
+    sourceMessageId: input.sourceMessageId,
+    destination,
+    subject,
+    body,
+  }),
 });
 
 export const agentWritePortForApproval = async (input: {
@@ -840,9 +841,11 @@ const runMatchingAgentRules = async (input: {
             dependsOn: [],
           })),
         }] },
-        effects: { apply: async ({ effect }) => effect.kind === 'agent.send_line_message'
-          ? writes.sendLine(effect.arguments as { destination: string; message: string })
-          : writes.createScheduledEvent(effect.arguments as { destination: string; title: string; startsAt: string; endsAt: string; location?: string; description?: string }) },
+        effects: { apply: async ({ effect }) => {
+          if (effect.kind === 'agent.send_line_message') return writes.sendLine(effect.arguments as { destination: string; message: string });
+          if (effect.kind === 'agent.send_email_summary') return writes.sendEmailSummary(effect.arguments as { destination: string; subject: string; body: string });
+          return writes.createScheduledEvent(effect.arguments as { destination: string; title: string; startsAt: string; endsAt: string; location?: string; description?: string });
+        } },
         id: (() => {
           let runIdAvailable = true;
           return () => {
@@ -2006,7 +2009,7 @@ const schemaRuleEffectPort = (input: {
           // answers and create nothing, so only an invitation has events to state.
           events: arguments_.extraction.kind === 'response' ? [] : arguments_.extraction.events,
           // The Tasks are read back rather than restated from the extraction,
-          // because the assignee is resolved from the roles when they are created.
+          // because the assignee is resolved from the Contacts when they are created.
           tasks: await db.select({
             title: tasks.title, deadline: tasks.deadline, assigneeName: tasks.assigneeName,
           }).from(tasks).where(eq(tasks.sourceMessageId, arguments_.sourceMessageId))

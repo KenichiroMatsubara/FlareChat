@@ -88,6 +88,7 @@ describe('canonical D1 schemas', () => {
       '0026_contact_description.sql',
       '0027_name_the_contact.sql',
       '0028_rule_notice_contacts.sql',
+      '0029_agent_email_summary.sql',
     ]);
   });
 

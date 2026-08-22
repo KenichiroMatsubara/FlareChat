@@ -147,6 +147,7 @@ describe('Account database resolver', () => {
       { name: '0026_contact_description.sql' },
       { name: '0027_name_the_contact.sql' },
       { name: '0028_rule_notice_contacts.sql' },
+      { name: '0029_agent_email_summary.sql' },
     ]);
   });
 
