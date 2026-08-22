@@ -176,6 +176,8 @@ describe('the Task reminder milestones an Account configured', () => {
     ]);
     expect(scheduled[0]).toMatchObject({ contactName: '山田花子', channel: 'line' });
     expect(scheduled[0]?.text).toContain('締め切りまであと3日');
+    expect(scheduled[0]?.text).toContain('元メール：年次行事');
+    expect(scheduled[0]?.text).toContain('指定口座へ送金する');
     expect(scheduled[1]?.text).toContain('本日が締め切りです');
     expect(scheduled[2]?.text).toContain('期限切れです');
   });

@@ -87,17 +87,32 @@ export const attendanceReminderNotice = (input: {
   return `${heading}\n・${input.title}（${by(input.deadline)}）`;
 };
 
+/**
+ * A Task's title is a fragment of the message it was raised from — "登録用紙の返信"
+ * names an action but not which registration form — so the reminder states the
+ * Source Message it came from and what the extraction understood the Task to be.
+ * Both are already on the Task; stating only the title left the reader to
+ * recognise a deadline they had no way to place.
+ */
 export const taskReminderNotice = (input: {
   title: string;
   deadline: string;
   milestone: number;
+  sourceMessageSubject?: string;
+  description?: string;
 }): string => {
   const heading = input.milestone > 0
     ? `【リマインド】締め切りまであと${input.milestone}日`
     : input.milestone === 0
       ? '【リマインド】本日が締め切りです'
       : `【リマインド】期限切れです（${Math.abs(input.milestone)}日経過）`;
-  return `${heading}\n・${by(input.deadline)} ${input.title}`;
+  const subject = input.sourceMessageSubject?.trim();
+  const description = input.description?.trim();
+  return [
+    `${heading}\n・${by(input.deadline)} ${input.title}`,
+    ...(subject ? [`元メール：${subject}`] : []),
+    ...(description ? [description] : []),
+  ].join('\n');
 };
 
 /**

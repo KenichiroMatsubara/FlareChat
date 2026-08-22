@@ -41,6 +41,8 @@ export const taskReminderJobHandler = (env: Bindings): JobHandler => async ({ da
   const task = await accountDatabase(database).select({
     title: tasks.title,
     deadline: tasks.deadline,
+    sourceMessageSubject: tasks.sourceMessageSubject,
+    description: tasks.description,
     completed: tasks.completed,
     assigneeContactId: tasks.assigneeContactId,
   }).from(tasks).where(eq(tasks.id, reminder.taskId)).get();
@@ -53,6 +55,12 @@ export const taskReminderJobHandler = (env: Bindings): JobHandler => async ({ da
     credentials: await channelCredentials({ database, accountKey, accountId }),
     contactId: reminder.contactId,
     channel: typeof reminder.channel === 'string' && reminder.channel ? reminder.channel : 'line',
-    texts: [taskReminderNotice({ title: task.title, deadline: task.deadline, milestone: reminder.milestone })],
+    texts: [taskReminderNotice({
+      title: task.title,
+      deadline: task.deadline,
+      milestone: reminder.milestone,
+      sourceMessageSubject: task.sourceMessageSubject,
+      description: task.description,
+    })],
   });
 };
