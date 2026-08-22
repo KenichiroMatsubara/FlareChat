@@ -7,9 +7,15 @@ import type { EventDetails } from './event-details';
  * correlates a Scheduled Event with its Source Message.
  */
 export const sourceMessageAttribution = (gmailMessageId: string): string =>
-  `Mail Automation が Gmail メッセージ ${gmailMessageId} から作成しました。`;
+  `FlareChat が Gmail メッセージ ${gmailMessageId} から作成しました。`;
 
-/** Reads the Gmail message ID out of every generation of the Source Attribution. */
+/**
+ * Reads the Gmail message ID out of every generation of the Source Attribution.
+ * The pattern deliberately begins after the product name, so a Scheduled Event
+ * written under the old name — or under the separate manual-test wording — is
+ * still correlated with its Source Message. Renaming the writer must never
+ * orphan an event already sitting in an Account's calendar.
+ */
 export const attributedMessageId = (description: string): string | null =>
   /Gmail\s*メッセージ\s+([A-Za-z0-9_-]{1,200})\s*から作成しました/u.exec(description)?.[1] ?? null;
 
