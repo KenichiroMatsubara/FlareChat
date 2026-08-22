@@ -1,3 +1,4 @@
+import { MIN_ATTENDANCE_REMINDER_DAY, MIN_REMINDER_DAY } from '@mail/domain';
 import { BellRing, CheckCircle2, CircleAlert, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -14,12 +15,49 @@ export const milestoneLabel = (day: number): string => day > 0
   ? `締め切り${day}日前`
   : day === 0 ? '締め切り当日' : `締め切り${Math.abs(day)}日後`;
 
-/** The milestones as they read together, for a page that only reports them. */
-export const MilestoneSummary = ({ days }: { days: readonly number[] }) => days.length === 0
-  ? <p className="rules-empty">リマインドしません。</p>
-  : <ul className="reminder-days">
-    {days.map((day) => <li key={day}>{milestoneLabel(day)}</li>)}
-  </ul>;
+/**
+ * The milestones an Account reminds on, and the only way to change them. Both
+ * cadences are edited through it (ADR 0164): a Response Deadline is a deadline
+ * an Account sets itself, so it chooses how far ahead to chase it exactly as it
+ * does for a Task.
+ */
+export const MilestoneEditor = ({ days, busy, label, minimum, onChange }: {
+  days: readonly number[];
+  busy: boolean;
+  label: string;
+  minimum: number;
+  onChange: (next: readonly number[]) => void;
+}) => {
+  const [entry, setEntry] = useState('0');
+  const day = Number(entry.trim());
+  const addable = Number.isInteger(day) && day >= minimum && !days.includes(day);
+
+  return <>
+    {days.length === 0
+      ? <p className="rules-empty">リマインドする日が設定されていません。</p>
+      : <ul className="reminder-days">
+        {days.map((current) => <li key={current}>
+          <span>{milestoneLabel(current)}</span>
+          <button
+            type="button"
+            className="secondary"
+            disabled={busy}
+            aria-label={`${label}の${milestoneLabel(current)}のリマインドを削除`}
+            onClick={() => onChange(days.filter((kept) => kept !== current))}
+          ><Trash2 size={16} /></button>
+        </li>)}
+      </ul>}
+    <form className="access-form" onSubmit={(event) => { event.preventDefault(); if (addable) onChange([...days, day]); }}>
+      <label>
+        締め切りからの日数
+        <input type="number" min={minimum} value={entry} disabled={busy} aria-label={`${label}をリマインドする日`} onChange={(change) => setEntry(change.target.value)} />
+      </label>
+      <button type="submit" className="primary" disabled={busy || !addable}>
+        <Plus size={16} />追加
+      </button>
+    </form>
+  </>;
+};
 
 /** One row of either preview, which differ only in what they name. */
 interface PreviewRow {
@@ -87,8 +125,8 @@ const ReminderSwitch = ({ enabled, busy, onChange, label }: {
 
 /**
  * Both reminder cadences an Account controls, each beside the schedule it
- * produces. The Task milestones are chosen; the attendance milestones are fixed
- * by ADR 0030, so only its switch is offered.
+ * produces. Both are chosen the same way (ADR 0164): a switch, the milestones
+ * counted from the deadline, and the schedule those milestones would send.
  */
 export const RemindersPage = ({ accountId }: { accountId: string }) => {
   const [taskEnabled, setTaskEnabled] = useState(false);
@@ -98,7 +136,6 @@ export const RemindersPage = ({ accountId }: { accountId: string }) => {
   const [attendanceDays, setAttendanceDays] = useState<readonly number[]>([]);
   const [attendanceSchedule, setAttendanceSchedule] = useState<readonly ScheduledAttendanceReminder[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const [entry, setEntry] = useState('0');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
@@ -141,11 +178,8 @@ export const RemindersPage = ({ accountId }: { accountId: string }) => {
   const saveTask = (input: { days?: readonly number[]; enabled?: boolean }): void =>
     void run(() => api.saveTaskReminders(accountId, input), 'タスクのリマインド設定を保存できませんでした。');
 
-  const add = (): void => {
-    const day = Number(entry.trim());
-    if (!Number.isInteger(day) || days.includes(day)) return;
-    saveTask({ days: [...days, day] });
-  };
+  const saveAttendance = (input: { days?: readonly number[]; enabled?: boolean }): void =>
+    void run(() => api.saveAttendanceReminders(accountId, input), '出欠のリマインド設定を保存できませんでした。');
 
   if (!loaded && !error) {
     return <section className="page-layout reminders-page">
@@ -175,29 +209,7 @@ export const RemindersPage = ({ accountId }: { accountId: string }) => {
         未完了で担当者のいるタスクについて、締め切りからの日数でリマインドします。
         正の数は締め切り前、0 は当日、負の数は期限切れ後です。
       </p>
-      {days.length === 0
-        ? <p className="rules-empty">リマインドする日が設定されていません。</p>
-        : <ul className="reminder-days">
-          {days.map((day) => <li key={day}>
-            <span>{milestoneLabel(day)}</span>
-            <button
-              type="button"
-              className="secondary"
-              disabled={saving}
-              aria-label={`${milestoneLabel(day)}のリマインドを削除`}
-              onClick={() => saveTask({ days: days.filter((current) => current !== day) })}
-            ><Trash2 size={16} /></button>
-          </li>)}
-        </ul>}
-      <form className="access-form" onSubmit={(event) => { event.preventDefault(); add(); }}>
-        <label>
-          締め切りからの日数
-          <input type="number" value={entry} disabled={saving} onChange={(change) => setEntry(change.target.value)} />
-        </label>
-        <button type="submit" className="primary" disabled={saving || !Number.isInteger(Number(entry.trim())) || days.includes(Number(entry.trim()))}>
-          <Plus size={16} />追加
-        </button>
-      </form>
+      <MilestoneEditor days={days} busy={saving} label="タスク" minimum={MIN_REMINDER_DAY} onChange={(next) => saveTask({ days: next })} />
       <h4>送信予定</h4>
       <ReminderSchedule rows={taskPreviewRows(taskSchedule)} enabled={taskEnabled} />
     </section>
@@ -208,13 +220,13 @@ export const RemindersPage = ({ accountId }: { accountId: string }) => {
         enabled={attendanceEnabled}
         busy={saving}
         label="出欠のリマインド"
-        onChange={(next) => void run(() => api.saveAttendanceReminders(accountId, next), '出欠のリマインド設定を保存できませんでした。')}
+        onChange={(next) => saveAttendance({ enabled: next })}
       />
       <p className="api-guide">
-        まだ回答していない相手にだけ、回答期限の前にお願いを送ります。出欠を登録した時点で止まります。
-        送信する日は製品側で決まっており、変更できません。
+        まだ回答していない相手にだけ、回答期限からの日数でお願いを送ります。出欠を登録した時点で止まります。
+        正の数は回答期限前、0 は当日です。期限を過ぎた出欠は受け付けられないため、当日より後は設定できません。
       </p>
-      <MilestoneSummary days={attendanceDays} />
+      <MilestoneEditor days={attendanceDays} busy={saving} label="出欠" minimum={MIN_ATTENDANCE_REMINDER_DAY} onChange={(next) => saveAttendance({ days: next })} />
       <h4>送信予定</h4>
       <ReminderSchedule rows={attendancePreviewRows(attendanceSchedule)} enabled={attendanceEnabled} />
     </section>

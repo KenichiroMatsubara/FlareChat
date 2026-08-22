@@ -1,24 +1,23 @@
-import {
-  DEFAULT_TASK_REMINDER_DAYS,
-  displayLineDestinationId,
-  readTaskReminderDays,
-  shouldSendTaskReminder,
-  writeTaskReminderDays,
-} from '@mail/domain';
+import { DEFAULT_TASK_REMINDER_DAYS, displayLineDestinationId, shouldSendTaskReminder } from '@mail/domain';
 
 import { taskReminderNotice } from './notice';
-import { TASK_REMINDERS_ENABLED_SETTING, accountRemindersEnabled, saveAccountRemindersEnabled } from './reminder-switch';
+import {
+  TASK_REMINDERS_ENABLED_SETTING,
+  TASK_REMINDER_DAYS_SETTING,
+  accountReminderDays,
+  accountRemindersEnabled,
+  saveAccountReminderDays,
+  saveAccountRemindersEnabled,
+} from './reminder-settings';
 import { and, eq, isNotNull } from 'drizzle-orm';
 
 import { createDatabaseAccess } from './database-access';
 import { TASK_REMINDER_JOB_KIND } from './task-reminder-job';
 import { accounts } from './storage/control-schema';
 import { controlDatabase, accountDatabase as drizzleAccountDatabase } from './storage/database';
-import { jobs, lineDestinations, contactLineDestinations, contacts, settings, tasks } from './storage/account-schema';
+import { jobs, lineDestinations, contactLineDestinations, contacts, tasks } from './storage/account-schema';
 import type { AccountDatabase } from './storage/database';
 import type { Bindings } from './types';
-
-export const TASK_REMINDER_DAYS_SETTING = 'task_reminder_days';
 
 export const accountTaskRemindersEnabled = (database: AccountDatabase): Promise<boolean> =>
   accountRemindersEnabled(database, TASK_REMINDERS_ENABLED_SETTING);
@@ -29,29 +28,15 @@ export const saveAccountTaskRemindersEnabled = (
   updatedAt: string,
 ): Promise<void> => saveAccountRemindersEnabled(database, TASK_REMINDERS_ENABLED_SETTING, enabled, updatedAt);
 
-/**
- * The milestones this Account reminds on, falling back to the product default.
- * A stored value that no longer reads as a milestone list is treated as absent
- * rather than as "remind never", because silence is the one outcome an operator
- * would not be able to tell apart from the feature working.
- */
-export const accountTaskReminderDays = async (database: AccountDatabase): Promise<readonly number[]> => {
-  const stored = await database.select({ value: settings.value }).from(settings)
-    .where(eq(settings.key, TASK_REMINDER_DAYS_SETTING)).get();
-  if (stored === undefined) return DEFAULT_TASK_REMINDER_DAYS;
-  const read = readTaskReminderDays(stored.value);
-  return read.accepted ? read.days : DEFAULT_TASK_REMINDER_DAYS;
-};
+/** The milestones this Account reminds Task assignees on. */
+export const accountTaskReminderDays = (database: AccountDatabase): Promise<readonly number[]> =>
+  accountReminderDays(database, TASK_REMINDER_DAYS_SETTING, DEFAULT_TASK_REMINDER_DAYS);
 
-export const saveAccountTaskReminderDays = async (
+export const saveAccountTaskReminderDays = (
   database: AccountDatabase,
   days: readonly number[],
   updatedAt: string,
-): Promise<void> => {
-  const value = writeTaskReminderDays(days);
-  await database.insert(settings).values({ key: TASK_REMINDER_DAYS_SETTING, value, updatedAt })
-    .onConflictDoUpdate({ target: settings.key, set: { value, updatedAt } }).run();
-};
+): Promise<void> => saveAccountReminderDays(database, TASK_REMINDER_DAYS_SETTING, days, updatedAt);
 
 interface TaskReminderCandidate {
   taskId: string;
