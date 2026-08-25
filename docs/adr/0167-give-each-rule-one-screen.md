@@ -58,4 +58,6 @@ The navigation drops from twelve destinations to nine and loses the 運用 / 設
 
 Reminder cadence stays an Account-wide setting stored on `settings` and is shown on each Schema Rule screen as the Account-wide setting it is. ADR 0163 and ADR 0164 disagree with each other about where it is edited — one says the Tasks page, the other says the Reminders page — and both are superseded on that point alone. Making the cadence per-Rule is a domain change and is deliberately not decided here.
 
+Editing a Rule for its whole life means the update endpoint accepts its name, Selection Policy, and priority, which it did not. A Revision is minted when the Execution Mode or a policy actually changes, and not otherwise: a screen that posts its whole form would otherwise mint one per save and leave the Rule Runs of ADR 0134 pointing at Revisions nothing distinguishes. A rename mints none, and neither does a change of priority — a Revision records what a Rule does to a message it is given, while priority arbitrates between Rules and cannot be reconstructed from any one of them.
+
 Nothing about how a Rule runs changes. This decision moves screens.

@@ -3,7 +3,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
 import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, AccountAgentRule, AccountConnections, AccountLineDestination, AccountMembership, AccountPrompt, AccountContact, AccountContactInput, AccountRule, AccountRuleInput, AccountTask, AccountTypedList, PresetSummary, ContactLineDestinationInput, RuleRun } from './api';
-import { AutomationPage, ConnectionsPage, EventRefreshPage, MailboxTestPage, ContactsPage, RuleRunsPage, RulesPage, TasksPage } from './dashboard-pages';
+import { AutomationPage, ConnectionsPage, EventRefreshPage, MailboxTestPage, ContactsPage, RuleRunsPage, RulesPage, SchemaRulePage, TasksPage } from './dashboard-pages';
 import { RemindersPage } from './reminders';
 import { ChannelTestPage } from './channel-test';
 import { ChatPage } from './chat';
@@ -11,7 +11,7 @@ import { AutomationsPage } from './automations';
 import { pendingKey, ROUTE_NAVIGATION_KEY } from './pending';
 import { PendingOverlay } from './progress';
 
-export type Page = 'automation' | 'chat' | 'automations' | 'connections' | 'rules' | 'members' | 'mailbox-test' | 'channel-test' | 'rule-runs' | 'event-refresh' | 'tasks' | 'reminders';
+export type Page = 'automation' | 'chat' | 'automations' | 'connections' | 'rules' | 'schema-rule' | 'members' | 'mailbox-test' | 'channel-test' | 'rule-runs' | 'event-refresh' | 'tasks' | 'reminders';
 
 export const needsGoogleReauthentication = (error: string): boolean =>
   /token has been expired or revoked/iu.test(error);
@@ -143,7 +143,7 @@ export interface DashboardProps {
   /** The named sets of Contacts this Account holds, so a Rule can say who it tells. */
   contactLists: Array<{ id: string; name: string; contactIds: string[] }>;
   onSaveNoticeContacts: (ruleId: string, contactIds: string[]) => Promise<void>;
-  onUpdateRule: (ruleId: string, input: Partial<Pick<AccountRule, 'state' | 'executionMode' | 'noticeContactListId' | 'permittedRecipientListIds' | 'permittedLineListIds'>>) => Promise<void>;
+  onUpdateRule: (ruleId: string, input: Partial<Pick<AccountRule, 'name' | 'state' | 'executionMode' | 'selectionPolicy' | 'priority' | 'noticeContactListId' | 'permittedRecipientListIds' | 'permittedLineListIds'>>) => Promise<void>;
   prompts: AccountPrompt[];
   agentRules: AccountAgentRule[];
   agentRuns: AgentRunIndex[];
@@ -191,6 +191,8 @@ export const Dashboard = (props: DashboardProps) => {
       ? <ConnectionsPage {...props} />
       : page === 'rules'
         ? <RulesPage {...props} />
+      : page === 'schema-rule'
+        ? <SchemaRulePage {...props} />
         : page === 'members'
           ? <ContactsPage {...props} />
           : page === 'reminders'

@@ -249,7 +249,7 @@ interface AccountContextValue extends AccountRouteData, PendingOperations {
   applyRefresh: (candidateIndexes: number[]) => void;
   createRule: (input: AccountRuleInput) => Promise<void>;
   saveNoticeContacts: (ruleId: string, contactIds: string[]) => Promise<void>;
-  updateRule: (ruleId: string, input: Partial<Pick<AccountRule, 'state' | 'executionMode' | 'noticeContactListId' | 'permittedRecipientListIds' | 'permittedLineListIds'>>) => Promise<void>;
+  updateRule: (ruleId: string, input: Partial<Pick<AccountRule, 'name' | 'state' | 'executionMode' | 'selectionPolicy' | 'priority' | 'noticeContactListId' | 'permittedRecipientListIds' | 'permittedLineListIds'>>) => Promise<void>;
   agentTranscript: AgentRunTranscript | null;
   createPrompt: (input: { name: string; instructions: string }) => Promise<void>;
   updatePrompt: (promptId: string, input: { name?: string; instructions?: string }) => Promise<void>;
@@ -467,7 +467,7 @@ export const AccountLayout = () => {
     const rule = await api.createAccountRule(accountId, input);
     setData((current) => ({ ...current, rules: [...current.rules, rule] }));
   });
-  const updateRule = async (ruleId: string, input: Partial<Pick<AccountRule, 'state' | 'executionMode' | 'noticeContactListId' | 'permittedRecipientListIds' | 'permittedLineListIds'>>): Promise<void> => runOperation(pendingKey.ruleUpdate(ruleId), async () => {
+  const updateRule = async (ruleId: string, input: Partial<Pick<AccountRule, 'name' | 'state' | 'executionMode' | 'selectionPolicy' | 'priority' | 'noticeContactListId' | 'permittedRecipientListIds' | 'permittedLineListIds'>>): Promise<void> => runOperation(pendingKey.ruleUpdate(ruleId), async () => {
     const updated = await api.updateAccountRule(accountId, ruleId, input);
     setData((current) => ({ ...current, rules: current.rules.map((rule) => rule.id === ruleId ? { ...rule, ...updated } : rule) }));
   });
@@ -582,7 +582,7 @@ export const AccountLayout = () => {
   return <AccountContext.Provider value={value}><Outlet /></AccountContext.Provider>;
 };
 
-type AccountPage = 'automation' | 'chat' | 'automations' | 'connections' | 'rules' | 'members' | 'mailbox-test' | 'channel-test' | 'rule-runs' | 'event-refresh' | 'tasks' | 'reminders';
+type AccountPage = 'automation' | 'chat' | 'automations' | 'connections' | 'rules' | 'schema-rule' | 'members' | 'mailbox-test' | 'channel-test' | 'rule-runs' | 'event-refresh' | 'tasks' | 'reminders';
 export const AccountPage = ({ page }: { page: AccountPage }) => {
   const value = useAccount();
   const navigation = useNavigation();

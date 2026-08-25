@@ -205,6 +205,9 @@ svg { flex: none; }
 .rule-state.active { color: #2c6a48; background: #e4f1e7; }
 .rule-state.draft { color: #7a6640; background: #f7f0df; }
 .rules-empty { margin: 0; padding: 28px 0; color: #718073; font-size: 12px; text-align: center; }
+.rule-row-warning { display: inline-flex; align-items: center; gap: 5px; margin-top: 6px; padding: 4px 8px; color: #7c6031; background: #fcf3e5; border: 1px solid #efdfbf; border-radius: 8px; }
+.rule-row a.secondary { display: inline-flex; margin-top: 9px; }
+.rules-page .settings-card .rule-notice-contacts { border: none; padding: 0; }
 
 /* Member roster */
 .member-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }

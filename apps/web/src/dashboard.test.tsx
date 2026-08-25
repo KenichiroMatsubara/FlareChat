@@ -1,9 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 
 import { Dashboard, GoogleReauthenticationAction, NAVIGATION_PANEL_ID, needsGoogleReauthentication, type DashboardProps } from './dashboard';
+import type { AccountRule } from './api';
 import { pendingKey } from './pending';
 
 describe('Google credential recovery', () => {
@@ -149,26 +150,32 @@ describe('Task assignment', () => {
     expect(html).not.toContain('Operational Task Role');
   });
 
-  it('offers the Contacts a notice can reach as the summary destinations of a Rule', () => {
-    const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/organizations/org-1/rules']}>
-        <Dashboard
-          {...dashboardProps()}
-          page="rules"
-          noticeTargets={[
-            { id: 'contact-group', name: '要約送信グループ', channels: ['line'] },
-            { id: 'contact-yamada', name: '山田花子', channels: ['email'] },
-          ]}
-          contactLists={[{ id: 'list-1', name: '要約の送り先', contactIds: ['contact-group'] }]}
-          accountRules={[{
-            id: 'rule-1', accountId: 'org-1', name: 'Announcements', state: 'active', executionMode: 'unattended', revision: 1,
-            selectionPolicy: {}, routingPolicy: {}, noticeContactListId: 'list-1',
-            permittedRecipientListIds: [], permittedLineListIds: [],
-            priority: 0, createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z',
-          }]}
+  /** Renders one Schema Rule's own screen, which reads its Rule from the route. */
+  const schemaRuleMarkup = (props: Partial<DashboardProps>): string => renderToStaticMarkup(
+    <MemoryRouter initialEntries={['/organizations/org-1/rules/schema/rule-1']}>
+      <Routes>
+        <Route
+          path="/organizations/:accountId/rules/schema/:ruleId"
+          element={<Dashboard {...dashboardProps()} page="schema-rule" {...props} />}
         />
-      </MemoryRouter>,
-    );
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  it('offers the Contacts a notice can reach as the summary destinations of a Rule', () => {
+    const html = schemaRuleMarkup({
+      noticeTargets: [
+        { id: 'contact-group', name: '要約送信グループ', channels: ['line'] },
+        { id: 'contact-yamada', name: '山田花子', channels: ['email'] },
+      ],
+      contactLists: [{ id: 'list-1', name: '要約の送り先', contactIds: ['contact-group'] }],
+      accountRules: [{
+            id: 'rule-1', accountId: 'org-1', name: 'Announcements', state: 'active', executionMode: 'unattended', revision: 3,
+            selectionPolicy: { domain: 'example.com' }, routingPolicy: {}, noticeContactListId: 'list-1',
+            permittedRecipientListIds: [], permittedLineListIds: [],
+            priority: 4, createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z',
+          }],
+    });
 
     expect(html).toContain('要約の送り先（連絡先）');
     expect(html).toContain('要約送信グループ');
@@ -177,38 +184,71 @@ describe('Task assignment', () => {
     expect(html).toContain('山田花子');
     expect(html).toContain('EMAIL');
     expect(html).toContain('選択中: 要約送信グループ');
+    expect(html).not.toContain('要約は誰にも届きません');
+  });
+
+  it('edits what a Schema Rule matches on the Rule\'s own screen', () => {
+    const html = schemaRuleMarkup({
+      accountRules: [{
+            id: 'rule-1', accountId: 'org-1', name: 'Announcements', state: 'active', executionMode: 'unattended', revision: 3,
+            selectionPolicy: { domain: 'example.com' }, routingPolicy: {}, noticeContactListId: 'list-1',
+            permittedRecipientListIds: [], permittedLineListIds: [],
+            priority: 4, createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z',
+          }],
+      contactLists: [{ id: 'list-1', name: '要約の送り先', contactIds: ['contact-group'] }],
+      noticeTargets: [{ id: 'contact-group', name: '要約送信グループ', channels: ['line'] }],
+    });
+
+    expect(html).toContain('拾うメール');
+    expect(html).toContain('value="example.com"');
+    expect(html).toContain('value="4"');
+    expect(html).toContain('拾うメールを保存');
+    expect(html).toContain('revision 3');
+  });
+
+  it('says on the Rule and in the index when a summary would reach nobody', () => {
+    const unread: AccountRule = {
+            id: 'rule-1', accountId: 'org-1', name: 'Announcements', state: 'active', executionMode: 'unattended', revision: 3,
+            selectionPolicy: { domain: 'example.com' }, routingPolicy: {}, noticeContactListId: null,
+            permittedRecipientListIds: [], permittedLineListIds: [],
+            priority: 4, createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z',
+          };
+    const rulePage = schemaRuleMarkup({ accountRules: [unread] });
+    const index = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/rules']}>
+        <Dashboard {...dashboardProps()} page="rules" accountRules={[unread]} />
+      </MemoryRouter>,
+    );
+
+    expect(rulePage).toContain('要約は誰にも届きません');
+    expect(index).toContain('要約の送り先が未設定です');
+    expect(index).toContain('/rules/schema/rule-1');
+    // The index stopped carrying the settings themselves.
+    expect(index).not.toContain('要約の送り先（連絡先）');
   });
 
   it('lets a member add and remove permitted destination lists in the Automation Rule editor', () => {
-    const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/organizations/org-1/rules']}>
-        <Dashboard
-          {...dashboardProps()}
-          page="rules"
-          accountLists={[
-            { id: 'recipients-members', accountId: 'org-1', kind: 'recipient', name: 'Contacts', description: '' },
-            { id: 'recipients-guests', accountId: 'org-1', kind: 'recipient', name: 'Guests', description: '' },
-            { id: 'line-members', accountId: 'org-1', kind: 'line', name: 'Contact LINE', description: '' },
-          ]}
-          accountRules={[{
-            id: 'rule-1', accountId: 'org-1', name: 'Announcements', state: 'active', executionMode: 'unattended', revision: 1,
-            selectionPolicy: {}, routingPolicy: {}, noticeContactListId: null,
-            permittedRecipientListIds: ['recipients-members'],
-            permittedLineListIds: ['line-members'],
-            priority: 0, createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z',
-          }]}
-          onUpdateRule={vi.fn()}
-        />
-      </MemoryRouter>,
-    );
+    const html = schemaRuleMarkup({
+      accountLists: [
+        { id: 'recipients-members', accountId: 'org-1', kind: 'recipient', name: 'Contacts', description: '' },
+        { id: 'recipients-guests', accountId: 'org-1', kind: 'recipient', name: 'Guests', description: '' },
+        { id: 'line-members', accountId: 'org-1', kind: 'line', name: 'Contact LINE', description: '' },
+      ],
+      accountRules: [{
+            id: 'rule-1', accountId: 'org-1', name: 'Announcements', state: 'active', executionMode: 'unattended', revision: 3,
+            selectionPolicy: { domain: 'example.com' }, routingPolicy: {}, noticeContactListId: null,
+            permittedRecipientListIds: ['recipients-members'], permittedLineListIds: ['line-members'],
+            priority: 4, createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z',
+          }],
+      onUpdateRule: vi.fn(),
+    });
 
     expect(html).toContain('許可されたCalendar Recipient Lists');
     expect(html).toContain('許可されたLINE Destination Lists');
     expect(html).toContain('Contacts');
     expect(html).toContain('Guests');
     expect(html).toContain('Contact LINE');
-    expect(html).toContain('許可リストを編集');
-    expect(html).toContain('選択中: Contacts');
+    expect(html).toContain('旧来の許可リスト');
     expect(html).toContain('選択中: Contact LINE');
   });
 });

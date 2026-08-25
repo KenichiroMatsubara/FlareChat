@@ -106,6 +106,7 @@ const rootRoute = (client: RouterClient) => ({
         { path: 'automations', element: <AccountPage page="automations" /> },
         { path: 'connections', element: <AccountPage page="connections" /> },
         { path: 'rules', element: <AccountPage page="rules" /> },
+        { path: 'rules/schema/:ruleId', element: <AccountPage page="schema-rule" /> },
         { path: 'members', element: <AccountPage page="members" /> },
         { path: 'mailbox-test', element: <AccountPage page="mailbox-test" /> },
         { path: 'channel-test', element: <AccountPage page="channel-test" /> },

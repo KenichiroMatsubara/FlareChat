@@ -1,6 +1,6 @@
 import { CalendarDays, CheckCircle2, CircleAlert, Copy, Eye, EyeOff, Mail, MessageCircle, Pencil, Play, RefreshCw, Save, Search, Settings, SlidersHorizontal, UserPlus, UsersRound, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 
 import type { DashboardProps } from './dashboard';
 import type { GuestRegistrationRoster, RuleEffect, RuleRun } from './api';
@@ -749,7 +749,99 @@ const NoticeContactChoices = ({ rule, props }: {
   </fieldset>;
 };
 
-const RuleDestinationEditor = ({ rule, props }: {
+/** The four things a Selection Policy can require, in the order an operator reads them. */
+const SELECTION_FIELDS = [
+  { key: 'sender', label: '送信者（完全一致）', placeholder: 'sender@example.com' },
+  { key: 'domain', label: '送信元ドメイン', placeholder: 'example.com' },
+  { key: 'keyword', label: '本文・件名のキーワード', placeholder: '例: 招待行事' },
+  { key: 'label', label: 'Gmailラベル', placeholder: '例: Announcements' },
+] as const;
+
+const policyValue = (policy: Record<string, unknown>, key: string): string =>
+  typeof policy[key] === 'string' ? policy[key] as string : '';
+
+/**
+ * What this Rule matches and how it is ordered against the others, editable for
+ * the life of the Rule. Until ADR 0167 these could only be entered on the
+ * creation form, so narrowing a Rule meant replacing it.
+ */
+const RuleMatchEditor = ({ rule, props }: {
+  rule: DashboardProps['accountRules'][number];
+  props: DashboardProps;
+}) => {
+  const [name, setName] = useState(rule.name);
+  const [policy, setPolicy] = useState<Record<string, string>>(
+    Object.fromEntries(SELECTION_FIELDS.map((field) => [field.key, policyValue(rule.selectionPolicy, field.key)])),
+  );
+  const [priority, setPriority] = useState(String(rule.priority));
+  const saving = props.isPending(pendingKey.ruleUpdate(rule.id));
+  const save = (): void => {
+    // Keys this screen does not offer are carried through rather than dropped,
+    // because a Policy written by a Preset may require more than these four.
+    const selectionPolicy: Record<string, unknown> = { ...rule.selectionPolicy };
+    for (const field of SELECTION_FIELDS) {
+      const value = policy[field.key]?.trim() ?? '';
+      if (value) selectionPolicy[field.key] = value;
+      else delete selectionPolicy[field.key];
+    }
+    void props.onUpdateRule(rule.id, { name: name.trim(), selectionPolicy, priority: Number.parseInt(priority, 10) || 0 });
+  };
+  return <section className="settings-card">
+    <div className="settings-card-title"><SlidersHorizontal size={19} /><div>
+      <h2>拾うメール</h2><p>すべて空にすると、届いたメールすべてがこのルールに入ります。</p>
+    </div></div>
+    <label>ルール名<input value={name} onChange={(event) => setName(event.target.value)} disabled={saving} /></label>
+    {SELECTION_FIELDS.map((field) => <label key={field.key}>{field.label}
+      <input
+        value={policy[field.key] ?? ''}
+        placeholder={field.placeholder}
+        disabled={saving}
+        onChange={(event) => setPolicy((current) => ({ ...current, [field.key]: event.target.value }))}
+      />
+    </label>)}
+    <label>優先度<input type="number" inputMode="numeric" value={priority} disabled={saving} onChange={(event) => setPriority(event.target.value)} /></label>
+    <p className="api-guide">条件に当てはまるルールが複数あるときは、優先度の大きいものが1つだけ選ばれます。</p>
+    <div className="settings-card-actions">
+      <p className="connection-state">revision {rule.revision}</p>
+      <button className="primary" type="button" disabled={saving || !name.trim()} onClick={save}>
+        {saving ? <RefreshCw className="spin" size={17} /> : <Save size={17} />}{saving ? '保存中…' : '拾うメールを保存'}
+      </button>
+    </div>
+    <FieldSaveState saving={saving} saved={props.isSettled(pendingKey.ruleUpdate(rule.id))} />
+  </section>;
+};
+
+/** Whether the Rule runs at all, and whether its effects are applied without asking. */
+const RuleExecutionEditor = ({ rule, props }: {
+  rule: DashboardProps['accountRules'][number];
+  props: DashboardProps;
+}) => {
+  const saving = props.isPending(pendingKey.ruleUpdate(rule.id));
+  return <section className="settings-card">
+    <div className="settings-card-title"><Play size={19} /><div>
+      <h2>実行のしかた</h2><p>Draft は選ばれません。Approval は Rule Runs で承認するまで何も起こりません。</p>
+    </div></div>
+    <label>状態<select value={rule.state} disabled={saving} onChange={(event) => void props.onUpdateRule(rule.id, { state: event.target.value as 'draft' | 'active' | 'suspended' | 'archived' })}>
+      <option value="draft">Draft（選ばれない）</option>
+      <option value="active">Active（有効）</option>
+      <option value="suspended">Suspended（停止）</option>
+      <option value="archived">Archived（保管）</option>
+    </select></label>
+    <label>Execution Mode<select value={rule.executionMode} disabled={saving} onChange={(event) => void props.onUpdateRule(rule.id, { executionMode: event.target.value as 'read_only' | 'approval' | 'unattended' })}>
+      <option value="read_only">Read only（記録するだけ）</option>
+      <option value="approval">Approval（承認してから適用）</option>
+      <option value="unattended">Unattended（そのまま適用）</option>
+    </select></label>
+    <FieldSaveState saving={saving} saved={props.isSettled(pendingKey.ruleUpdate(rule.id))} />
+  </section>;
+};
+
+/**
+ * The permitted Typed Lists, kept until ADR 0147 deletes them. They are stated
+ * as what they are — a path on its way out — rather than presented beside the
+ * Contact selection as an equal choice.
+ */
+const RulePermittedLists = ({ rule, props }: {
   rule: DashboardProps['accountRules'][number];
   props: DashboardProps;
 }) => {
@@ -760,20 +852,88 @@ const RuleDestinationEditor = ({ rule, props }: {
   const saving = props.isPending(pendingKey.ruleUpdate(rule.id));
   const recipientNames = recipientLists.filter((list) => rule.permittedRecipientListIds.includes(list.id)).map((list) => list.name);
   const lineNames = lineLists.filter((list) => rule.permittedLineListIds.includes(list.id)).map((list) => list.name);
-  return <>
+  if (!recipientLists.length && !lineLists.length) return null;
+  return <details className="rule-destination-editor">
+    <summary>旧来の許可リスト（Typed Lists）</summary>
     <small>選択中: {recipientNames.join('、') || 'Calendar Recipient Listなし'}</small>
     <small>選択中: {lineNames.join('、') || 'LINE Destination Listなし'}</small>
-    <details className="rule-destination-editor">
-      <summary>Execution Mode・許可リストを編集</summary>
-      <label>Rule State<select value={rule.state} disabled={saving} onChange={(event) => void props.onUpdateRule(rule.id, { state: event.target.value as 'draft' | 'active' | 'suspended' | 'archived' })}><option value="draft">Draft</option><option value="active">Active</option><option value="suspended">Suspended</option><option value="archived">Archived</option></select></label>
-      <label>Execution Mode<select value={rule.executionMode} disabled={saving} onChange={(event) => void props.onUpdateRule(rule.id, { executionMode: event.target.value as 'read_only' | 'approval' | 'unattended' })}><option value="read_only">Read only</option><option value="approval">Approval</option><option value="unattended">Unattended</option></select></label>
+    <DestinationListChoices legend="許可されたCalendar Recipient Lists" lists={recipientLists} selectedIds={permittedRecipientListIds} onChange={setPermittedRecipientListIds} />
+    <DestinationListChoices legend="許可されたLINE Destination Lists" lists={lineLists} selectedIds={permittedLineListIds} onChange={setPermittedLineListIds} />
+    <button type="button" className="secondary" disabled={saving} onClick={() => void props.onUpdateRule(rule.id, { permittedRecipientListIds, permittedLineListIds })}>{saving ? <><RefreshCw className="spin" size={13} />保存中…</> : '許可リストを保存'}</button>
+    <FieldSaveState saving={saving} saved={props.isSettled(pendingKey.ruleUpdate(rule.id))} />
+  </details>;
+};
+
+/**
+ * One Schema Rule, whole (ADR 0167).
+ *
+ * Everything that decides what this Rule does is on this screen, and the screen
+ * says what is missing rather than leaving an operator to discover it from the
+ * absence of messages nobody received.
+ */
+/** One Schema Rule in the index: what it matches, whether it can deliver, and the way in. */
+const SchemaRuleRow = ({ rule, props }: {
+  rule: DashboardProps['accountRules'][number];
+  props: DashboardProps;
+}) => {
+  const readers = props.contactLists.find((entry) => entry.id === rule.noticeContactListId)?.contactIds.length ?? 0;
+  return <article className="rule-row">
+    <div>
+      <strong>{rule.name}</strong>
+      <small>
+        優先度 {rule.priority} ・ {Object.entries(rule.selectionPolicy).map(([key, value]) => `${key}: ${String(value)}`).join(' / ') || '条件なし'}
+      </small>
+      {readers === 0
+        ? <small className="rule-row-warning"><CircleAlert size={12} />要約の送り先が未設定です</small>
+        : <small>要約の送り先 {readers}件</small>}
+      <Link className="secondary" to={`../rules/schema/${encodeURIComponent(rule.id)}`}>このルールを設定</Link>
+    </div>
+    <span className={`rule-state ${rule.state}`}>{rule.state}</span>
+  </article>;
+};
+
+export const SchemaRulePage = (props: DashboardProps) => {
+  const { ruleId } = useParams();
+  const rule = props.accountRules.find((entry) => entry.id === ruleId);
+  if (!props.account || !rule) {
+    return <section className="page-layout rules-page">
+      <section className="empty-page">
+        <SlidersHorizontal size={30} />
+        <h2>このルールを読み込めません</h2>
+        <p>ルールが見つからないか、ログインし直す必要があります。</p>
+        <Link className="secondary" to="../rules">ルール一覧へ</Link>
+      </section>
+    </section>;
+  }
+  const noticeList = props.contactLists.find((entry) => entry.id === rule.noticeContactListId);
+  const readers = noticeList?.contactIds.length ?? 0;
+  const conditions = SELECTION_FIELDS
+    .map((field) => ({ field, value: policyValue(rule.selectionPolicy, field.key) }))
+    .filter((entry) => entry.value);
+  return <section className="page-layout rules-page">
+    <div className="page-title">
+      <p>SCHEMA RULE</p>
+      <h1>{rule.name}</h1>
+      <span>
+        {conditions.length ? conditions.map((entry) => `${entry.field.label}: ${entry.value}`).join(' / ') : '条件なし（すべてのメール）'}
+        {' ・ '}優先度 {rule.priority} ・ {rule.state} ・ {rule.executionMode}
+      </span>
+    </div>
+    {readers === 0 && <p className="dashboard-warning">
+      <CircleAlert size={17} />
+      <span>要約の送り先が選ばれていません。このルールは予定とタスクを作りますが、要約は誰にも届きません。</span>
+    </p>}
+    <RuleMatchEditor rule={rule} props={props} />
+    <RuleExecutionEditor rule={rule} props={props} />
+    <section className="settings-card">
+      <div className="settings-card-title"><MessageCircle size={19} /><div>
+        <h2>要約の送り先</h2><p>このルールが作る要約を受け取る連絡先です。</p>
+      </div></div>
       <NoticeContactChoices rule={rule} props={props} />
-      <DestinationListChoices legend="許可されたCalendar Recipient Lists" lists={recipientLists} selectedIds={permittedRecipientListIds} onChange={setPermittedRecipientListIds} />
-      <DestinationListChoices legend="許可されたLINE Destination Lists" lists={lineLists} selectedIds={permittedLineListIds} onChange={setPermittedLineListIds} />
-      <button type="button" className="secondary" disabled={saving} onClick={() => void props.onUpdateRule(rule.id, { permittedRecipientListIds, permittedLineListIds })}>{saving ? <><RefreshCw className="spin" size={13} />保存中…</> : '許可リストを保存'}</button>
-      <FieldSaveState saving={saving} saved={props.isSettled(pendingKey.ruleUpdate(rule.id))} />
-    </details>
-  </>;
+    </section>
+    <RulePermittedLists rule={rule} props={props} />
+    <Link className="secondary" to="../rules">ルール一覧へ戻る</Link>
+  </section>;
 };
 
 const PromptEditor = ({ prompt, props }: { prompt: DashboardProps['prompts'][number]; props: DashboardProps }) => {
@@ -872,7 +1032,7 @@ export const RulesPage = (props: DashboardProps) => {
     <div className="page-title"><p>AUTOMATION RULES</p><h1>ルールセット</h1><span>どのメールを予定化するかを、送信者・ドメイン・キーワード・Gmailラベルで指定します。</span></div>
     {!settingsReady ? <section className="empty-page"><SlidersHorizontal size={30} /><h2>ルールを読み込めません</h2><p>Googleでログインし直した後、このページを再読み込みしてください。</p></section> : <>
       <form className="rule-builder" onSubmit={(event) => void createRule(event)}><div><p>NEW RULE</p><h2>ルールを作成</h2><span>Draft + Unattended で作成し、本番と同じ完全自動経路を効果なしでテストできます。</span></div><label>ルール名<input value={ruleName} onChange={(event) => setRuleName(event.target.value)} placeholder="例: ローターアクト行事" required /></label><div className="rule-grid"><label>送信者（完全一致）<input value={ruleSender} onChange={(event) => setRuleSender(event.target.value)} placeholder="sender@example.com" /></label><label>送信元ドメイン<input value={ruleDomain} onChange={(event) => setRuleDomain(event.target.value)} placeholder="example.com" /></label><label>本文・件名のキーワード<input value={ruleKeyword} onChange={(event) => setRuleKeyword(event.target.value)} placeholder="例: 招待行事" /></label><label>Gmailラベル<input value={ruleLabel} onChange={(event) => setRuleLabel(event.target.value)} placeholder="例: Announcements" /></label><label>優先度<input type="number" value={rulePriority} onChange={(event) => setRulePriority(event.target.value)} /></label><label>Execution Mode<select value={ruleExecutionMode} onChange={(event) => setRuleExecutionMode(event.target.value as 'read_only' | 'approval' | 'unattended')}><option value="read_only">Read only</option><option value="approval">Approval</option><option value="unattended">Unattended</option></select></label><label>作成時の状態<select value={ruleState} onChange={(event) => setRuleState(event.target.value as 'draft' | 'active')}><option value="draft">下書き</option><option value="active">有効</option></select></label></div><DestinationListChoices legend="許可されたCalendar Recipient Lists" lists={recipientLists} selectedIds={permittedRecipientListIds} onChange={setPermittedRecipientListIds} /><DestinationListChoices legend="許可されたLINE Destination Lists" lists={lineLists} selectedIds={permittedLineListIds} onChange={setPermittedLineListIds} /><button className="primary" disabled={creatingRule}>{creatingRule ? <><RefreshCw className="spin" size={14} />作成中…</> : 'ルールを作成'}</button></form>
-      <section className="rules-list"><div className="rules-list-title"><h2>登録済みルール</h2><span>{props.accountRules.length}件</span></div>{props.accountRules.length ? props.accountRules.map((rule) => <article key={rule.id} className="rule-row"><div><strong>{rule.name}</strong><small>優先度 {rule.priority} ・ {Object.entries(rule.selectionPolicy).map(([key, value]) => `${key}: ${String(value)}`).join(' / ') || '条件なし'}</small><RuleDestinationEditor rule={rule} props={props} /></div><span className={`rule-state ${rule.state}`}>{rule.state}</span></article>) : <p className="rules-empty">まだルールはありません。</p>}</section>
+      <section className="rules-list"><div className="rules-list-title"><h2>登録済みルール</h2><span>{props.accountRules.length}件</span></div>{props.accountRules.length ? props.accountRules.map((rule) => <SchemaRuleRow key={rule.id} rule={rule} props={props} />) : <p className="rules-empty">まだルールはありません。</p>}</section>
       <form className="rule-builder" onSubmit={(event) => void createPrompt(event)}><div><p>PROMPTS</p><h2>Promptを作成</h2><span>Agent Ruleが実行直前に読むAccount固有の指示です。</span></div><label>Prompt名<input required value={promptName} onChange={(event) => setPromptName(event.target.value)} /></label><label>Instructions<textarea required value={promptInstructions} onChange={(event) => setPromptInstructions(event.target.value)} /></label><button className="primary" disabled={creatingPrompt}>{creatingPrompt ? <><RefreshCw className="spin" size={14} />作成中…</> : 'Promptを作成'}</button></form>
       <section className="rules-list"><div className="rules-list-title"><h2>Prompts</h2><span>{props.prompts.length}件</span></div>{props.prompts.map((prompt) => <PromptEditor key={prompt.id} prompt={prompt} props={props} />)}</section>
       <form className="rule-builder" onSubmit={(event) => void createAgentRule(event)}><div><p>AGENT RULE</p><h2>Agent Ruleを作成</h2><span>既定は Draft + Unattended です。Draft の間に write plan を効果なしで確認できます。</span></div><label>Agent Rule名<input required value={agentName} onChange={(event) => setAgentName(event.target.value)} /></label><label>Prompt<select required value={agentPromptId} onChange={(event) => setAgentPromptId(event.target.value)}><option value="">選択してください</option>{props.prompts.map((prompt) => <option key={prompt.id} value={prompt.id}>{prompt.name}</option>)}</select></label><label>送信元ドメイン<input value={agentDomain} onChange={(event) => setAgentDomain(event.target.value)} placeholder="example.com" /></label><label>Execution Mode<select value={agentExecutionMode} onChange={(event) => setAgentExecutionMode(event.target.value as 'read_only' | 'approval' | 'unattended')}><option value="read_only">Read only</option><option value="approval">Approval</option><option value="unattended">Unattended</option></select></label><label>状態<select value={agentState} onChange={(event) => setAgentState(event.target.value as 'draft' | 'active')}><option value="draft">Draft</option><option value="active">Active</option></select></label><DestinationListChoices legend="許可されたCalendar Recipient Lists" lists={recipientLists} selectedIds={agentRecipientListIds} onChange={setAgentRecipientListIds} /><DestinationListChoices legend="許可されたLINE Destination Lists" lists={lineLists} selectedIds={agentLineListIds} onChange={setAgentLineListIds} /><button className="primary" disabled={creatingAgentRule || !agentPromptId}>{creatingAgentRule ? <><RefreshCw className="spin" size={14} />作成中…</> : 'Agent Ruleを作成'}</button></form>

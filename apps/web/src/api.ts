@@ -608,7 +608,7 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(input),
   }),
-  updateAccountRule: (accountId: string, ruleId: string, input: Partial<Pick<AccountRule, 'state' | 'executionMode' | 'noticeContactListId' | 'permittedRecipientListIds' | 'permittedLineListIds'>>): Promise<Partial<AccountRule> & { id: string }> => request(`/api/organizations/${encodeURIComponent(accountId)}/rules/${encodeURIComponent(ruleId)}`, {
+  updateAccountRule: (accountId: string, ruleId: string, input: Partial<Pick<AccountRule, 'name' | 'state' | 'executionMode' | 'selectionPolicy' | 'priority' | 'noticeContactListId' | 'permittedRecipientListIds' | 'permittedLineListIds'>>): Promise<Partial<AccountRule> & { id: string }> => request(`/api/organizations/${encodeURIComponent(accountId)}/rules/${encodeURIComponent(ruleId)}`, {
     method: 'PATCH',
     body: JSON.stringify(input),
   }),
