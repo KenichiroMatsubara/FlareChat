@@ -34,7 +34,9 @@ Nine screens, each named for what it is responsible for.
 
 `/connections` holds what the whole Account shares and no single Rule owns: the Google grant, the AI Connection, LINE and Discord, Access Tokens, MCP Servers, the attachment folder, and the response-matching window. Each credential is checked where it is entered, and calling a registered MCP Server's tool sits beside that server's registration.
 
-`/operations` is the one place to find what went wrong: exceptions, automation warnings, the delivery audit, stuck Jobs, and Account suspension.
+`/operations` is the one place to find what went wrong: exceptions, automation warnings, the delivery audit, stuck Jobs, Account suspension, and the Event Refresh.
+
+The Event Refresh stays apart from the Rule screens deliberately. It overwrites Scheduled Events an operator may have edited by hand in Calendar, which is why it was separated from the ordinary Rule Run in the first place, and putting it at the end of a Rule's test flow would make a destructive manual override read as the next step of trying something out. It keeps its own heading and its own screen. What it does not keep is its dependence on another screen: today it can only work on an extraction the Mailbox Test screen left in memory, and an operator who opens it directly is told to go and do something elsewhere first. On `/operations` it finds its own message by subject and runs its own extraction, so it is openable on its own terms like everything else there.
 
 Mailbox Test, Channel Test, and Rule Runs stop being destinations, because each of them is a question about something that now has an owner. Trying a Rule against real mail belongs on that Rule's screen. Approving a planned run belongs on the Rule that planned it. The Channel Test splits in two along the two questions it currently answers at once: whether a Contact is reachable, which is a Contact's screen, and whether a credential works, which is the credential's card.
 
@@ -46,7 +48,7 @@ A Rule with no readers says so on its own screen, in the place the readers are c
 
 ## Order
 
-The screens are cut over one at a time, each landing on its own. The Schema Rule screen comes first, because that is where the failure that prompted this was invisible, and its first release carries the missing-readers warning. `/operations` comes second, since exceptions, warnings, and the delivery audit already exist behind routes and only need somewhere to appear. The Agent Rule screen and `/prompts` follow together, because splitting them apart is what makes the current Rules screen unreadable. `/contacts` gains Typed Lists and CSV next, closing the gap where the GUI offers a choice it cannot create the options for. `/connections` absorbs Access Tokens and MCP Servers last, as it is the only step that takes something away from a screen an operator already uses.
+The screens are cut over one at a time, each landing on its own. The Schema Rule screen comes first, because that is where the failure that prompted this was invisible, and its first release carries the missing-readers warning. `/operations` comes second, since exceptions, warnings, and the delivery audit already exist behind routes and only need somewhere to appear; the Event Refresh moves in the same step and gains the mail search that frees it from the Mailbox Test screen's state. The Agent Rule screen and `/prompts` follow together, because splitting them apart is what makes the current Rules screen unreadable. `/contacts` gains Typed Lists and CSV next, closing the gap where the GUI offers a choice it cannot create the options for. `/connections` absorbs Access Tokens and MCP Servers last, as it is the only step that takes something away from a screen an operator already uses.
 
 ## Consequences
 
