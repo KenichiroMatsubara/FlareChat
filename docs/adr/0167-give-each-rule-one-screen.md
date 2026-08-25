@@ -60,4 +60,6 @@ Reminder cadence stays an Account-wide setting stored on `settings` and is shown
 
 Editing a Rule for its whole life means the update endpoint accepts its name, Selection Policy, and priority, which it did not. A Revision is minted when the Execution Mode or a policy actually changes, and not otherwise: a screen that posts its whole form would otherwise mint one per save and leave the Rule Runs of ADR 0134 pointing at Revisions nothing distinguishes. A rename mints none, and neither does a change of priority — a Revision records what a Rule does to a message it is given, while priority arbitrates between Rules and cannot be reconstructed from any one of them.
 
+The retired paths — `members`, `mailbox-test`, `channel-test`, `rule-runs`, `event-refresh`, `reminders` — redirect rather than 404, so a link somebody already has still lands on the screen that took the work over.
+
 Nothing about how a Rule runs changes. This decision moves screens.

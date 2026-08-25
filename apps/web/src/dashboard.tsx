@@ -1,17 +1,16 @@
-import { BellRing, CalendarClock, CheckSquare, CircleAlert, LogOut, Mail, Menu, MessageSquare, Play, RefreshCw, Send, Settings, ShieldCheck, SlidersHorizontal, UsersRound, X } from 'lucide-react';
+import { CalendarClock, CheckSquare, CircleAlert, LogOut, Mail, Menu, MessageSquare, Pencil, Play, RefreshCw, Settings, ShieldAlert, ShieldCheck, SlidersHorizontal, UsersRound, X } from 'lucide-react';
 import { Fragment, useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
-import type { AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, AccountAgentRule, AccountConnections, AccountLineDestination, AccountMembership, AccountPrompt, AccountContact, AccountContactInput, AccountRule, AccountRuleInput, AccountTask, AccountTypedList, PresetSummary, ContactLineDestinationInput, RuleRun } from './api';
-import { AutomationPage, ConnectionsPage, EventRefreshPage, MailboxTestPage, ContactsPage, RuleRunsPage, RulesPage, SchemaRulePage, TasksPage } from './dashboard-pages';
-import { RemindersPage } from './reminders';
-import { ChannelTestPage } from './channel-test';
+import type { DeliveryAuditRecord, AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, AccountAgentRule, AccountConnections, AccountLineDestination, AccountMembership, AccountPrompt, AccountContact, AccountContactInput, AccountRule, AccountRuleInput, AccountTask, AccountTypedList, PresetSummary, ContactLineDestinationInput, RuleRun } from './api';
+import { AgentRulePage, AutomationPage, ConnectionsPage, ContactsPage, PromptsPage, RulesPage, SchemaRulePage, TasksPage } from './dashboard-pages';
+import { OperationsPage } from './operations';
 import { ChatPage } from './chat';
 import { AutomationsPage } from './automations';
 import { pendingKey, ROUTE_NAVIGATION_KEY } from './pending';
 import { PendingOverlay } from './progress';
 
-export type Page = 'automation' | 'chat' | 'automations' | 'connections' | 'rules' | 'schema-rule' | 'members' | 'mailbox-test' | 'channel-test' | 'rule-runs' | 'event-refresh' | 'tasks' | 'reminders';
+export type Page = 'automation' | 'chat' | 'automations' | 'connections' | 'rules' | 'schema-rule' | 'agent-rule' | 'prompts' | 'contacts' | 'operations' | 'tasks';
 
 export const needsGoogleReauthentication = (error: string): boolean =>
   /token has been expired or revoked/iu.test(error);
@@ -47,24 +46,16 @@ const navigationGroups: readonly NavigationGroup[] = [
       { to: '../chat', label: 'チャット', icon: <MessageSquare size={16} /> },
       { to: '../automations', label: '定期実行', icon: <CalendarClock size={16} /> },
       { to: '../tasks', label: 'タスク', icon: <CheckSquare size={16} /> },
-      { to: '../reminders', label: 'リマインド', icon: <BellRing size={16} /> },
-      { to: '../members', label: '連絡先', icon: <UsersRound size={16} /> },
+      { to: '../operations', label: '運用', icon: <ShieldAlert size={16} /> },
     ],
   },
   {
     heading: '設定',
     items: [
-      { to: '../connections', label: '接続設定', icon: <Settings size={16} /> },
       { to: '../rules', label: 'ルール', icon: <SlidersHorizontal size={16} /> },
-    ],
-  },
-  {
-    heading: '検証',
-    items: [
-      { to: '../mailbox-test', label: 'メールテスト', icon: <Mail size={16} /> },
-      { to: '../channel-test', label: '送信テスト', icon: <Send size={16} /> },
-      { to: '../rule-runs', label: 'Rule Runs', icon: <SlidersHorizontal size={16} /> },
-      { to: '../event-refresh', label: '予定の再同期', icon: <RefreshCw size={16} /> },
+      { to: '../prompts', label: 'Prompt', icon: <Pencil size={16} /> },
+      { to: '../contacts', label: '連絡先', icon: <UsersRound size={16} /> },
+      { to: '../connections', label: '接続設定', icon: <Settings size={16} /> },
     ],
   },
 ];
@@ -171,6 +162,10 @@ export interface DashboardProps {
   onRefreshContacts: () => void;
   presets: PresetSummary[];
   onApplyPreset: (presetId: string, conflictPolicy?: 'duplicate') => void;
+  /** The Rule this screen is about, read from the route by the routing layer. */
+  ruleId?: string | undefined;
+  /** Every Delivery Record this Account holds, newest first (ADR 0167). */
+  audit: DeliveryAuditRecord[];
 }
 
 export const Dashboard = (props: DashboardProps) => {
@@ -185,23 +180,21 @@ export const Dashboard = (props: DashboardProps) => {
       ? <ChatPage accountId={props.accountId ?? ''} />
       : page === 'automations'
         ? <AutomationsPage accountId={props.accountId ?? ''} />
-        : page === 'channel-test'
-          ? <ChannelTestPage accountId={props.accountId ?? ''} />
-    : page === 'connections'
-      ? <ConnectionsPage {...props} />
-      : page === 'rules'
-        ? <RulesPage {...props} />
-      : page === 'schema-rule'
-        ? <SchemaRulePage {...props} />
-        : page === 'members'
-          ? <ContactsPage {...props} />
-          : page === 'reminders'
-            ? <RemindersPage accountId={props.accountId ?? ''} />
-          : page === 'tasks'
-            ? <TasksPage {...props} />
-            : page === 'mailbox-test'
-              ? <MailboxTestPage {...props} />
-              : page === 'event-refresh' ? <EventRefreshPage {...props} /> : <RuleRunsPage {...props} />;
+        : page === 'connections'
+          ? <ConnectionsPage {...props} />
+          : page === 'rules'
+            ? <RulesPage {...props} />
+            : page === 'schema-rule'
+              ? <SchemaRulePage {...props} />
+              : page === 'agent-rule'
+                ? <AgentRulePage {...props} />
+                : page === 'prompts'
+                  ? <PromptsPage {...props} />
+                  : page === 'contacts'
+                    ? <ContactsPage {...props} />
+                    : page === 'operations'
+                      ? <OperationsPage {...props} />
+                      : <TasksPage {...props} />;
   const requiresGoogleReauthentication = needsGoogleReauthentication(props.error)
     || props.automation?.status === 'reauthentication_required';
   const recoveryMessage = props.error || 'Automation Inbox の認証が失効しています。Google に再接続してください。';

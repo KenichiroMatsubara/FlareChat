@@ -2117,6 +2117,34 @@ app.get('/api/organizations/:accountId/automation-warnings', async (context) => 
   }
 });
 
+/**
+ * The Jobs that are not going to run themselves (ADR 0167).
+ *
+ * A Job left `running` was claimed by a pass that never finished it, and nothing
+ * reclaims it: the sweep only takes `pending` rows. A `failed` one has spent its
+ * retries. Both are invisible until somebody notices a reminder that never
+ * arrived, so the operations screen states them.
+ */
+app.get('/api/organizations/:accountId/operations/jobs', async (context) => {
+  try {
+    const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
+    if (!access.database) return failure(context, '組織DBに接続できません。', 503);
+    const rows = await drizzleAccountDatabase(access.database).select({
+      id: accountJobs.id,
+      kind: accountJobs.kind,
+      state: accountJobs.state,
+      attempts: accountJobs.attempts,
+      availableAt: accountJobs.availableAt,
+      lastError: accountJobs.lastError,
+      updatedAt: accountJobs.updatedAt,
+    }).from(accountJobs).where(inArray(accountJobs.state, ['running', 'failed']))
+      .orderBy(desc(accountJobs.updatedAt)).limit(100).all();
+    return json(context, rows);
+  } catch (error) {
+    return failure(context, error instanceof Error ? error.message : 'Stuck Jobs could not be loaded.', 403);
+  }
+});
+
 app.patch('/api/organizations/:accountId/tasks/:taskId', async (context) => {
   try {
     const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));

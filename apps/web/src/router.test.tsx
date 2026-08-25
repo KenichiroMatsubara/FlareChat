@@ -27,12 +27,19 @@ describe('application routes', () => {
       automations: 'automations',
       connections: 'connections',
       rules: 'rules',
-      contacts: 'members',
+      schemaRule: 'rules/schema/:ruleId',
+      agentRule: 'rules/agent/:ruleId',
+      prompts: 'prompts',
+      contacts: 'contacts',
+      operations: 'operations',
+      tasks: 'tasks',
+      // Retired destinations keep redirecting so existing links still land
+      // somewhere sensible (ADR 0167).
+      members: 'members',
       mailboxTest: 'mailbox-test',
       channelTest: 'channel-test',
       ruleRuns: 'rule-runs',
       eventRefresh: 'event-refresh',
-      tasks: 'tasks',
       reminders: 'reminders',
     });
   });
@@ -88,9 +95,9 @@ describe('application routes', () => {
     const router = createMemoryRouter(createAppRoutes({
       bootstrap: async () => ready,
       logout: async () => ({ loggedOut: true }),
-    }), { initialEntries: ['/organizations/org-1/reminders'] });
+    }), { initialEntries: ['/organizations/org-1/tasks'] });
     await router.initialize();
-    expect(router.state.matches.at(-1)?.route.path).toBe('reminders');
+    expect(router.state.matches.at(-1)?.route.path).toBe('tasks');
   });
 
   it('opens the Account Task table as a durable deep link', async () => {
@@ -116,9 +123,9 @@ describe('application routes', () => {
     const router = createMemoryRouter(createAppRoutes({
       bootstrap: async () => ready,
       logout: async () => ({ loggedOut: true }),
-    }), { initialEntries: ['/organizations/org-1/members'] });
+    }), { initialEntries: ['/organizations/org-1/contacts'] });
     await router.initialize();
-    expect(router.state.matches.at(-1)?.route.path).toBe('members');
+    expect(router.state.matches.at(-1)?.route.path).toBe('contacts');
   });
 
   it('offers a real logout action when a route cannot be displayed', async () => {

@@ -276,9 +276,40 @@ export interface PresetApplicationSummary {
   agentRules: number;
 }
 
+/** One thing that went wrong and has not been dealt with (ADR 0167). */
+export interface OperationException {
+  id: string;
+  sourceMessageId: string | null;
+  code: string;
+  message: string;
+  state: string;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+export interface AutomationWarningRecord {
+  id: string;
+  sourceMessageId: string;
+  code: string;
+  message: string;
+  createdAt: string;
+}
+
+/** A Job that will not run itself: claimed and abandoned, or out of retries. */
+export interface StuckJobRecord {
+  id: string;
+  kind: string;
+  state: string;
+  attempts: number;
+  availableAt: string;
+  lastError: string | null;
+  updatedAt: string;
+}
+
 export interface DeliveryAuditRecord {
   id: string;
   eventId: string | null;
+  sourceMessageId: string | null;
   channel: string;
   destination: string;
   outcome: string;
@@ -526,6 +557,26 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(conflictPolicy ? { conflictPolicy } : {}),
   }),
+  operationExceptions: (accountId: string): Promise<OperationException[]> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/operations/exceptions`),
+  resolveOperationException: (accountId: string, id: string): Promise<{ id: string }> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/operations/exceptions/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ state: 'resolved' }) }),
+  automationWarnings: (accountId: string): Promise<AutomationWarningRecord[]> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/automation-warnings`),
+  stuckJobs: (accountId: string): Promise<StuckJobRecord[]> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/operations/jobs`),
+  setAccountSuspension: (accountId: string, suspended: boolean): Promise<{ accountId: string; status: string }> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/suspension`, { method: 'PATCH', body: JSON.stringify({ suspended }) }),
+  createAccountList: (accountId: string, input: { kind: 'source' | 'recipient' | 'line'; name: string; description?: string }): Promise<AccountTypedList> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/lists`, { method: 'POST', body: JSON.stringify(input) }),
+  addAccountListItem: (accountId: string, listId: string, input: { value: string; label?: string }): Promise<{ id: string }> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/lists/${encodeURIComponent(listId)}/items`, { method: 'POST', body: JSON.stringify(input) }),
+  setAccountListItemEnabled: (accountId: string, listId: string, itemId: string, enabled: boolean): Promise<{ id: string }> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/lists/${encodeURIComponent(listId)}/items/${encodeURIComponent(itemId)}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+  contactImportPreview: (accountId: string, csv: string): Promise<unknown> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/members/import/preview`, { method: 'POST', body: JSON.stringify({ csv }) }),
+  importContacts: (accountId: string, csv: string): Promise<unknown> =>
+    request(`/api/organizations/${encodeURIComponent(accountId)}/members/import`, { method: 'POST', body: JSON.stringify({ csv }) }),
   accountDeliveryAudit: (accountId: string): Promise<DeliveryAuditRecord[]> => request(`/api/organizations/${encodeURIComponent(accountId)}/audit/deliveries`),
   accountTasks: (accountId: string): Promise<AccountTask[]> => request(`/api/organizations/${encodeURIComponent(accountId)}/tasks`),
 

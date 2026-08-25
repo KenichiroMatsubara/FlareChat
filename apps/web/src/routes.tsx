@@ -582,10 +582,13 @@ export const AccountLayout = () => {
   return <AccountContext.Provider value={value}><Outlet /></AccountContext.Provider>;
 };
 
-type AccountPage = 'automation' | 'chat' | 'automations' | 'connections' | 'rules' | 'schema-rule' | 'members' | 'mailbox-test' | 'channel-test' | 'rule-runs' | 'event-refresh' | 'tasks' | 'reminders';
+type AccountPage = 'automation' | 'chat' | 'automations' | 'connections' | 'rules' | 'schema-rule' | 'agent-rule' | 'prompts' | 'contacts' | 'operations' | 'tasks';
 export const AccountPage = ({ page }: { page: AccountPage }) => {
   const value = useAccount();
   const navigation = useNavigation();
+  // The routing layer is the one place that reads the route, so a page component
+  // never has to know it is mounted under a parameterised path.
+  const { ruleId } = useParams();
   const auth: AuthMe = { email: value.state.identity.email, displayName: value.state.identity.displayName, accounts: value.state.accounts };
   return <Dashboard
     page={page}
@@ -653,6 +656,8 @@ export const AccountPage = ({ page }: { page: AccountPage }) => {
     accountLists={value.lists}
     onCreateRule={value.createRule}
     onUpdateRule={value.updateRule}
+    ruleId={ruleId}
+    audit={value.audit}
     noticeTargets={value.noticeTargets}
     contactLists={value.contactLists}
     onSaveNoticeContacts={value.saveNoticeContacts}

@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 
 import { Dashboard, GoogleReauthenticationAction, NAVIGATION_PANEL_ID, needsGoogleReauthentication, type DashboardProps } from './dashboard';
@@ -18,6 +18,14 @@ describe('Google credential recovery', () => {
   });
 });
 
+/** One Schema Rule, for the screens that are about a Rule. */
+const schemaRule = (overrides: Partial<AccountRule> = {}): AccountRule => ({
+  id: 'rule-1', accountId: 'org-1', name: 'Announcements', state: 'active', executionMode: 'unattended',
+  revision: 1, selectionPolicy: {}, routingPolicy: {}, noticeContactListId: null,
+  permittedRecipientListIds: [], permittedLineListIds: [], priority: 0,
+  createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z', ...overrides,
+});
+
 const dashboardProps = (): DashboardProps => ({
   page: 'automation', automation: null, summary: null, error: '',
   isPending: () => false, isSettled: () => false, navigating: false, runningOperations: [],
@@ -32,7 +40,7 @@ const dashboardProps = (): DashboardProps => ({
   mailTestRefreshRequest: null, mailTestRefreshPlan: null, mailTestRefreshOutcome: null,
   onPrepareRefresh: vi.fn(), onPlanRefresh: vi.fn(), onApplyRefresh: vi.fn(), onMailTestSubjectChange: vi.fn(), onSearchMailbox: vi.fn(),
   onPrepareMailbox: vi.fn(), onPreviewMailbox: vi.fn(), onPreviewDraftMailbox: vi.fn(), onCreateMailboxTestEvents: vi.fn(), onStartDraftRuleRun: vi.fn(), accountRules: [],
-  accountLists: [], onCreateRule: vi.fn(), onUpdateRule: vi.fn(), accountTasks: [], onUpdateTask: vi.fn(), taskContacts: [], noticeTargets: [], contactLists: [], onSaveNoticeContacts: vi.fn(),
+  accountLists: [], audit: [], onCreateRule: vi.fn(), onUpdateRule: vi.fn(), accountTasks: [], onUpdateTask: vi.fn(), taskContacts: [], noticeTargets: [], contactLists: [], onSaveNoticeContacts: vi.fn(),
   prompts: [], agentRules: [], agentRuns: [], agentTranscript: null, ruleRuns: [], onDecideRuleRun: vi.fn(), onCreatePrompt: vi.fn(), onUpdatePrompt: vi.fn(), onDeletePrompt: vi.fn(), onCreateAgentRule: vi.fn(), onUpdateAgentRule: vi.fn(), onLoadAgentTranscript: vi.fn(),
   accountContacts: [], lineDestinations: [], onCreateContact: vi.fn(), onUpdateContact: vi.fn(),
   onSetLineDestination: vi.fn(), onUnlinkLineDestination: vi.fn(), onRegisterLineDestination: vi.fn(), onRemoveLineDestination: vi.fn(), onRefreshContacts: vi.fn(),
@@ -60,13 +68,16 @@ describe('responsive dashboard shell', () => {
   it('keeps every navigation target inside the collapsible panel', () => {
     const panel = /<div id="app-navigation" class="topbar-panel">(.*?)<main /su.exec(markup())?.[1] ?? '';
     expect(panel).toContain('class="organization-picker"');
-    for (const label of ['自動化', '接続設定', 'ルール', '連絡先', 'タスク', 'メールテスト', 'Rule Runs', '予定の再同期', 'ログアウト']) expect(panel).toContain(label);
+    for (const label of ['自動化', 'チャット', '定期実行', 'タスク', '運用', 'ルール', 'Prompt', '連絡先', '接続設定', 'ログアウト']) expect(panel).toContain(label);
+    // Verification tooling stopped being a destination: each test now sits on the
+    // screen of the thing it tests (ADR 0167).
+    for (const gone of ['メールテスト', 'Rule Runs', '予定の再同期', 'リマインド', '送信テスト']) expect(panel).not.toContain(gone);
   });
 
-  it('separates daily work from settings and from the verification tooling', () => {
+  it('separates what an Account operates from what it configures', () => {
     const headings = [...markup().matchAll(/<p class="nav-group">(.*?)<\/p>/gu)].map((match) => match[1]);
 
-    expect(headings).toEqual(['運用', '設定', '検証']);
+    expect(headings).toEqual(['運用', '設定']);
   });
 
   it('stands the navigation beside the page instead of crowding the top bar on desktop', async () => {
@@ -153,12 +164,7 @@ describe('Task assignment', () => {
   /** Renders one Schema Rule's own screen, which reads its Rule from the route. */
   const schemaRuleMarkup = (props: Partial<DashboardProps>): string => renderToStaticMarkup(
     <MemoryRouter initialEntries={['/organizations/org-1/rules/schema/rule-1']}>
-      <Routes>
-        <Route
-          path="/organizations/:accountId/rules/schema/:ruleId"
-          element={<Dashboard {...dashboardProps()} page="schema-rule" {...props} />}
-        />
-      </Routes>
+      <Dashboard {...dashboardProps()} page="schema-rule" ruleId="rule-1" {...props} />
     </MemoryRouter>,
   );
 
@@ -307,7 +313,7 @@ describe('read-only Agent Rules', () => {
       <MemoryRouter initialEntries={['/organizations/org-1/rules']}>
         <Dashboard
           {...dashboardProps()}
-          page="rules"
+          page="prompts"
           prompts={[{ id: 'prompt-1', accountId: 'org-1', name: 'Analyst', instructions: 'Read carefully.', revision: 2, createdAt: '2026-08-01', updatedAt: '2026-08-02' }]}
           agentRules={[{ id: 'agent-rule-1', accountId: 'org-1', name: 'Read-only analyst', promptId: 'prompt-1', state: 'active', executionMode: 'read_only', selectionPolicy: { domain: 'example.com' }, permittedRecipientListIds: [], permittedLineListIds: [], priority: 0, revision: 1, createdAt: '2026-08-01', updatedAt: '2026-08-01' }]}
           agentRuns={[{ id: 'run-1', agentRuleId: 'agent-rule-1', agentRuleRevision: 1, promptId: 'prompt-1', promptRevision: 2, sourceMessageId: 'source-1', model: 'test-model', startedAt: '2026-08-02', completedAt: '2026-08-02', outcome: 'succeeded', toolCallCount: 1, tokens: 42, expiresAt: '2026-10-31' }]}
@@ -320,21 +326,16 @@ describe('read-only Agent Rules', () => {
     expect(html).toContain('Read carefully.');
     expect(html).toContain('Promptを編集');
     expect(html).toContain('Promptを削除');
-    expect(html).toContain('Agent Ruleを作成');
-    expect(html).toContain('Read-only analyst');
-    expect(html).toContain('Run Transcript');
-    expect(html).toContain('Source transcript body');
-    expect(html).toContain('No action required.');
   });
 });
 
 describe('member roster', () => {
   it('shows discovered LINE identities next to editable member contact data', () => {
     const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/organizations/org-1/members']}>
+      <MemoryRouter initialEntries={['/organizations/org-1/contacts']}>
         <Dashboard
           {...dashboardProps()}
-          page="members"
+          page="contacts"
           connections={{
             accountId: 'org-1',
             accountName: 'Example',
@@ -389,10 +390,10 @@ describe('member roster', () => {
 
   it('distinguishes a manually registered pending LINE contact from a webhook-discovered one in the pool', () => {
     const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/organizations/org-1/members']}>
+      <MemoryRouter initialEntries={['/organizations/org-1/contacts']}>
         <Dashboard
           {...dashboardProps()}
-          page="members"
+          page="contacts"
           connections={{
             accountId: 'org-1',
             accountName: 'Example',
@@ -435,10 +436,10 @@ describe('member roster', () => {
 
   it('marks a manually entered LINE Destination separately from a webhook-discovered one', () => {
     const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/organizations/org-1/members']}>
+      <MemoryRouter initialEntries={['/organizations/org-1/contacts']}>
         <Dashboard
           {...dashboardProps()}
-          page="members"
+          page="contacts"
           connections={{
             accountId: 'org-1',
             accountName: 'Example',
@@ -489,10 +490,12 @@ describe('member roster', () => {
 describe('mailbox test prerequisites', () => {
   it('keeps the permanent active-rule Mailbox Test separate from Draft Rule Runs', () => {
     const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/organizations/org-1/mailbox-test']}>
+      <MemoryRouter initialEntries={['/organizations/org-1/rules/schema/rule-1']}>
         <Dashboard
           {...dashboardProps()}
-          page="mailbox-test"
+          page="schema-rule"
+          ruleId="rule-1"
+          accountRules={[schemaRule()]}
           automation={{
             email: 'owner@example.com', displayName: 'Owner', enabled: true, status: 'active',
             lastSyncedAt: null, lastError: null, failingSince: null, created: 0, skipped: 0, exceptions: 0,
@@ -510,18 +513,21 @@ describe('mailbox test prerequisites', () => {
       </MemoryRouter>,
     );
 
-    expect(html).toContain('<h1>メールテスト</h1>');
-    expect(html).toContain('Primary Rule active-rule r3');
+    expect(html).toContain('このルールを実メールで試す');
     expect(html).toContain('確認した予定を Calendar に作成');
+    // The Rule under test is the Rule this screen is about, so the picker is gone.
     expect(html).not.toContain('Draft Schema Rule');
+    expect(html).not.toContain('Draft Rule Run を開始');
   });
 
   it('allows Gmail search before an AI connection is configured', () => {
     const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/organizations/org-1/rule-runs']}>
+      <MemoryRouter initialEntries={['/organizations/org-1/rules/schema/rule-1']}>
         <Dashboard
           {...dashboardProps()}
-          page="rule-runs"
+          page="schema-rule"
+          ruleId="rule-1"
+          accountRules={[schemaRule()]}
           automation={{
             email: 'owner@example.com',
             displayName: 'Owner',
@@ -543,10 +549,12 @@ describe('mailbox test prerequisites', () => {
 
   it('describes the prepared payload as usable with any OpenAI-compatible API', () => {
     const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/organizations/org-1/rule-runs']}>
+      <MemoryRouter initialEntries={['/organizations/org-1/rules/schema/rule-1']}>
         <Dashboard
           {...dashboardProps()}
-          page="rule-runs"
+          page="schema-rule"
+          ruleId="rule-1"
+          accountRules={[schemaRule()]}
           automation={{
             email: 'owner@example.com',
             displayName: 'Owner',
@@ -577,10 +585,12 @@ describe('mailbox test prerequisites', () => {
 
   it('uses provider-neutral wording when an AI API is configured', () => {
     const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/organizations/org-1/rule-runs']}>
+      <MemoryRouter initialEntries={['/organizations/org-1/rules/schema/rule-1']}>
         <Dashboard
           {...dashboardProps()}
-          page="rule-runs"
+          page="schema-rule"
+          ruleId="rule-1"
+          accountRules={[schemaRule()]}
           automation={{
             email: 'owner@example.com',
             displayName: 'Owner',
@@ -619,10 +629,12 @@ describe('mailbox test prerequisites', () => {
 
   it('shows the email summary returned with the AI extraction', () => {
     const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/organizations/org-1/rule-runs']}>
+      <MemoryRouter initialEntries={['/organizations/org-1/rules/schema/rule-1']}>
         <Dashboard
           {...dashboardProps()}
-          page="rule-runs"
+          page="schema-rule"
+          ruleId="rule-1"
+          accountRules={[schemaRule({ state: 'draft' })]}
           automation={{
             email: 'owner@example.com', displayName: 'Owner', enabled: true, status: 'active',
             lastSyncedAt: null, lastError: null, failingSince: null, created: 0, skipped: 0, exceptions: 0,
@@ -747,10 +759,10 @@ describe('operation progress', () => {
       { id: 'prompt-1', accountId: 'org-1', name: '案内', instructions: '読む', revision: 1, createdAt: '', updatedAt: '' },
       { id: 'prompt-2', accountId: 'org-1', name: '請求', instructions: '読む', revision: 1, createdAt: '', updatedAt: '' },
     ];
-    const html = dashboard({ prompts, isPending: pendingOnly(pendingKey.promptUpdate('prompt-1')) }, 'rules', 'rules');
+    const html = dashboard({ prompts, isPending: pendingOnly(pendingKey.promptUpdate('prompt-1')) }, 'prompts', 'prompts');
 
     expect(html.match(/保存中…/gu)?.length).toBe(2);
-    expect(html).toContain('ルールを作成');
+    expect(html).toContain('Promptを作成');
     expect(html).not.toContain('>作成中…');
     expect(html).toContain('Promptを削除');
   });
@@ -758,13 +770,14 @@ describe('operation progress', () => {
   it('reports a common Rule Run decision on the run being decided', () => {
     const html = dashboard({
       ruleRuns: [{
-        id: 'run-1', rule: { type: 'agent', id: 'agent-rule-1', revision: 1 }, sourceMessageId: 'source-1',
+        id: 'run-1', rule: { type: 'schema', id: 'rule-1', revision: 1 }, sourceMessageId: 'source-1',
         sourceMessage: { subject: '地区大会のご案内', sender: 'district@example.com', receivedAt: '2026-08-05T01:00:00.000Z' },
         executionMode: 'approval', intent: 'live', status: 'pending_approval', expiresAt: '2026-08-05',
         effects: [{ id: 'effect-1', key: 'line:0', kind: 'agent.send_line_message', arguments: { destination: '役員LINE', message: '地区大会の申込期限は8月20日です。' }, dependsOn: [], status: 'pending', attempts: 0, result: null, error: null }],
       }],
       isPending: pendingOnly(pendingKey.ruleRunDecision('run-1', 'approve')),
-    }, 'rule-runs', 'rule-runs');
+      ruleId: 'rule-1', accountRules: [schemaRule()],
+    }, 'schema-rule', 'rules/schema/rule-1');
 
     expect(html).toContain('aria-busy="true"');
     expect(html).toContain('<summary');
@@ -794,7 +807,8 @@ describe('operation progress', () => {
           { id: 'tasks', key: 'tasks', kind: 'schema.create_tasks', arguments: { extraction }, dependsOn: [], status: 'succeeded', attempts: 1, result: null, error: null },
         ],
       }],
-    }, 'rule-runs', 'rule-runs');
+      ruleId: 'rule-1', accountRules: [schemaRule()],
+    }, 'schema-rule', 'rules/schema/rule-1');
 
     expect(html).toContain('地区大会開催のお知らせ');
     expect(html).toContain('要約: 地区大会の開催案内です。');
@@ -814,7 +828,8 @@ describe('operation progress', () => {
         { id: 'message-2', subject: '請求案内', sender: 'sender@example.com' },
       ],
       isPending: pendingOnly(pendingKey.mailPrepare('message-1')),
-    }, 'rule-runs', 'rule-runs');
+      ruleId: 'rule-1', accountRules: [schemaRule()],
+    }, 'schema-rule', 'rules/schema/rule-1');
 
     expect(html.match(/本文と添付を読み込み中…/gu)?.length).toBe(1);
     expect(html).toContain('Gmailを検索');
@@ -850,12 +865,12 @@ describe('operation progress', () => {
   });
 
   it('names the running operation in the middle of the page, whatever is scrolled into view', () => {
-    const html = dashboard({ runningOperations: [pendingKey.mailSearch] }, 'rule-runs', 'rule-runs');
+    const html = dashboard({ runningOperations: [pendingKey.mailSearch] , ruleId: 'rule-1', accountRules: [schemaRule()] }, 'schema-rule', 'rules/schema/rule-1');
 
     expect(html).toContain('class="pending-overlay"');
     expect(html).toContain('Gmail を検索しています');
     expect(html).toContain('完了するまでこのページを開いたままにしてください。');
-    expect(dashboard({}, 'rule-runs', 'rule-runs')).not.toContain('pending-overlay');
+    expect(dashboard({ ruleId: 'rule-1', accountRules: [schemaRule()] }, 'schema-rule', 'rules/schema/rule-1')).not.toContain('pending-overlay');
   });
 
   it('counts the other operations running behind the one it names', () => {
@@ -884,7 +899,7 @@ describe('operation progress', () => {
     const html = dashboard({
       accountContacts: [contact('member-1', '山田'), contact('member-2', '鈴木')],
       isPending: pendingOnly(pendingKey.contactRefresh),
-    }, 'members', 'members');
+    }, 'contacts', 'contacts');
 
     expect(html).toContain('更新中…');
     expect(html).not.toContain('登録中…');
