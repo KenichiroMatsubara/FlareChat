@@ -1381,13 +1381,16 @@ app.patch('/api/organizations/:accountId/rules/:ruleId', async (context) => {
   try {
     const access = await accountForRequest(context.req.raw, context.env, context.req.param('accountId'));
     if (!access.database) throw new Error('Account database is not available.');
-    const input = await context.req.json<{ state?: string; executionMode?: string; noticeContactListId?: unknown; permittedRecipientListIds?: unknown; permittedLineListIds?: unknown }>();
+    const input = await context.req.json<{ name?: unknown; state?: string; executionMode?: string; selectionPolicy?: unknown; priority?: unknown; noticeContactListId?: unknown; permittedRecipientListIds?: unknown; permittedLineListIds?: unknown }>();
     if (input.state !== undefined && !['draft', 'active', 'suspended', 'archived'].includes(input.state)) return failure(context, 'Unsupported Rule State.');
+    if (input.name !== undefined && (typeof input.name !== 'string' || !input.name.trim())) return failure(context, 'Rule name is required.');
+    if (input.selectionPolicy !== undefined && (typeof input.selectionPolicy !== 'object' || input.selectionPolicy === null || Array.isArray(input.selectionPolicy))) return failure(context, 'The Selection Policy must be an object.');
+    if (input.priority !== undefined && !Number.isInteger(input.priority)) return failure(context, 'The Rule priority must be a whole number.');
     if (input.executionMode !== undefined && !['read_only', 'approval', 'unattended'].includes(input.executionMode)) return failure(context, 'Unsupported Rule Execution Mode.');
     if (input.permittedRecipientListIds !== undefined && (!Array.isArray(input.permittedRecipientListIds) || input.permittedRecipientListIds.some((id) => typeof id !== 'string' || !id.trim()))) return failure(context, 'Permitted Calendar Recipient List IDs must be an array of stable identifiers.');
     if (input.permittedLineListIds !== undefined && (!Array.isArray(input.permittedLineListIds) || input.permittedLineListIds.some((id) => typeof id !== 'string' || !id.trim()))) return failure(context, 'Permitted LINE Destination List IDs must be an array of stable identifiers.');
     if (input.noticeContactListId !== undefined && input.noticeContactListId !== null && typeof input.noticeContactListId !== 'string') return failure(context, 'The notice Contact List must be a stable identifier or null.');
-    if (input.state === undefined && input.executionMode === undefined && input.noticeContactListId === undefined && input.permittedRecipientListIds === undefined && input.permittedLineListIds === undefined) return failure(context, 'No supported Rule changes were provided.');
+    if (input.name === undefined && input.state === undefined && input.executionMode === undefined && input.selectionPolicy === undefined && input.priority === undefined && input.noticeContactListId === undefined && input.permittedRecipientListIds === undefined && input.permittedLineListIds === undefined) return failure(context, 'No supported Rule changes were provided.');
     const database = drizzleAccountDatabase(access.database);
     const ruleId = context.req.param('ruleId');
     const existing = await database.select().from(accountRules)
@@ -1407,26 +1410,41 @@ app.patch('/api/organizations/:accountId/rules/:ruleId', async (context) => {
       if (permittedRecipientListIds?.some((listId) => listKinds.get(listId) !== 'recipient')) return failure(context, 'Every permitted Calendar Recipient List must belong to the Account and have recipient kind.', 409);
       if (permittedLineListIds?.some((listId) => listKinds.get(listId) !== 'line')) return failure(context, 'Every permitted LINE Destination List must belong to the Account and have line kind.', 409);
     }
-    const revision = input.executionMode === undefined ? existing.currentRevision : existing.currentRevision + 1;
-    if (input.state !== undefined || input.executionMode !== undefined) {
+    // A Rule Revision records what a Rule does to a message it is given, which is
+    // its Execution Mode and the policies (ADR 0134). A rename or a change of
+    // priority is not that, and neither is a save that resubmits the same values:
+    // a screen that posts its whole form would otherwise mint a Revision on every
+    // click, and the Rule Runs would point at Revisions nothing distinguishes.
+    const name = typeof input.name === 'string' ? input.name.trim() : undefined;
+    const executionMode = input.executionMode as 'read_only' | 'approval' | 'unattended' | undefined;
+    const selectionPolicy = input.selectionPolicy === undefined ? undefined : JSON.stringify(input.selectionPolicy);
+    const priority = input.priority === undefined ? undefined : input.priority as number;
+    const revises = (executionMode !== undefined && executionMode !== existing.executionMode)
+      || (selectionPolicy !== undefined && selectionPolicy !== existing.selectionPolicy);
+    const revision = revises ? existing.currentRevision + 1 : existing.currentRevision;
+    if (input.state !== undefined || executionMode !== undefined || selectionPolicy !== undefined || name !== undefined || priority !== undefined) {
       const timestamp = now();
       await database.batch([
         database.update(accountRules)
           .set({
+            ...(name === undefined ? {} : { name }),
             ...(input.state === undefined ? {} : { status: input.state as 'draft' | 'active' | 'suspended' | 'archived' }),
-            ...(input.executionMode === undefined ? {} : { executionMode: input.executionMode as 'read_only' | 'approval' | 'unattended', currentRevision: revision }),
+            ...(executionMode === undefined ? {} : { executionMode }),
+            ...(selectionPolicy === undefined ? {} : { selectionPolicy }),
+            ...(priority === undefined ? {} : { priority }),
+            ...(revises ? { currentRevision: revision } : {}),
             updatedAt: timestamp,
           })
           .where(eq(accountRules.id, ruleId)),
-        ...(input.executionMode === undefined ? [] : [database.insert(ruleRevisions).values({
+        ...(revises ? [database.insert(ruleRevisions).values({
           id: crypto.randomUUID(),
           ruleId,
           revision,
-          executionMode: input.executionMode as 'read_only' | 'approval' | 'unattended',
-          selectionPolicy: existing.selectionPolicy,
+          executionMode: executionMode ?? existing.executionMode,
+          selectionPolicy: selectionPolicy ?? existing.selectionPolicy,
           routingPolicy: existing.routingPolicy,
           createdAt: timestamp,
-        })]),
+        })] : []),
       ]);
     }
     if (permittedRecipientListIds !== undefined) {
@@ -1453,8 +1471,12 @@ app.patch('/api/organizations/:accountId/rules/:ruleId', async (context) => {
     return json(context, {
       id: ruleId,
       ...(input.noticeContactListId === undefined ? {} : { noticeContactListId: (input.noticeContactListId as string | null) || null }),
+      ...(name === undefined ? {} : { name }),
       ...(input.state === undefined ? {} : { state: input.state }),
-      ...(input.executionMode === undefined ? {} : { executionMode: input.executionMode, revision }),
+      ...(executionMode === undefined ? {} : { executionMode }),
+      ...(selectionPolicy === undefined ? {} : { selectionPolicy: JSON.parse(selectionPolicy) as Record<string, unknown> }),
+      ...(priority === undefined ? {} : { priority }),
+      ...(revises ? { revision } : {}),
       ...(permittedRecipientListIds === undefined ? {} : { permittedRecipientListIds }),
       ...(permittedLineListIds === undefined ? {} : { permittedLineListIds }),
     });

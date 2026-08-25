@@ -276,6 +276,74 @@ describe('Account management', () => {
     });
   });
 
+  it('edits a Schema Rule for the life of the Rule, revising it only when what it does changes', async () => {
+    fixture = createTestApp();
+    const created = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/rules', {
+      name: 'Announcements', selectionPolicy: { domain: 'example.com' }, priority: 0,
+    }), fixture.environment);
+    const ruleId = (await created.json() as { data: { id: string } }).data.id;
+
+    const renamed = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/rules/${ruleId}`,
+      { name: '行事のお知らせ', priority: 5 },
+      'PATCH',
+    ), fixture.environment);
+    const afterRename = await app.fetch(fixture.request('/api/organizations/organization-1/rules'), fixture.environment);
+    const narrowed = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/rules/${ruleId}`,
+      { selectionPolicy: { domain: 'example.com', keyword: '招待' } },
+      'PATCH',
+    ), fixture.environment);
+    const afterNarrowing = await app.fetch(fixture.request('/api/organizations/organization-1/rules'), fixture.environment);
+
+    expect([renamed.status, narrowed.status]).toEqual([200, 200]);
+    await expect(afterRename.json()).resolves.toMatchObject({ data: [{
+      name: '行事のお知らせ', priority: 5, revision: 1, selectionPolicy: { domain: 'example.com' },
+    }] });
+    await expect(afterNarrowing.json()).resolves.toMatchObject({ data: [{
+      name: '行事のお知らせ', priority: 5, revision: 2,
+      selectionPolicy: { domain: 'example.com', keyword: '招待' },
+    }] });
+  });
+
+  it('does not mint a Rule Revision when a screen resubmits the values already stored', async () => {
+    fixture = createTestApp();
+    const created = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/rules', {
+      name: 'Announcements', executionMode: 'unattended', selectionPolicy: { domain: 'example.com' },
+    }), fixture.environment);
+    const ruleId = (await created.json() as { data: { id: string } }).data.id;
+
+    const resaved = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/rules/${ruleId}`,
+      { name: 'Announcements', executionMode: 'unattended', selectionPolicy: { domain: 'example.com' } },
+      'PATCH',
+    ), fixture.environment);
+    const listed = await app.fetch(fixture.request('/api/organizations/organization-1/rules'), fixture.environment);
+
+    expect(resaved.status).toBe(200);
+    await expect(listed.json()).resolves.toMatchObject({ data: [{ revision: 1 }] });
+  });
+
+  it('refuses a Schema Rule edit that would leave it unnamed or unreadably policied', async () => {
+    fixture = createTestApp();
+    const created = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/rules', {
+      name: 'Announcements',
+    }), fixture.environment);
+    const ruleId = (await created.json() as { data: { id: string } }).data.id;
+
+    const blank = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/rules/${ruleId}`, { name: '   ' }, 'PATCH',
+    ), fixture.environment);
+    const listPolicy = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/rules/${ruleId}`, { selectionPolicy: ['domain'] }, 'PATCH',
+    ), fixture.environment);
+    const fractionalPriority = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/rules/${ruleId}`, { priority: 1.5 }, 'PATCH',
+    ), fixture.environment);
+
+    expect([blank.status, listPolicy.status, fractionalPriority.status]).toEqual([400, 400, 400]);
+  });
+
   it('moves one Task onto the Contact an Account names, and refuses one it does not hold', async () => {
     fixture = createTestApp();
     const contact = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/members', {
