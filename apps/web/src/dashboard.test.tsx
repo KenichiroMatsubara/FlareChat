@@ -212,6 +212,32 @@ describe('Task assignment', () => {
     expect(html).toContain('revision 3');
   });
 
+  it('says on the Rule when the Account cannot run it at all', () => {
+    const html = schemaRuleMarkup({ accountRules: [schemaRule()] });
+
+    expect(html).toContain('AI 接続が設定されていません');
+    expect(html).toContain('メールを1通も処理できません');
+  });
+
+  it('names the Contacts nothing can reach', () => {
+    const contact = (id: string, name: string, email: string) => ({
+      id, accountId: 'org-1', name, email, state: 'active' as const, description: '', tags: [],
+      createdAt: '', updatedAt: '', lineDestinations: [],
+    });
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/organizations/org-1/contacts']}>
+        <Dashboard
+          {...dashboardProps()}
+          page="contacts"
+          accountContacts={[contact('member-1', '山田', 'yamada@example.com'), contact('member-2', '鈴木', '')]}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('鈴木にはメールアドレスも LINE もありません');
+    expect(html).not.toContain('山田にはメールアドレス');
+  });
+
   it('says on the Rule and in the index when a summary would reach nobody', () => {
     const unread: AccountRule = {
             id: 'rule-1', accountId: 'org-1', name: 'Announcements', state: 'active', executionMode: 'unattended', revision: 3,

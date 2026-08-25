@@ -1,4 +1,4 @@
-import { CalendarDays, CheckCircle2, CircleAlert, Copy, Eye, EyeOff, Mail, MessageCircle, Pencil, Play, RefreshCw, Save, Search, Settings, SlidersHorizontal, UserPlus, UsersRound, X } from 'lucide-react';
+import { BellRing, CalendarDays, CheckCircle2, CircleAlert, Copy, Eye, EyeOff, Mail, MessageCircle, Pencil, Play, RefreshCw, Save, Search, Settings, SlidersHorizontal, UserPlus, UsersRound, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -289,6 +289,10 @@ export const ContactsPage = (props: DashboardProps) => {
   });
   const withEmail = props.accountContacts.filter((contact) => contact.email && contact.email !== '***').length;
   const linkedToLine = props.accountContacts.filter((contact) => contact.lineDestinations.length > 0).length;
+  // A Contact the product cannot reach is not an error anywhere, so it has to be
+  // stated here or it is never stated at all (ADR 0167).
+  const unreachableContacts = props.accountContacts.filter((contact) =>
+    contact.state === 'active' && !contact.email.trim() && contact.lineDestinations.length === 0);
   const lineConfigured = Boolean(
     props.connections?.line.channelAccessTokenConfigured && props.connections.line.channelSecretConfigured,
   );
@@ -402,6 +406,10 @@ export const ContactsPage = (props: DashboardProps) => {
 
     <section className="member-directory">
       <div className="member-directory-heading"><div><p>CONTACT DIRECTORY</p><h2>連絡先一覧</h2></div><span>{visibleContacts.length} / {props.accountContacts.length}件</span></div>
+      {unreachableContacts.length > 0 && <p className="dashboard-warning">
+        <CircleAlert size={16} />
+        <span>{unreachableContacts.map((contact) => contact.name).join('、')}にはメールアドレスも LINE もありません。要約もリマインドも届きません。</span>
+      </p>}
       <div className="member-filters">
         <label className="member-search"><Search size={16} /><input aria-label="連絡先を検索" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="名前・メール・LINE IDで検索" /></label>
         <select aria-label="状態で絞り込み" value={stateFilter} onChange={(event) => setStateFilter(event.target.value as typeof stateFilter)}><option value="all">すべての状態</option><option value="active">有効</option><option value="inactive">無効</option></select>
@@ -1032,6 +1040,34 @@ const RulePermittedLists = ({ rule, props }: {
  * says what is missing rather than leaving an operator to discover it from the
  * absence of messages nobody received.
  */
+/**
+ * The cadence this Account's Tasks remind on, stated where the Rule that raises
+ * them is configured (ADR 0167). It is read-only here because it is an
+ * Account-wide setting, not this Rule's: it is edited beside the Tasks.
+ */
+const ReminderCadenceSummary = ({ accountId }: { accountId: string }) => {
+  const [cadence, setCadence] = useState<{ enabled: boolean; days: readonly number[] } | null>(null);
+  useEffect(() => {
+    if (!accountId) return;
+    api.taskReminders(accountId).then(setCadence).catch(() => setCadence(null));
+  }, [accountId]);
+  const stated = (day: number): string => day > 0 ? `${day}日前` : day === 0 ? '当日' : `${Math.abs(day)}日後`;
+  return <section className="settings-card">
+    <div className="settings-card-title"><BellRing size={19} /><div>
+      <h2>タスクのリマインド</h2><p>このルールが作るタスクの締め切り前後に送る合図です。</p>
+    </div></div>
+    {cadence === null
+      ? <p className="connection-state">読み込み中…</p>
+      : !cadence.enabled
+        ? <p className="dashboard-warning"><CircleAlert size={15} /><span>リマインドは停止中です。締め切りが来ても誰にも通知されません。</span></p>
+        : cadence.days.length === 0
+          ? <p className="dashboard-warning"><CircleAlert size={15} /><span>送る日が1つも選ばれていないため、何も送られません。</span></p>
+          : <p className="connection-state">{cadence.days.map(stated).join('、')}に送ります</p>}
+    <p className="api-guide">Account 全体の設定です。変更はタスク画面で行います。</p>
+    <Link className="secondary" to="../../tasks">タスク画面へ</Link>
+  </section>;
+};
+
 /** One Schema Rule in the index: what it matches, whether it can deliver, and the way in. */
 const SchemaRuleRow = ({ rule, props }: {
   rule: DashboardProps['accountRules'][number];
@@ -1079,6 +1115,11 @@ export const SchemaRulePage = (props: DashboardProps) => {
         {' ・ '}優先度 {rule.priority} ・ {rule.state} ・ {rule.executionMode}
       </span>
     </div>
+    {!props.connections?.ai.apiKeyConfigured && <p className="dashboard-warning">
+      <CircleAlert size={17} />
+      <span>AI 接続が設定されていません。このルールはメールを1通も処理できません。</span>
+      <Link to="../../connections">接続設定へ</Link>
+    </p>}
     {readers === 0 && <p className="dashboard-warning">
       <CircleAlert size={17} />
       <span>要約の送り先が選ばれていません。このルールは予定とタスクを作りますが、要約は誰にも届きません。</span>
@@ -1091,6 +1132,7 @@ export const SchemaRulePage = (props: DashboardProps) => {
       </div></div>
       <NoticeContactChoices rule={rule} props={props} />
     </section>
+    <ReminderCadenceSummary accountId={props.accountId ?? ''} />
     <RulePermittedLists rule={rule} props={props} />
     <section className="test-card">
       <div><p>TRY THIS RULE</p><h2>このルールを実メールで試す</h2><span>{rule.state === 'draft'
