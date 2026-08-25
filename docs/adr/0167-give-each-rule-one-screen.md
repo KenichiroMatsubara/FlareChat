@@ -26,17 +26,19 @@ Nine screens, each named for what it is responsible for.
 
 `/prompts` maintains Prompts as the shared asset they are, referenced by Agent Rules and Automations alike.
 
-`/contacts` holds the roster, Channel handles, Contact Lists, Typed Lists, portal invitations, and CSV import and export — everything about who the product can reach.
+`/contacts` holds the roster, Channel handles, Contact Lists, Typed Lists, portal invitations, and CSV import and export — everything about who the product can reach. Sending a test message is here too, on the Contact it is sent to: the Channel Test picks a Contact and reaches it on the Channel that Contact holds, so the question it answers is whether this person is reachable, not whether a credential parses.
 
 `/automations` keeps the scheduled Automations it already keeps, with Triggers and tool grants.
 
 `/chat` is conversation only. Access Tokens and MCP Servers move to `/connections`, which they belong to.
 
-`/connections` holds what the whole Account shares and no single Rule owns: the Google grant, the AI Connection, LINE and Discord, Access Tokens, MCP Servers, the attachment folder, and the response-matching window.
+`/connections` holds what the whole Account shares and no single Rule owns: the Google grant, the AI Connection, LINE and Discord, Access Tokens, MCP Servers, the attachment folder, and the response-matching window. Each credential is checked where it is entered, and calling a registered MCP Server's tool sits beside that server's registration.
 
 `/operations` is the one place to find what went wrong: exceptions, automation warnings, the delivery audit, stuck Jobs, and Account suspension.
 
-Mailbox Test, Channel Test, Rule Runs, and Event Refresh stop being destinations. Trying a Rule belongs on that Rule's screen, sending a test message belongs beside the Channel credential, approving a run belongs on the Rule that planned it, and Event Refresh is an operations tool. ADR 0136 keeps the mailbox test and the draft rule preview as separate operations; they stay separate operations, on the screen of the Rule each one is testing.
+Mailbox Test, Channel Test, and Rule Runs stop being destinations, because each of them is a question about something that now has an owner. Trying a Rule against real mail belongs on that Rule's screen. Approving a planned run belongs on the Rule that planned it. The Channel Test splits in two along the two questions it currently answers at once: whether a Contact is reachable, which is a Contact's screen, and whether a credential works, which is the credential's card.
+
+Consolidating the mail test removes a duplicate rather than moving one. The same flow — find a message by subject, build the request, send it to the AI, read back the summary, events, and tasks — is implemented twice: once on Mailbox Test against the active Primary Rule, and again on Rule Runs against a Draft Rule chosen from a dropdown. ADR 0136 keeps the mailbox test and the draft rule preview as separate operations, and they stay separate operations; what disappears is the second copy of the screen around them, because on a Rule's own screen the Rule under test is the Rule the screen is about, and whether it is Draft or Active is already stated there.
 
 ## Every screen states what it is missing
 
