@@ -18,6 +18,13 @@ The rebuild is mid-migration and ADR 0137 fixes its shape: Schema Rules are left
 
 All code is strict TypeScript. Prefer flat functions, explicit types, early returns, and single-word file names. Never use `any`.
 
+## Migrations and releases
+
+- A migration is a contract with production data (ADR 0174). Before writing one that reads a column or a JSON field, read the git history of everything that ever wrote it: rows written under an earlier shape are still in production. Write the migration so no row can fail it: coalesce every part of a NOT NULL value, use `UPDATE OR IGNORE` where a rewrite may collide with a unique index, and guard JSON functions with `json_valid`.
+- Every pull request runs `npm run db:rehearse:remote` in CI, which exports every production D1 database and replays the pending migrations against it. A migration that fails the rehearsal is not mergeable. Never skip, weaken, or work around that check.
+- Production is deployed only through `npm run deploy:cloudflare`: rehearsal, Control migrations, the fleet release barrier, `wrangler deploy`, then verification. Never run `wrangler deploy` against production directly, and treat a Workers Builds deploy command that differs from `npm run deploy:cloudflare` as a defect to fix first.
+- A migration file is immutable once its name is in a production `d1_migrations` table; a change goes in a new file.
+
 ## Screenshot and URL evidence
 
 Mobile browser address bars may truncate or elide the beginning, middle, or end of a URL. In particular, a visible

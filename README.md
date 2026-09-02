@@ -59,6 +59,22 @@ Google Cloud Console の **API とサービス → 認証情報 → このアプ
 npm run test:d1
 ```
 
+## CI とマイグレーションのリハーサル
+
+`.github/workflows/ci.yml` が pull request と `main` への push で動きます。
+
+- `verify`: `npm run typecheck` と `npm test`
+- `rehearse-migrations`: `npm run db:rehearse:remote`。本番の Control D1 と全 Organization D1 を `wrangler d1 export` で取り出し、
+  ローカル SQLite に読み込んで、Worker と同じ Schema Lifecycle で未適用マイグレーションを適用します。
+  本番の行で失敗するマイグレーションはここで落ち、マージできません。
+
+リポジトリの **Settings → Secrets and variables → Actions** に `CLOUDFLARE_API_TOKEN`（D1 読み取り権限）と
+`CLOUDFLARE_ACCOUNT_ID` を登録し、**Settings → Branches** で `main` に両ジョブを required status check にしてください。
+required にしていないと、この検査は「見える」だけで「止める」役目を果たしません。
+
+手元で試す場合は同じ環境変数を付けて `npm run db:rehearse:remote` を実行します。既にエクスポート済みの
+`<DB名>.sql` を置いたディレクトリを引数に渡すと、エクスポートを飛ばして再生だけを行います。
+
 ## Cloudflare Workers Builds による自動デプロイ
 
 Cloudflare Dashboard の **Workers & Pages → Create → Git repository** でこの
@@ -72,8 +88,20 @@ Dashboard の設定値は次のとおりです。
 - Deploy command: `npm run deploy:cloudflare`
 - Production branch: `main`
 
-`deploy:cloudflare` は `flarechat.pinara.workers.dev` の Worker と GUI をデプロイしてから
-Control D1 migration を適用します。
+`deploy:cloudflare` は次の順で動きます。どれかが失敗した時点で止まり、その前に動いていた Worker がそのまま動き続けます（ADR 0100、ADR 0174）。
+
+1. `db:rehearse:remote`: 本番の全 D1 をエクスポートし、未適用マイグレーションをローカル SQLite 上で試す
+2. Control D1 のマイグレーション適用
+3. 全 Organization D1 のマイグレーション適用（リリースバリアを取得）
+4. `wrangler deploy`
+5. 再検証してバリアを解放
+
+Deploy command が `wrangler deploy` や `npx wrangler deploy` のままだと 1〜3 と 5 が飛ばされ、
+Worker が起動時に自力でマイグレーションを試す修復経路だけが残ります。その経路が失敗すると全リクエストが 503 になるので、
+Dashboard の Deploy command は必ず `npm run deploy:cloudflare` にしてください。1〜3 と 5 が本番 D1 に触るため、
+**Settings → Build → Variables and secrets** にも `CLOUDFLARE_API_TOKEN` と `CLOUDFLARE_ACCOUNT_ID` が必要です
+（Worker の Secrets とは別枠で、ビルド環境には渡りません）。
+`schema_releases` テーブルの `target_migration` が最新のマイグレーション名になっていなければ、この経路が動いていません。
 本番URLなどの非秘密変数は `apps/worker/wrangler.jsonc` を source of truth とします。
 初回デプロイ前に、Worker の **Settings → Variables and Secrets** または
 `wrangler secret bulk` で次のSecretsを設定します。`secrets.required` により、
