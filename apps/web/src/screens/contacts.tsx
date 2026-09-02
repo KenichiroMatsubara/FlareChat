@@ -1,4 +1,4 @@
-import { CircleAlert, Mail, MessageCircle, Pencil, RefreshCw, Save, Search, SlidersHorizontal, UserPlus, UsersRound, X } from 'lucide-react';
+import { CircleAlert, Mail, MessageCircle, Pencil, RefreshCw, Save, Search, SlidersHorizontal, Trash2, UserPlus, UsersRound, X } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { Link, useLoaderData, useRevalidator, type LoaderFunctionArgs } from 'react-router-dom';
 
@@ -153,6 +153,7 @@ const ContactsScreen = () => {
   const [description, setDescription] = useState('');
   const [tags, setTags] = useState('');
   const [editingId, setEditingId] = useState('');
+  const [removingId, setRemovingId] = useState('');
   const refreshing = operations.pending(pendingKey.contactRefresh);
   const creatingContact = operations.pending(pendingKey.contactCreate);
   const registeringHandle = operations.pending(pendingKey.lineDestinationRegister);
@@ -217,6 +218,10 @@ const ContactsScreen = () => {
   const saveContact = (contactId: string, input: ContactUpdate): void => act(pendingKey.contactUpdate(contactId), async () => {
     await api.updateContact(accountId, contactId, input);
     setEditingId('');
+  });
+  const deleteContact = (contactId: string): void => act(pendingKey.contactDelete(contactId), async () => {
+    await api.deleteContact(accountId, contactId);
+    setRemovingId('');
   });
 
   return <section className="page-layout members-page">
@@ -297,7 +302,17 @@ const ContactsScreen = () => {
             <div className="member-line-details">
               {contact.lineDestinations.length ? contact.lineDestinations.map((handle) => <div key={handle.id}><span className="line-badge"><MessageCircle size={13} />LINE {handleKindLabel(handle.kind)}{handle.source === 'manual' ? '・手動' : ''}</span><strong>{handle.displayName || contact.name}</strong><code title="LINE IDは先頭5文字のみ表示しています">{handle.destinationId}</code></div>) : <div className="member-line-empty"><MessageCircle size={15} /><span>LINE未連携</span></div>}
             </div>
-            <button type="button" className="member-edit-button" onClick={() => setEditingId(contact.id)}><Pencil size={15} />編集</button>
+            <div className="member-card-actions">
+              <button type="button" className="member-edit-button" onClick={() => { setRemovingId(''); setEditingId(contact.id); }}><Pencil size={15} />編集</button>
+              <button type="button" className="member-edit-button member-delete-button" aria-label={`${contact.name}を削除`} onClick={() => setRemovingId(contact.id)} disabled={removingId === contact.id}><Trash2 size={15} />削除</button>
+            </div>
+            {removingId === contact.id && <div className="member-delete-confirm" role="alertdialog" aria-label={`${contact.name}の削除確認`}>
+              <p>「{contact.name}」を削除しますか？LINE の紐付けとリストの登録は外れます。担当しているタスクには名前だけが残ります。</p>
+              <div>
+                <button type="button" className="member-line-unlink" onClick={() => deleteContact(contact.id)} disabled={operations.pending(pendingKey.contactDelete(contact.id))}>{operations.pending(pendingKey.contactDelete(contact.id)) ? <><RefreshCw className="spin" size={13} />削除中…</> : <><Trash2 size={13} />削除する</>}</button>
+                <button type="button" className="secondary" onClick={() => setRemovingId('')} disabled={operations.pending(pendingKey.contactDelete(contact.id))}><X size={13} />やめる</button>
+              </div>
+            </div>}
           </>}
         </article>)}
         {visible.length === 0 && <div className="member-empty"><UsersRound size={28} /><h3>{data.contacts.length ? '条件に一致する連絡先がありません' : '連絡先はまだ登録されていません'}</h3><p>{data.contacts.length ? '検索条件を変更してください。' : 'LINEアカウントと氏名だけで追加できます。メールアドレスやタグは後から編集できます。'}</p></div>}

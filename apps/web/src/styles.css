@@ -287,6 +287,14 @@ svg { flex: none; }
 .member-line-empty { display: flex; align-items: center; gap: 7px; padding: 10px; color: #899189; background: #f7f8f6; border: 1px dashed #d9ddd7; border-radius: 9px; font-size: 10px; }
 .member-edit-button { display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 5px; min-height: 34px; padding: 0 12px; color: #53675a; background: white; border: 1px solid #d9dfd9; border-radius: 8px; font-size: 10px; white-space: nowrap; }
 .member-edit-button:hover { color: #2d6747; border-color: #a9c4b0; background: #f5faf6; }
+.member-card-actions { display: flex; flex: none; gap: 6px; }
+.member-delete-button { color: #a34a3a; border-color: #ecd3cc; }
+.member-delete-button:hover { color: #832f22; border-color: #d9a89e; background: #fbeeeb; }
+.member-delete-button:disabled { opacity: .6; }
+.member-delete-confirm { grid-column: 2 / -1; display: grid; gap: 8px; padding: 10px 12px; background: #fdf3f1; border: 1px solid #ecd3cc; border-radius: 9px; }
+.member-delete-confirm p { margin: 0; color: #6f3a30; font-size: 10px; line-height: 1.6; }
+.member-delete-confirm > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.member-delete-confirm .secondary { min-height: 30px; padding: 0 10px; font-size: 9px; }
 .member-edit-form { grid-column: 2 / -1; display: grid; gap: 12px; }
 .member-edit-grid { display: grid; grid-template-columns: 1fr 1.2fr 1fr 120px; gap: 10px; }
 .member-edit-line { display: grid; gap: 10px; padding: 12px; background: #f4f8f4; border: 1px solid #e0eae1; border-radius: 10px; }
@@ -447,7 +455,7 @@ nav a.loading { opacity: .65; }
   .member-card { grid-template-columns: 40px minmax(0, 1fr) auto; align-items: start; gap: 12px 14px; }
   .member-avatar { grid-column: 1; grid-row: 1; width: 40px; height: 40px; }
   .member-identity { grid-column: 2; grid-row: 1; }
-  .member-edit-button { grid-column: 3; grid-row: 1; }
+  .member-card-actions { grid-column: 3; grid-row: 1; }
   .member-line-details { grid-column: 2 / -1; grid-row: 2; }
 }
 
@@ -480,7 +488,7 @@ nav a.loading { opacity: .65; }
   .member-filters { display: grid; }
   .member-filters select { width: 100%; }
   .member-card { grid-template-columns: 40px minmax(0, 1fr); }
-  .member-edit-button { grid-column: 2 / -1; grid-row: 3; justify-self: start; }
+  .member-card-actions { grid-column: 2 / -1; grid-row: 3; justify-self: start; }
   .member-line-details > div:not(.member-line-empty) { grid-template-columns: auto minmax(0, 1fr); gap: 5px 9px; }
   .member-line-details code { grid-column: 1 / -1; grid-row: 2; white-space: normal; overflow-wrap: anywhere; }
   .member-edit-grid { grid-template-columns: minmax(0, 1fr); }

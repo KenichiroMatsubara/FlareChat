@@ -186,6 +186,7 @@ export const api = {
   contacts: (accountId: string): Promise<Contact[]> => request(account(accountId, '/members')),
   createContact: (accountId: string, input: ContactInput): Promise<Contact> => post(account(accountId, '/members'), input),
   updateContact: (accountId: string, contactId: string, input: ContactUpdate): Promise<Partial<Contact> & { id: string }> => patch(account(accountId, `/members/${segment(contactId)}`), input),
+  deleteContact: (accountId: string, contactId: string): Promise<{ id: string; removed: boolean }> => remove(account(accountId, `/members/${segment(contactId)}`)),
   setContactLineHandle: (accountId: string, contactId: string, input: LineHandleInput): Promise<LineHandle> => put(account(accountId, `/members/${segment(contactId)}/line-destination`), input),
   removeContactLineHandle: (accountId: string, contactId: string, lineDestinationId: string): Promise<{ id: string; unlinked: boolean }> => remove(account(accountId, `/members/${segment(contactId)}/line-destination/${segment(lineDestinationId)}`)),
   lineHandles: (accountId: string): Promise<LineHandleRecord[]> => request(account(accountId, '/line-destinations')),

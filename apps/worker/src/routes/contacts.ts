@@ -12,9 +12,12 @@ import {
   contactLineDestinations,
   contactLinkTokens,
   contacts,
+  eventRecipients,
   lineDestinations,
   portalInvitations,
+  tasks,
 } from '../storage/account-schema';
+import type { AccountDatabase } from '../storage/database';
 import { accountRoute, created, type Created, type RouteResult } from './account';
 
 export const contactRoutes = resource();
@@ -32,6 +35,18 @@ const tagsOf = (value: unknown): string[] => {
 };
 
 const appUrl = (env: { APP_URL: string }): string => env.APP_URL.replace(/\/$/u, '');
+
+/**
+ * An email address belongs to at most one Contact (`members_email_unique`).
+ * Said here, as a refusal the screen can show, rather than left for D1 to say
+ * as a constraint failure nobody can read.
+ */
+const refuseEmailInUse = async (db: AccountDatabase, email: string, exceptContactId = ''): Promise<void> => {
+  if (!email) return;
+  const holder = await db.select({ id: contacts.id, name: contacts.name }).from(contacts)
+    .where(and(eq(contacts.email, email), ne(contacts.id, exceptContactId))).get();
+  if (holder) throw conflict(`このメールアドレスは既に「${holder.name}」に登録されています。`);
+};
 
 contactRoutes.get('/organizations/:accountId/members', accountRoute(async ({ db, accountId }): Promise<Contact[]> => {
   const rows = await db.select({
@@ -111,6 +126,7 @@ contactRoutes.post('/organizations/:accountId/members', accountRoute<{ name?: st
   const email = body.email?.trim().toLowerCase() ?? '';
   if (!name) throw invalid('Contact name is required.');
   if (email && !email.includes('@')) throw invalid('Contact email address must be valid when provided.');
+  await refuseEmailInUse(db, email);
   const tags = tagsOf(body.tags);
   const requestedLineDestinationId = body.lineDestinationId?.trim();
   const lineDestination = requestedLineDestinationId
@@ -171,6 +187,7 @@ contactRoutes.patch('/organizations/:accountId/members/:contactId', accountRoute
   }
   if (Object.keys(updates).length === 0) throw invalid('At least one Contact field is required.');
   const contactId = params.contactId ?? '';
+  if (updates.email) await refuseEmailInUse(db, updates.email, contactId);
   const updated = await db.update(contacts).set({ ...updates, updatedAt: now() }).where(eq(contacts.id, contactId)).returning({ id: contacts.id }).get();
   if (!updated) throw notFound('Contact was not found.');
   return {
@@ -181,6 +198,28 @@ contactRoutes.patch('/organizations/:accountId/members/:contactId', accountRoute
     ...(tags === undefined ? {} : { tags }),
     ...(updates.state === undefined ? {} : { state: updates.state }),
   };
+}));
+
+/**
+ * Removing a Contact. Its handles, tokens, attendance, and list memberships go
+ * with it; a Task it held keeps the name it was created with (ADR 0161); a LINE
+ * Destination the webhook discovered returns to the pool, and one entered by
+ * hand goes, as when it is unlinked.
+ */
+contactRoutes.delete('/organizations/:accountId/members/:contactId', accountRoute(async ({ db, params }) => {
+  const contactId = params.contactId ?? '';
+  const contact = await db.select({ id: contacts.id }).from(contacts).where(eq(contacts.id, contactId)).get();
+  if (!contact) throw notFound('Contact was not found.');
+  const manualHandles = await db.select({ id: lineDestinations.id }).from(lineDestinations)
+    .innerJoin(contactLineDestinations, eq(contactLineDestinations.lineDestinationId, lineDestinations.id))
+    .where(and(eq(contactLineDestinations.contactId, contactId), eq(lineDestinations.source, 'manual'))).all();
+  await db.batch([
+    db.update(tasks).set({ assigneeContactId: null }).where(eq(tasks.assigneeContactId, contactId)),
+    db.delete(eventRecipients).where(eq(eventRecipients.contactId, contactId)),
+    ...manualHandles.map((handle) => db.delete(lineDestinations).where(eq(lineDestinations.id, handle.id))),
+    db.delete(contacts).where(eq(contacts.id, contactId)),
+  ]);
+  return { id: contactId, removed: true };
 }));
 
 contactRoutes.post('/organizations/:accountId/members/:contactId/line-links', accountRoute(async ({ db, env, accountId, params }) => {
