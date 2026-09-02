@@ -14,29 +14,35 @@ export interface DurableJob {
   attempts: number;
   availableAt: string;
   idempotencyKey: string;
+  /** False when the same idempotency key was already queued, so the caller counts what it actually added. */
+  created: boolean;
 }
 
-/** Adds a durable Account Job; a duplicate wake-up cannot duplicate its external effect. */
+/**
+ * Adds a durable Account Job, due now or at the stated time; a duplicate
+ * wake-up cannot duplicate its external effect because the key refuses it.
+ */
 export const enqueueJob = async (
   database: D1Database,
-  input: { kind: string; payload: Record<string, unknown>; idempotencyKey: string },
+  input: { kind: string; payload: Record<string, unknown>; idempotencyKey: string; availableAt?: string },
 ): Promise<DurableJob> => {
-  const job: DurableJob = {
+  const now = new Date().toISOString();
+  const job = {
     id: crypto.randomUUID(),
     kind: input.kind,
     payload: input.payload,
-    state: 'pending',
+    state: 'pending' as const,
     attempts: 0,
-    availableAt: new Date().toISOString(),
+    availableAt: input.availableAt ?? now,
     idempotencyKey: input.idempotencyKey,
   };
-  await drizzleAccountDatabase(database).insert(jobs).values({
+  const result = await drizzleAccountDatabase(database).insert(jobs).values({
     ...job,
     payload: JSON.stringify(job.payload),
-    createdAt: job.availableAt,
-    updatedAt: job.availableAt,
+    createdAt: now,
+    updatedAt: now,
   }).onConflictDoNothing().run();
-  return job;
+  return { ...job, created: result.meta.changes > 0 };
 };
 
 export interface ClaimedJob {

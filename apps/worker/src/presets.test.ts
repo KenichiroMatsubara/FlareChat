@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { app } from './api';
+import { app } from './app';
 import { availablePresets } from './presets';
 import { createTestApp } from '../test/app';
 
@@ -125,7 +125,7 @@ describe('Preset application', () => {
       );
 
       expect(rejected.status).toBe(409);
-      await expect(rejected.json()).resolves.toMatchObject({ error: { code: 'preset_configuration_conflict' } });
+      await expect(rejected.json()).resolves.toMatchObject({ error: { code: 'conflict' } });
       await expect(beforeChoice.json()).resolves.toMatchObject({ data: [{ name: 'Existing configuration' }] });
       expect(explicitlyAdded.status).toBe(201);
       await expect(afterChoice.json()).resolves.toMatchObject({ data: [

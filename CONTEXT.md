@@ -242,6 +242,10 @@ _Avoid_: enabled flag, rule status
 Whether an Automation Rule processes matched Source Messages read-only through planning without applying Rule Effects, records them for Account approval, or applies them unattended. Every rule type supports all three; unattended execution is a first-class operating mode rather than an exception built on human confirmation.
 _Avoid_: permission level, safety setting
 
+**Rule Execution**:
+The one module that starts, decides, resumes, expires, lists, and reads Rule Runs for an Account, built once per Account. A caller hands it the plan for one run; how each Rule Effect is applied once the Account is known is its own concern and appears on no interface.
+_Avoid_: executor, runner, effect dispatcher
+
 **Rule Run**:
 The record of one Automation Rule Revision processing one Source Message in one Execution Mode, whose complete set of Rule Effects becomes immutable when planning succeeds. Read-only retains the plan without applying it, approval holds it for one batch decision, and unattended applies it immediately; planning retries may precede the freeze, but afterward applying modes only resume incomplete effects under stable idempotency keys and changed external preconditions require a new run.
 _Avoid_: job, attempt, Agent Run

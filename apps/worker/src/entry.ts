@@ -1,4 +1,5 @@
 import { and, eq, gt, inArray, or } from 'drizzle-orm';
+import { now } from './clock';
 
 import { decrypt, encrypt, masterKey, unwrapAccountKey } from './cryptography';
 import { randomToken, sha256 } from './encoding';
@@ -44,7 +45,6 @@ const SETUP_WINDOW_MS = 15 * 60 * 1_000;
 const OAUTH_WINDOW_MS = 10 * 60 * 1_000;
 const SESSION_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
 
-const now = (): string => new Date().toISOString();
 const expiresIn = (milliseconds: number): string => new Date(Date.now() + milliseconds).toISOString();
 const redirectUri = (env: Bindings): string => `${env.APP_URL.replace(/\/$/u, '')}/oauth/google/callback`;
 const recoveryReturnOrigin = (env: Bindings, accountId: string): string => {

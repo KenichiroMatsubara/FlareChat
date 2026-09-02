@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { app } from './api';
+import { app } from './app';
 import { encrypt, masterKey, unwrapAccountKey } from './cryptography';
 import { randomToken } from './encoding';
 import { GOOGLE_IDENTITY_SCOPES, GOOGLE_SCOPES } from './google';
@@ -68,10 +68,10 @@ describe('application entry', () => {
     )).toEqual([{ name: '0005_member_logins.sql' }]);
     expect(fixture.account.rows<{ name: string }>(
       'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1',
-    )).toEqual([{ name: '0029_agent_email_summary.sql' }]);
+    )).toEqual([{ name: '0030_one_reminder_kind.sql' }]);
     expect(secondAccount.rows<{ name: string }>(
       'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1',
-    )).toEqual([{ name: '0029_agent_email_summary.sql' }]);
+    )).toEqual([{ name: '0030_one_reminder_kind.sql' }]);
   });
 
   it('reports the exact Account schema mismatch without revoking the session', async () => {
@@ -95,7 +95,7 @@ describe('application entry', () => {
         databaseId: 'database-1',
         bindingName: 'ORG_ORGANIZATION1',
         currentMigration: '9999_future.sql',
-        expectedMigration: '0029_agent_email_summary.sql',
+        expectedMigration: '0030_one_reminder_kind.sql',
         requestId: expect.any(String),
       },
     });

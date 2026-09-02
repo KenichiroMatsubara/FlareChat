@@ -1,11 +1,11 @@
 import { MIN_ATTENDANCE_REMINDER_DAY, MIN_REMINDER_DAY } from '@mail/domain';
 import { BellRing, CheckCircle2, CircleAlert, Plus, RefreshCw, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
-import { api, type ScheduledAttendanceReminder, type ScheduledTaskReminder } from './api';
+import type { ReminderCadence, ReminderCadenceInput, ReminderSubject, ScheduledReminder } from '@mail/domain';
 
-const errorText = (error: unknown, fallback: string): string =>
-  error instanceof Error && error.message ? error.message : fallback;
+import { api } from './api';
+import { errorText } from './parts';
 
 /**
  * How one milestone reads to an operator. A bare `-1` in a list of days is not
@@ -59,35 +59,33 @@ export const MilestoneEditor = ({ days, busy, label, minimum, onChange }: {
   </>;
 };
 
-/** One row of either preview, which differ only in what they name. */
-interface PreviewRow {
-  key: string;
-  sendOn: string;
-  milestone: number;
-  contactName: string;
-  channel: string;
-  destination: string;
-  text: string;
-}
+/** How a reminder's subject reads in the schedule. */
+export const subjectLabel = (subject: ReminderSubject): string => subject === 'task' ? 'タスク' : '出欠';
+
+/** Which subjects are switched on, so the schedule can say what will not be sent. */
+export type ReminderSwitches = Record<ReminderSubject, boolean>;
 
 /**
- * What the configured milestones will send, addressed and worded as it will
- * arrive. It is rendered whether or not reminders are switched on, because
- * deciding to turn them on is exactly when somebody needs to see what that
- * would send; when the switch is off it says so rather than implying delivery.
+ * The Reminder Schedule: every reminder the configured milestones will send,
+ * whichever subject it is about, addressed and worded as it will arrive. It is
+ * rendered whether or not reminders are switched on, because deciding to turn
+ * them on is exactly when somebody needs to see what that would send; a row
+ * whose switch is off says so rather than implying delivery.
  */
-export const ReminderSchedule = ({ rows, enabled }: { rows: readonly PreviewRow[]; enabled: boolean }) => rows.length === 0
-  ? <p className="rules-empty">送信予定のリマインドはありません。</p>
-  : <>
-    {!enabled && <p className="reminder-muted">
-      <CircleAlert size={15} />オフのため、これらは送信されません。オンにするとこの内容で送られます。
+export const ReminderSchedule = ({ rows, enabled }: { rows: readonly ScheduledReminder[]; enabled: ReminderSwitches }) => {
+  if (rows.length === 0) return <p className="rules-empty">送信予定のリマインドはありません。</p>;
+  const muted = rows.some((row) => !enabled[row.subject]);
+  return <>
+    {muted && <p className="reminder-muted">
+      <CircleAlert size={15} />オフの種別のリマインドは送信されません。オンにするとこの内容で送られます。
     </p>}
     <div className="reminder-schedule-wrap">
-      <table className={enabled ? 'reminder-schedule' : 'reminder-schedule muted'}>
-        <thead><tr><th>送信日</th><th>タイミング</th><th>宛先</th><th>送信内容</th></tr></thead>
+      <table className="reminder-schedule">
+        <thead><tr><th>送信日</th><th>種別</th><th>タイミング</th><th>宛先</th><th>送信内容</th></tr></thead>
         <tbody>
-          {rows.map((row) => <tr key={row.key}>
+          {rows.map((row) => <tr key={`${row.subject}:${row.subjectId}:${row.contactId}:${row.milestone}`} className={enabled[row.subject] ? undefined : 'muted'}>
             <td>{row.sendOn}</td>
+            <td>{subjectLabel(row.subject)}{!enabled[row.subject] && <small>オフ</small>}</td>
             <td>{milestoneLabel(row.milestone)}</td>
             <td><strong>{row.contactName}</strong><small>{row.channel.toUpperCase()} {row.destination}</small></td>
             <td><pre>{row.text}</pre></td>
@@ -96,12 +94,7 @@ export const ReminderSchedule = ({ rows, enabled }: { rows: readonly PreviewRow[
       </table>
     </div>
   </>;
-
-export const taskPreviewRows = (reminders: readonly ScheduledTaskReminder[]): PreviewRow[] =>
-  reminders.map((reminder) => ({ ...reminder, key: `${reminder.taskId}:${reminder.milestone}` }));
-
-export const attendancePreviewRows = (reminders: readonly ScheduledAttendanceReminder[]): PreviewRow[] =>
-  reminders.map((reminder) => ({ ...reminder, key: `${reminder.eventId}:${reminder.contactId}:${reminder.milestone}` }));
+};
 
 const ReminderSwitch = ({ enabled, busy, onChange, label }: {
   enabled: boolean;
@@ -123,44 +116,33 @@ const ReminderSwitch = ({ enabled, busy, onChange, label }: {
   </div>
 </section>;
 
+/** The Reminder Schedule the Tasks screen shows, and the two cadences behind it. */
+export interface ReminderData {
+  taskCadence: ReminderCadence;
+  attendanceCadence: ReminderCadence;
+  schedule: ScheduledReminder[];
+}
+
+export const loadReminders = async (accountId: string): Promise<ReminderData> => {
+  const [taskCadence, attendanceCadence, schedule] = await Promise.all([
+    api.taskReminders(accountId),
+    api.attendanceReminders(accountId),
+    api.reminderSchedule(accountId),
+  ]);
+  return { taskCadence, attendanceCadence, schedule };
+};
+
 /**
  * Both reminder cadences an Account controls, each beside the schedule it
  * produces. Both are chosen the same way (ADR 0164): a switch, the milestones
  * counted from the deadline, and the schedule those milestones would send.
  */
-export const RemindersPage = ({ accountId }: { accountId: string }) => {
-  const [taskEnabled, setTaskEnabled] = useState(false);
-  const [days, setDays] = useState<readonly number[]>([]);
-  const [taskSchedule, setTaskSchedule] = useState<readonly ScheduledTaskReminder[]>([]);
-  const [attendanceEnabled, setAttendanceEnabled] = useState(false);
-  const [attendanceDays, setAttendanceDays] = useState<readonly number[]>([]);
-  const [attendanceSchedule, setAttendanceSchedule] = useState<readonly ScheduledAttendanceReminder[]>([]);
-  const [loaded, setLoaded] = useState(false);
+export const Reminders = ({ accountId, reminders, reload }: { accountId: string; reminders: ReminderData; reload: () => Promise<void> }) => {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
 
-  const reload = (): Promise<void> => Promise.all([
-    api.taskReminders(accountId),
-    api.scheduledTaskReminders(accountId),
-    api.attendanceReminders(accountId),
-    api.scheduledAttendanceReminders(accountId),
-  ]).then(([task, taskUpcoming, attendance, attendanceUpcoming]) => {
-    setTaskEnabled(task.enabled);
-    setDays(task.days);
-    setTaskSchedule(taskUpcoming);
-    setAttendanceEnabled(attendance.enabled);
-    setAttendanceDays(attendance.days);
-    setAttendanceSchedule(attendanceUpcoming);
-    setLoaded(true);
-  }).catch((cause: unknown) => setError(errorText(cause, 'リマインドの設定を取得できませんでした。')));
-
-  useEffect(() => {
-    setLoaded(false);
-    void reload();
-  }, [accountId]);
-
-  const run = async (work: () => Promise<unknown>, fallback: string): Promise<void> => {
+  const save = async (work: () => Promise<unknown>, fallback: string): Promise<void> => {
     setSaving(true);
     setSaved(false);
     setError('');
@@ -175,17 +157,11 @@ export const RemindersPage = ({ accountId }: { accountId: string }) => {
     }
   };
 
-  const saveTask = (input: { days?: readonly number[]; enabled?: boolean }): void =>
-    void run(() => api.saveTaskReminders(accountId, input), 'タスクのリマインド設定を保存できませんでした。');
+  const saveTask = (input: ReminderCadenceInput): void =>
+    void save(() => api.saveTaskReminders(accountId, input), 'タスクのリマインド設定を保存できませんでした。');
 
-  const saveAttendance = (input: { days?: readonly number[]; enabled?: boolean }): void =>
-    void run(() => api.saveAttendanceReminders(accountId, input), '出欠のリマインド設定を保存できませんでした。');
-
-  if (!loaded && !error) {
-    return <section className="page-layout reminders-page">
-      <div className="loading"><RefreshCw className="spin" size={18} />読み込み中…</div>
-    </section>;
-  }
+  const saveAttendance = (input: ReminderCadenceInput): void =>
+    void save(() => api.saveAttendanceReminders(accountId, input), '出欠のリマインド設定を保存できませんでした。');
 
   return <section className="page-layout reminders-page">
     <div className="page-title">
@@ -199,36 +175,30 @@ export const RemindersPage = ({ accountId }: { accountId: string }) => {
 
     <section className="access-panel">
       <h3><BellRing size={17} />タスクのリマインド</h3>
-      <ReminderSwitch
-        enabled={taskEnabled}
-        busy={saving}
-        label="タスクのリマインド"
-        onChange={(next) => saveTask({ enabled: next })}
-      />
+      <ReminderSwitch enabled={reminders.taskCadence.enabled} busy={saving} label="タスクのリマインド" onChange={(next) => saveTask({ enabled: next })} />
       <p className="api-guide">
         未完了で担当者のいるタスクについて、締め切りからの日数でリマインドします。
         正の数は締め切り前、0 は当日、負の数は期限切れ後です。
       </p>
-      <MilestoneEditor days={days} busy={saving} label="タスク" minimum={MIN_REMINDER_DAY} onChange={(next) => saveTask({ days: next })} />
-      <h4>送信予定</h4>
-      <ReminderSchedule rows={taskPreviewRows(taskSchedule)} enabled={taskEnabled} />
+      <MilestoneEditor days={reminders.taskCadence.days} busy={saving} label="タスク" minimum={MIN_REMINDER_DAY} onChange={(next) => saveTask({ days: next })} />
     </section>
 
     <section className="access-panel">
       <h3><BellRing size={17} />出欠のリマインド</h3>
-      <ReminderSwitch
-        enabled={attendanceEnabled}
-        busy={saving}
-        label="出欠のリマインド"
-        onChange={(next) => saveAttendance({ enabled: next })}
-      />
+      <ReminderSwitch enabled={reminders.attendanceCadence.enabled} busy={saving} label="出欠のリマインド" onChange={(next) => saveAttendance({ enabled: next })} />
       <p className="api-guide">
         まだ回答していない相手にだけ、回答期限からの日数でお願いを送ります。出欠を登録した時点で止まります。
         正の数は回答期限前、0 は当日です。期限を過ぎた出欠は受け付けられないため、当日より後は設定できません。
       </p>
-      <MilestoneEditor days={attendanceDays} busy={saving} label="出欠" minimum={MIN_ATTENDANCE_REMINDER_DAY} onChange={(next) => saveAttendance({ days: next })} />
-      <h4>送信予定</h4>
-      <ReminderSchedule rows={attendancePreviewRows(attendanceSchedule)} enabled={attendanceEnabled} />
+      <MilestoneEditor days={reminders.attendanceCadence.days} busy={saving} label="出欠" minimum={MIN_ATTENDANCE_REMINDER_DAY} onChange={(next) => saveAttendance({ days: next })} />
+    </section>
+
+    <section className="access-panel">
+      <h3><BellRing size={17} />送信予定</h3>
+      <ReminderSchedule
+        rows={reminders.schedule}
+        enabled={{ task: reminders.taskCadence.enabled, registration: reminders.attendanceCadence.enabled }}
+      />
     </section>
   </section>;
 };

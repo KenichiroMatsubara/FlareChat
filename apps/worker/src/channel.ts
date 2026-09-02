@@ -18,7 +18,8 @@
 import { and, asc, eq, inArray, like, or } from 'drizzle-orm';
 
 import { decrypt } from './cryptography';
-import { deliverLineBatch, recordDeliveryAttempt } from './delivery';
+import { conflict, invalid } from './refusal';
+import { recordDeliveryAttempt, type DeliveryAttempt } from './delivery';
 import { sendDiscordMessage } from './discord';
 import { accountDatabase } from './storage/database';
 import {
@@ -242,6 +243,43 @@ const failedAt = async (input: {
   };
 };
 
+const LINE_PUSH_URL = 'https://api.line.me/v2/bot/message/push';
+
+/** Speaks the LINE Messaging API once: one push of at most five message objects, one Delivery Record per intended message. */
+const deliverLineBatch = async (input: {
+  database: D1Database;
+  request: ChannelFetch;
+  accessToken: string;
+  eventId?: string | null;
+  sourceMessageId?: string | null;
+  destinationId: string;
+  messages: string[];
+}): Promise<DeliveryAttempt[]> => {
+  if (!input.messages.length || input.messages.length > LINE_BATCH_LIMIT) throw new Error('A LINE batch must contain between one and five messages.');
+  let outcome: DeliveryAttempt['outcome'] = 'failed';
+  let externalId: string | null = null;
+  try {
+    const response = await input.request(LINE_PUSH_URL, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${input.accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: input.destinationId, messages: input.messages.map((text) => ({ type: 'text', text })) }),
+    });
+    if (!response.ok) throw new Error('LINE push failed.');
+    outcome = 'succeeded';
+    externalId = response.headers.get('x-line-request-id');
+  } catch {
+    // Every failed intended message still receives its own retryable record below.
+  }
+  return Promise.all(input.messages.map(() => recordDeliveryAttempt(input.database, {
+    ...(input.eventId === undefined ? {} : { eventId: input.eventId }),
+    ...(input.sourceMessageId === undefined ? {} : { sourceMessageId: input.sourceMessageId }),
+    destination: input.destinationId,
+    channel: 'line',
+    outcome,
+    externalId,
+  })));
+};
+
 /**
  * Sends to one address on one Channel, batching what the provider lets us batch.
  *
@@ -290,6 +328,7 @@ export const sendOnDestination = async (input: {
     const batches = batched(texts, LINE_BATCH_LIMIT);
     const attempts = await Promise.all(batches.map((messages) => deliverLineBatch({
       database: input.database,
+      request,
       accessToken: credential,
       destinationId: input.destination,
       messages,
@@ -385,13 +424,13 @@ export const sendOnChannel = async (input: {
   sourceMessageId?: string | null;
   fetch?: ChannelFetch;
 }): Promise<ChannelDelivery> => {
-  if (!isChannelName(input.channel)) throw new Error(`This product does not reach a Contact on ${input.channel} yet.`);
+  if (!isChannelName(input.channel)) throw invalid(`This product does not reach a Contact on ${input.channel} yet.`);
   const channel = input.channel;
   const texts = stated(input.texts);
   const destination = await destinationFor({ database: input.database, contactId: input.contactId, channel });
-  if (!destination) throw new Error(`Contact ${input.contactId} has no ${channel === 'line' ? 'LINE' : 'Discord'} handle to reach.`);
+  if (!destination) throw conflict(`Contact ${input.contactId} has no ${channel === 'line' ? 'LINE' : 'Discord'} handle to reach.`);
   const outcome = await sendOnDestination({ ...input, channel, destination, texts });
-  if (!outcome.delivered) throw new Error(outcome.error ?? `${channel} refused the message.`);
+  if (!outcome.delivered) throw conflict(outcome.error ?? `${channel} refused the message.`);
   return {
     delivered: true,
     channel,

@@ -6,7 +6,7 @@ import type { AppState } from '@mail/domain';
 
 import { ApiError } from './api';
 import { createAppRoutes, accountRoutePaths, resolveApplicationRedirect, routePaths } from './router';
-import { logoutFromRouteError, ContactPortalView } from './routes';
+import { logoutFromRouteError, ContactPageView } from './routes';
 import { pendingKey } from './pending';
 
 describe('application routes', () => {
@@ -223,8 +223,8 @@ describe('Contact Portal progress', () => {
     }],
   };
   const view = (pending: (key: string) => boolean, settled: (key: string) => boolean = () => false, running: string[] = []): string =>
-    renderToStaticMarkup(<ContactPortalView
-      portal={portal}
+    renderToStaticMarkup(<ContactPageView
+      page={portal}
       running={running}
       pending={pending}
       settled={settled}

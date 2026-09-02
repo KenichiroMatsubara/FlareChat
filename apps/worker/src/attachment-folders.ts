@@ -3,14 +3,9 @@ import { DEFAULT_ATTACHMENT_FOLDER_PATH, readAttachmentFolderPath, sourceMessage
 
 import { settings, sourceMessages } from './storage/account-schema';
 import type { AccountDatabase } from './storage/database';
-import type { createSourceMessageFolder, ensureAttachmentFolderPath } from './drive-attachments';
+import type { GoogleProvider } from './providers';
 
 export const ATTACHMENT_FOLDER_PATH_SETTING = 'attachment_folder_path';
-
-export interface DriveFolderPort {
-  ensurePath: typeof ensureAttachmentFolderPath;
-  createMessageFolder: typeof createSourceMessageFolder;
-}
 
 /** The Drive location this Account writes, falling back to the product default. */
 export const accountAttachmentFolderPath = async (database: AccountDatabase): Promise<string> => {
@@ -36,7 +31,7 @@ export const saveAccountAttachmentFolderPath = async (
  */
 export const resolveSourceMessageFolder = async (input: {
   database: AccountDatabase;
-  drive: DriveFolderPort;
+  drive: GoogleProvider['drive'];
   accessToken: string;
   subject: string;
   receivedAt: string;
@@ -46,9 +41,8 @@ export const resolveSourceMessageFolder = async (input: {
   if (input.recordedFolderId) return input.recordedFolderId;
   const configured = readAttachmentFolderPath(await accountAttachmentFolderPath(input.database));
   if (!configured.accepted) throw new Error(`Attachment Folder Path is not usable (${configured.reason}).`);
-  const parentId = await input.drive.ensurePath({ accessToken: input.accessToken, segments: configured.segments });
-  const folderId = await input.drive.createMessageFolder({
-    accessToken: input.accessToken,
+  const parentId = await input.drive.ensureFolderPath(input.accessToken, configured.segments);
+  const folderId = await input.drive.createFolder(input.accessToken, {
     parentId,
     name: sourceMessageFolderName({ receivedAt: input.receivedAt, subject: input.subject }),
   });

@@ -8,6 +8,7 @@
 
 import { and, asc, desc, eq } from 'drizzle-orm';
 
+import { notFound } from './refusal';
 import { decrypt, encrypt } from './cryptography';
 import { accountDatabase as drizzleAccountDatabase } from './storage/database';
 import {
@@ -143,7 +144,7 @@ export const ensureChatConversation = async (input: {
   if (input.conversationId) {
     const existing = await db.select({ id: chatConversations.id }).from(chatConversations)
       .where(eq(chatConversations.id, input.conversationId)).get();
-    if (!existing) throw new Error('Operator Chat conversation was not found.');
+    if (!existing) throw notFound('Operator Chat conversation was not found.');
     await db.update(chatConversations).set({ updatedAt: input.timestamp }).where(eq(chatConversations.id, input.conversationId)).run();
     return input.conversationId;
   }
@@ -162,6 +163,7 @@ export const ensureChatConversation = async (input: {
 export const openChatTurn = async (input: {
   database: D1Database;
   conversationId: string;
+  ruleRunId: string;
   request: string;
   timestamp: string;
 }): Promise<{ turnId: string; ruleRunId: string; position: number }> => {
@@ -169,20 +171,8 @@ export const openChatTurn = async (input: {
   const last = await db.select({ position: chatTurns.position }).from(chatTurns)
     .where(eq(chatTurns.conversationId, input.conversationId)).orderBy(desc(chatTurns.position)).limit(1).get();
   const position = (last?.position ?? 0) + 1;
-  const ruleRunId = crypto.randomUUID();
+  const { ruleRunId } = input;
   const turnId = crypto.randomUUID();
-  await db.insert(ruleRuns).values({
-    id: ruleRunId,
-    ruleId: null,
-    agentRuleId: null,
-    ruleRevision: 1,
-    sourceMessageId: null,
-    executionMode: 'unattended',
-    intent: 'chat',
-    status: 'planning',
-    createdAt: input.timestamp,
-    updatedAt: input.timestamp,
-  }).run();
   await db.insert(chatTurns).values({
     id: turnId,
     conversationId: input.conversationId,
@@ -201,19 +191,13 @@ export const openChatTurn = async (input: {
 export const closeChatTurn = async (input: {
   database: D1Database;
   turnId: string;
-  ruleRunId: string;
   outcome: { status: 'completed'; response: string } | { status: 'failed'; error: string };
   timestamp: string;
 }): Promise<void> => {
-  const db = drizzleAccountDatabase(input.database);
-  await db.update(chatTurns).set({
+  await drizzleAccountDatabase(input.database).update(chatTurns).set({
     status: input.outcome.status,
     response: input.outcome.status === 'completed' ? input.outcome.response : null,
     error: input.outcome.status === 'failed' ? input.outcome.error : null,
     updatedAt: input.timestamp,
   }).where(eq(chatTurns.id, input.turnId)).run();
-  await db.update(ruleRuns).set({
-    status: input.outcome.status === 'completed' ? 'completed' : 'failed',
-    updatedAt: input.timestamp,
-  }).where(and(eq(ruleRuns.id, input.ruleRunId), eq(ruleRuns.intent, 'chat'))).run();
 };

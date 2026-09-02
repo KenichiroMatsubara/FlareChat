@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm';
+import { now } from './clock';
 
 import type { AppState } from '@mail/domain';
 
@@ -12,6 +13,7 @@ import {
   provisionAccount,
   SchemaReleaseInProgressError,
 } from './provisioning';
+import { conflict, invalid, notFound } from './refusal';
 import { availablePresets } from './presets';
 import { controlDatabase } from './storage/database';
 import {
@@ -28,7 +30,6 @@ import type { Bindings, SessionRow } from './types';
 
 const PROVISIONING_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
-const now = (): string => new Date().toISOString();
 const expiresIn = (milliseconds: number): string => new Date(Date.now() + milliseconds).toISOString();
 
 const provisioningByAccountId = (
@@ -153,14 +154,14 @@ export const confirmAccount = async (
 ): Promise<void> => {
   const setup = await controlDatabase(env.CONTROL_DB).select().from(accountSetups)
     .where(eq(accountSetups.ownerIdentityId, ownerIdentityId)).get();
-  if (!setup) throw new Error('Account setup is not waiting for name confirmation.');
+  if (!setup) throw conflict('Account setup is not waiting for name confirmation.');
   if (Date.parse(setup.expiresAt) <= Date.now()) {
     await discardSetup(env, setup);
-    throw new Error('Account setup expired. Start over with Google authorization.');
+    throw conflict('Account setup expired. Start over with Google authorization.');
   }
   const name = requestedName.trim() || setup.name;
-  if (!name) throw new Error('Account name is required.');
-  if (presetId && !availablePresets().some((preset) => preset.id === presetId)) throw new Error('Preset was not found.');
+  if (!name) throw invalid('Account name is required.');
+  if (presetId && !availablePresets().some((preset) => preset.id === presetId)) throw notFound('Preset was not found.');
   await beginProvisioning(env, setup, name, presetId);
 };
 
@@ -173,16 +174,16 @@ export const retryAccountProvisioning = async (
       eq(accountProvisionings.ownerIdentityId, ownerIdentityId),
       eq(accountProvisionings.state, 'failed'),
     )).get();
-  if (!provisioning) throw new Error('Account provisioning is not waiting for retry.');
+  if (!provisioning) throw conflict('Account provisioning is not waiting for retry.');
   if (Date.parse(provisioning.expiresAt) <= Date.now()) {
     await discardProvisioning(env, provisioning);
-    throw new Error('Account setup expired. Start over with Google authorization.');
+    throw conflict('Account setup expired. Start over with Google authorization.');
   }
   await controlDatabase(env.CONTROL_DB).update(accountProvisionings)
     .set({ state: 'provisioning', errorMessage: null, updatedAt: now() })
     .where(eq(accountProvisionings.accountId, provisioning.accountId)).run();
   const ready = await provisioningByAccountId(env, provisioning.accountId);
-  if (!ready) throw new Error('Account provisioning could not be retried.');
+  if (!ready) throw conflict('Account provisioning could not be retried.');
   await attemptProvision(env, ready);
 };
 

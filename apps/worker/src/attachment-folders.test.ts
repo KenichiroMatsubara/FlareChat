@@ -19,8 +19,10 @@ const seedSourceMessage = (database: ReturnType<typeof createMigratedTestD1>, id
 };
 
 const drivePort = () => ({
-  ensurePath: vi.fn(async () => 'attachment-folder-leaf'),
-  createMessageFolder: vi.fn(async () => 'source-message-folder'),
+  ensureFolderPath: vi.fn(async () => 'attachment-folder-leaf'),
+  createFolder: vi.fn(async () => 'source-message-folder'),
+  findPublishedAttachment: vi.fn(async () => null),
+  publishAttachment: vi.fn(async () => ({ outcome: 'failed' as const, driveFileId: null, publicUrl: null })),
 });
 
 describe('Attachment Folder Path setting', () => {
@@ -59,9 +61,8 @@ describe('Source Message attachment folder', () => {
         sourceMessageId: 'source-1',
       })).resolves.toBe('source-message-folder');
 
-      expect(drive.ensurePath).toHaveBeenCalledWith({ accessToken: 'token', segments: ['会計 2026', '添付'] });
-      expect(drive.createMessageFolder).toHaveBeenCalledWith({
-        accessToken: 'token',
+      expect(drive.ensureFolderPath).toHaveBeenCalledWith('token', ['会計 2026', '添付']);
+      expect(drive.createFolder).toHaveBeenCalledWith('token', {
         parentId: 'attachment-folder-leaf',
         name: '2026-08-01 年次行事',
       });
@@ -87,8 +88,8 @@ describe('Source Message attachment folder', () => {
         sourceMessageId: 'source-1',
       })).resolves.toBe('already-created');
 
-      expect(drive.ensurePath).not.toHaveBeenCalled();
-      expect(drive.createMessageFolder).not.toHaveBeenCalled();
+      expect(drive.ensureFolderPath).not.toHaveBeenCalled();
+      expect(drive.createFolder).not.toHaveBeenCalled();
     } finally {
       test.close();
     }

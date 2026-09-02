@@ -1,0 +1,11 @@
+# Refuse a request with a type, not a sentence
+
+A refusal is a value with a status and a code, and the HTTP surface is the one place that turns it into a response. The request seam of `routes/request-context.ts` was already deep — cookie, session, membership, and Account D1 readiness behind one call — but it refused by throwing a localized sentence, so every one of the eighty-four handlers in `api.ts` re-derived the status code by comparing message text, twenty of them with the same ternary on the words "Authentication is required.", and the same missing Account database was 403 in fifty-three handlers and 503 in one. The language a message was written in had become load-bearing.
+
+The seam therefore throws one `Refusal` type carrying a status and a code — unauthenticated, no access, account unavailable, database unavailable, not found, conflict, gone, invalid — and a single `app.onError` maps it to a response, exactly as `SchemaReadinessError` already was mapped for one case. Domain modules throw the same type for the refusals they own, so a Preset conflict or a used Contact link is a refusal where it is discovered rather than a sentence the route has to recognise. Messages stay human and stay Japanese or English as the screen needs; nothing reads them to decide anything.
+
+A route handler is declared against an Account and receives the resolved access, the parsed parameters, the body, and the environment, and returns data. Resolving the session, refusing a suspended Account, and refusing a missing database happen before the handler runs, once. With that shape the prologue that every handler repeated disappears, and `api.ts` stops being a file: every resource is one module under `routes/`, and the application only mounts them. The four Typed List routes that `routes/typed-lists.ts` already shadowed in `api.ts` are deleted rather than kept as unreachable copies, and the nine definitions of the current time and the two of cookie parsing become one each.
+
+## Consequences
+
+Tests assert on status and code instead of on message text, which is what they should have been asserting on. The Contact Page routes of ADR 0155 keep their own session model but adopt the same refusal type, because they had the same ternary.
