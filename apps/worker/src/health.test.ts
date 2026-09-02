@@ -8,7 +8,7 @@ import {
   classifyAutomationFailure,
   shouldAlertAdministrators,
 } from './health';
-import { GoogleApiError } from './automation/providers';
+import { GoogleApiError } from './providers';
 import { GoogleGrantRejectedError } from './google';
 
 const FAILING_SINCE = '2026-08-01T00:00:00.000Z';

@@ -151,12 +151,6 @@ const readToolResult = async (database: AccountDatabase, source: AgentRunSource,
   throw new Error(`Agent tool ${call.name} is not a read tool.`);
 };
 
-export interface AgentWritePort {
-  sendLine(arguments_: { destination: string; message: string }): Promise<unknown>;
-  createScheduledEvent(arguments_: { destination: string; title: string; startsAt: string; endsAt: string; location?: string; description?: string }): Promise<unknown>;
-  sendEmailSummary(arguments_: { destination: string; subject: string; body: string }): Promise<unknown>;
-}
-
 const WRITE_AGENT_TOOL_NAMES: readonly WriteAgentToolName[] = Object.keys(AGENT_TOOL_WRITE_CAPS) as WriteAgentToolName[];
 
 const isWriteAgentTool = (name: AgentToolName): name is WriteAgentToolName => WRITE_AGENT_TOOL_NAMES.includes(name as WriteAgentToolName);
@@ -179,7 +173,6 @@ export const runAgent = async (input: {
   executionMode: AgentExecutionMode;
   permittedLineDestinations: string[];
   permittedRecipientDestinations: string[];
-  writes: AgentWritePort;
 }): Promise<AgentRunResult> => {
   const database = drizzleAccountDatabase(input.database);
   const tools = input.executionMode === 'read_only' ? READ_ONLY_AGENT_TOOLS : ALL_AGENT_TOOLS;
@@ -249,11 +242,6 @@ export const runReadOnlyAgent = async (input: {
   executionMode: 'read_only',
   permittedLineDestinations: [],
   permittedRecipientDestinations: [],
-  writes: {
-    sendLine: async () => { throw new Error('Read-only Agent Rule cannot write.'); },
-    createScheduledEvent: async () => { throw new Error('Read-only Agent Rule cannot write.'); },
-    sendEmailSummary: async () => { throw new Error('Read-only Agent Rule cannot write.'); },
-  },
 });
 
 interface OpenAiAgentResponse {

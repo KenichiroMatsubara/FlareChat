@@ -4,7 +4,9 @@ import { and, asc, count, desc, eq, gt, gte, inArray, isNull, max, ne } from 'dr
 
 import { canUpdateAttendance, discoveredLineDestinations, displayLineDestinationId, verifyLineWebhookSignature } from '@mail/domain';
 
-import { agentWritePortForApproval, createAutomation, LEGACY_AI_BASE_URL, schemaRuleEffectPortForApproval } from './automation';
+import { createAutomation } from './automation';
+import { LEGACY_AI_BASE_URL } from './ai';
+import { productionProviders } from './providers';
 import { decrypt, encrypt } from './cryptography';
 import { createDatabaseAccess } from './database-access';
 import { randomToken } from './encoding';
@@ -56,7 +58,7 @@ import { automationRuns, automations as accountAutomations, automationTools } fr
 import { accessTokens, accessTokenTools, contactListMembers, contactLists } from './storage/account-schema';
 import { mcpServers } from './storage/account-schema';
 import { createTaskWorkflow } from './tasks';
-import { createRuleExecution } from './execution';
+import { ruleExecutionFor } from './execution';
 import { applyPreset, availablePresets, PresetConfigurationConflictError } from './presets';
 import { controlDatabase as drizzleControlDatabase, accountDatabase as drizzleAccountDatabase } from './storage/database';
 import { createAccountStore } from './storage/account-store';
@@ -512,7 +514,7 @@ app.post('/api/organizations/:accountId/mail-tests/search', async (context) => {
     if (!subject || subject.length > 300) return failure(context, '件名は 1〜300 文字で入力してください。');
     const automation = await createAccountStore(drizzleAccountDatabase(access.database)).currentAutomation();
     if (!automation) return failure(context, 'Automation Inbox が見つかりません。', 404);
-    return json(context, { accountEmail: automation.email, messages: await createAutomation(context.env).mailboxTest.search({ accountId, database: access.database, subject }) });
+    return json(context, { accountEmail: automation.email, messages: await createAutomation(context.env, providers).mailboxTest.search({ accountId, database: access.database, subject }) });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Gmail の検索に失敗しました。';
     return failure(context, message, message === 'Authentication is required.' ? 401 : 500);
@@ -527,8 +529,8 @@ app.post('/api/organizations/:accountId/mail-tests/:messageId/ai-request', async
     if (!access.database) return failure(context, '組織DBに接続できません。接続設定は保存されていません。', 503);
     const messageId = context.req.param('messageId');
     if (!/^[A-Za-z0-9_-]{1,200}$/u.test(messageId)) return failure(context, 'Gmail メッセージ ID が不正です。');
-    const source = await createAutomation(context.env).mailboxTest.readSource({ accountId, database: access.database, messageId });
-    const request = await createAutomation(context.env).mailboxTest.previewAiRequest({
+    const source = await createAutomation(context.env, providers).mailboxTest.readSource({ accountId, database: access.database, messageId });
+    const request = await createAutomation(context.env, providers).mailboxTest.previewAiRequest({
       database: access.database,
       source: source.source,
       attachments: source.attachments,
@@ -551,7 +553,7 @@ app.post('/api/organizations/:accountId/mail-tests/:messageId/draft-preview', as
     if (!/^[A-Za-z0-9_-]{1,200}$/u.test(messageId)) return failure(context, 'Gmail メッセージ ID が不正です。');
     const input = await context.req.json<{ ruleId?: string }>().catch((): { ruleId?: string } => ({}));
     if (!input.ruleId) return failure(context, 'Draft Schema Rule を選択してください。');
-    const { source, rule, extraction } = await createAutomation(context.env).ruleRuns.previewDraft({
+    const { source, rule, extraction } = await createAutomation(context.env, providers).ruleRuns.previewDraft({
       accountId,
       database: access.database,
       messageId,
@@ -588,7 +590,7 @@ app.post('/api/organizations/:accountId/mail-tests/:messageId/preview', async (c
     if (!access.database) return failure(context, '組織DBに接続できません。接続設定は保存されていません。', 503);
     const messageId = context.req.param('messageId');
     if (!/^[A-Za-z0-9_-]{1,200}$/u.test(messageId)) return failure(context, 'Gmail メッセージ ID が不正です。');
-    const { source, rule, extraction } = await createAutomation(context.env).mailboxTest.preview({ accountId, database: access.database, messageId });
+    const { source, rule, extraction } = await createAutomation(context.env, providers).mailboxTest.preview({ accountId, database: access.database, messageId });
     const confirmation: MailTestConfirmation = {
       purpose: 'mailbox_test',
       messageId,
@@ -624,7 +626,7 @@ app.post('/api/organizations/:accountId/mail-tests/calendar', async (context) =>
     }
     const confirmation = await confirmedExtraction(context.env, accountId, input.confirmationToken);
     if (!confirmation) return failure(context, 'プレビューの有効期限が切れました。もう一度 AI 抽出を実行してください。', 409);
-    return json(context, await createAutomation(context.env).mailboxTest.createCalendarEvents({
+    return json(context, await createAutomation(context.env, providers).mailboxTest.createCalendarEvents({
       accountId,
       database: access.database,
       messageId: confirmation.messageId,
@@ -650,7 +652,7 @@ app.post('/api/organizations/:accountId/mail-tests/rule-run', async (context) =>
       return failure(context, 'プレビューの有効期限が切れました。もう一度 AI 抽出を実行してください。', 409);
     }
     if (confirmation.ruleId !== input.ruleId) return failure(context, '確認した Rule Revision と異なります。', 409);
-    return json(context, await createAutomation(context.env).ruleRuns.startDraft({
+    return json(context, await createAutomation(context.env, providers).ruleRuns.startDraft({
       accountId,
       database: access.database,
       ruleId: input.ruleId,
@@ -693,7 +695,7 @@ app.post('/api/organizations/:accountId/mail-tests/:messageId/refresh-request', 
     const confirmation = await confirmedExtraction(context.env, accountId, input.confirmationToken);
     if (!confirmation) return failure(context, 'プレビューの有効期限が切れました。もう一度 AI 抽出を実行してください。', 409);
     if (confirmation.messageId !== context.req.param('messageId')) return failure(context, '確認用トークンが別のメールのものです。', 409);
-    return json(context, await createAutomation(context.env).mailboxTest.previewRefreshRequest({
+    return json(context, await createAutomation(context.env, providers).mailboxTest.previewRefreshRequest({
       accountId,
       database: access.database,
       messageId: confirmation.messageId,
@@ -716,7 +718,7 @@ app.post('/api/organizations/:accountId/mail-tests/:messageId/refresh-plan', asy
     const confirmation = await confirmedExtraction(context.env, accountId, input.confirmationToken);
     if (!confirmation) return failure(context, 'プレビューの有効期限が切れました。もう一度 AI 抽出を実行してください。', 409);
     if (confirmation.messageId !== context.req.param('messageId')) return failure(context, '確認用トークンが別のメールのものです。', 409);
-    const plan = await createAutomation(context.env).mailboxTest.planRefresh({
+    const plan = await createAutomation(context.env, providers).mailboxTest.planRefresh({
       accountId,
       database: access.database,
       messageId: confirmation.messageId,
@@ -774,7 +776,7 @@ app.post('/api/organizations/:accountId/mail-tests/refresh', async (context) => 
     }
     const entries = confirmation.entries.filter((entry) => selected.has(entry.candidateIndex));
     if (!entries.length) return failure(context, '選択された予定が照合結果に含まれていません。', 409);
-    const outcome = await createAutomation(context.env).mailboxTest.applyRefresh({
+    const outcome = await createAutomation(context.env, providers).mailboxTest.applyRefresh({
       accountId,
       database: access.database,
       messageId: confirmation.messageId,
@@ -1186,50 +1188,10 @@ app.get('/api/organizations/:accountId/agent-runs/:runId/transcript', async (con
   }
 });
 
-const ruleExecutionForRequest = (input: {
-  env: Bindings;
-  database: D1Database;
-  accountId: string;
-}) => createRuleExecution({
-  database: input.database,
-  planner: { plan: async () => [] },
-  effects: {
-    apply: async ({ run, effect }) => {
-      if (run.rule.type === 'schema') {
-        return (await schemaRuleEffectPortForApproval({
-          env: input.env,
-          database: input.database,
-          accountId: input.accountId,
-        })).apply({ run, effect });
-      }
-      if (!run.sourceMessageId) throw new Error('An Agent Rule effect needs the Source Message its run read.');
-      const writes = await agentWritePortForApproval({
-        env: input.env,
-        database: input.database,
-        accountId: input.accountId,
-        sourceMessageId: run.sourceMessageId,
-        agentRuleId: run.rule.id,
-      });
-      if (effect.kind === 'agent.send_line_message') {
-        return writes.sendLine(effect.arguments as { destination: string; message: string });
-      }
-      if (effect.kind === 'agent.send_email_summary') {
-        return writes.sendEmailSummary(effect.arguments as { destination: string; subject: string; body: string });
-      }
-      if (effect.kind === 'agent.create_scheduled_event') {
-        return writes.createScheduledEvent(effect.arguments as {
-          destination: string;
-          title: string;
-          startsAt: string;
-          endsAt: string;
-          location?: string;
-          description?: string;
-        });
-      }
-      throw new Error(`Unsupported Rule Effect: ${effect.kind}`);
-    },
-  },
-});
+const providers = productionProviders();
+
+const ruleExecutionForRequest = (input: { env: Bindings; database: D1Database; accountId: string }) =>
+  ruleExecutionFor({ ...input, providers });
 
 app.get('/api/organizations/:accountId/rule-runs', async (context) => {
   try {
@@ -2679,7 +2641,9 @@ app.post('/api/organizations/:accountId/chat', async (context) => {
       timestamp: now(),
     });
     const history = await chatHistory({ database: access.database, conversationId });
-    const turn = await openChatTurn({ database: access.database, conversationId, request: message, timestamp: now() });
+    const execution = ruleExecutionForRequest({ env: context.env, database: access.database, accountId });
+    const run = await execution.open({ intent: { kind: 'chat' } });
+    const turn = await openChatTurn({ database: access.database, conversationId, ruleRunId: run.id, request: message, timestamp: now() });
 
     try {
       const result = await runChatTurn({
@@ -2694,10 +2658,10 @@ app.post('/api/organizations/:accountId/chat', async (context) => {
       await closeChatTurn({
         database: access.database,
         turnId: turn.turnId,
-        ruleRunId: turn.ruleRunId,
         outcome: { status: 'completed', response: result.output },
         timestamp: now(),
       });
+      await execution.close({ runId: run.id, outcome: 'completed' });
       return json(context, {
         conversationId,
         turnId: turn.turnId,
@@ -2711,10 +2675,10 @@ app.post('/api/organizations/:accountId/chat', async (context) => {
       await closeChatTurn({
         database: access.database,
         turnId: turn.turnId,
-        ruleRunId: turn.ruleRunId,
         outcome: { status: 'failed', error: detail },
         timestamp: now(),
       });
+      await execution.close({ runId: run.id, outcome: 'failed' });
       return failure(context, detail, 503);
     }
   } catch (error) {

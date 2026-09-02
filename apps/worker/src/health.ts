@@ -1,10 +1,9 @@
 import { and, eq } from 'drizzle-orm';
 
-import { gmailRawMessage } from './delivery';
 import { GoogleGrantRejectedError } from './google';
 import { accountIdentities, identities } from './storage/control-schema';
 import { controlDatabase } from './storage/database';
-import type { GoogleAutomationPort } from './automation/providers';
+import type { GoogleProvider } from './providers';
 import type { Bindings } from './types';
 
 /**
@@ -111,7 +110,7 @@ export const administratorEmails = async (env: Bindings, accountId: string): Pro
  * later run tries again.
  */
 export const alertAdministrators = async (input: {
-  google: GoogleAutomationPort;
+  google: GoogleProvider;
   accessToken: string;
   destinations: string[];
   subject: string;
@@ -119,11 +118,7 @@ export const alertAdministrators = async (input: {
 }): Promise<boolean> => {
   const results = await Promise.all(input.destinations.map(async (destination) => {
     try {
-      await input.google.request(
-        input.accessToken,
-        'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
-        { method: 'POST', body: JSON.stringify({ raw: gmailRawMessage({ destination, subject: input.subject, body: input.body }) }) },
-      );
+      await input.google.gmail.sendMail(input.accessToken, { destination, subject: input.subject, body: input.body });
       return true;
     } catch {
       return false;

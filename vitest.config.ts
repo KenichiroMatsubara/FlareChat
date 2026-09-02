@@ -10,7 +10,7 @@ export default defineConfig({
       : null,
   }],
   test: {
-    exclude: [...configDefaults.exclude, '**/*.d1.test.ts'],
+    exclude: [...configDefaults.exclude, '**/*.d1.test.ts', '**/.claude/**'],
     setupFiles: ['./test/clock.ts'],
   },
 });
