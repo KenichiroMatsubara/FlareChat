@@ -1,4 +1,5 @@
 import { asc } from 'drizzle-orm';
+import type { McpServer, McpServerTool, McpServerToolResult } from '@mail/domain';
 
 import { deleteChatServer, listChatServers, saveChatServer } from '../chat-store';
 import { now } from '../clock';
@@ -16,7 +17,7 @@ type McpRevision = (typeof MCP_REVISIONS)[number];
 export const serverRoutes = (providers: Providers) => {
   const routes = resource();
 
-  routes.get('/organizations/:accountId/mcp-servers', accountRoute(async ({ db }) => {
+  routes.get('/organizations/:accountId/mcp-servers', accountRoute(async ({ db }): Promise<McpServer[]> => {
     const rows = await db.select().from(mcpServers).orderBy(asc(mcpServers.name)).all();
     return rows.map((row) => ({
       id: row.id,
@@ -64,7 +65,7 @@ export const serverRoutes = (providers: Providers) => {
    * that tool with the arguments given and returns the server's own answer,
    * failures included, so a LINE MCP Server can be made to send a real message.
    */
-  routes.post('/organizations/:accountId/mcp-servers/:serverId/tests', accountRoute<{ tool?: string; arguments?: unknown }>(async (request) => {
+  routes.post('/organizations/:accountId/mcp-servers/:serverId/tests', accountRoute<{ tool?: string; arguments?: unknown }>(async (request): Promise<{ server: string; tools: McpServerTool[] } | McpServerToolResult> => {
     const serverId = request.params.serverId ?? '';
     const servers = await listChatServers({ database: request.database, accountKey: await request.key(), accountId: request.accountId });
     const server = servers.find(({ id }) => id === serverId);

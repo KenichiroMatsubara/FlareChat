@@ -1,4 +1,5 @@
 import { requiredAiConnection } from '../ai';
+import type { ChatReply, ChatTurn, Conversation } from '@mail/domain';
 import { resolveChatTools, runChatTurn, type ChatModelPort } from '../chat';
 import { completeChatTurn } from '../chat-model';
 import {
@@ -23,12 +24,12 @@ export const chatRoutes = (providers: Providers) => {
   const routes = resource();
   const model: ChatModelPort = { complete: completeChatTurn };
 
-  routes.get('/organizations/:accountId/chat', accountRoute(async ({ database }) => listChatConversations(database)));
+  routes.get('/organizations/:accountId/chat', accountRoute(async ({ database }): Promise<Conversation[]> => listChatConversations(database)));
 
-  routes.get('/organizations/:accountId/chat/:conversationId', accountRoute(async ({ database, params }) =>
+  routes.get('/organizations/:accountId/chat/:conversationId', accountRoute(async ({ database, params }): Promise<ChatTurn[]> =>
     readChatTurns({ database, conversationId: params.conversationId ?? '' })));
 
-  routes.post('/organizations/:accountId/chat', accountRoute<{ conversationId?: string | null; message?: string }>(async (request) => {
+  routes.post('/organizations/:accountId/chat', accountRoute<{ conversationId?: string | null; message?: string }>(async (request): Promise<ChatReply> => {
     const message = request.body.message?.trim() ?? '';
     if (!message || message.length > 10_000) throw invalid('メッセージは 1〜10,000 文字で入力してください。');
 

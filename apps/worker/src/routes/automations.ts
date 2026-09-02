@@ -1,4 +1,5 @@
 import { asc, desc, eq, inArray } from 'drizzle-orm';
+import type { Automation, AutomationRun } from '@mail/domain';
 
 import { CHAT_INTERNAL_TOOLS, INTERNAL_WRITE_TOOLS } from '../chat';
 import { now } from '../clock';
@@ -33,7 +34,7 @@ const automationView = (row: typeof automations.$inferSelect, tools: string[]) =
   tools,
 });
 
-automationRoutes.get('/organizations/:accountId/automations', accountRoute(async ({ db }) => {
+automationRoutes.get('/organizations/:accountId/automations', accountRoute(async ({ db }): Promise<Automation[]> => {
   const rows = await db.select().from(automations).orderBy(asc(automations.name)).all();
   const grants = rows.length
     ? await db.select().from(automationTools).where(inArray(automationTools.automationId, rows.map(({ id }) => id))).all()
@@ -41,7 +42,7 @@ automationRoutes.get('/organizations/:accountId/automations', accountRoute(async
   return rows.map((row) => automationView(row, grants.flatMap((grant) => grant.automationId === row.id ? [grant.tool] : [])));
 }));
 
-automationRoutes.get('/organizations/:accountId/automations/:automationId/runs', accountRoute(async ({ db, params }) =>
+automationRoutes.get('/organizations/:accountId/automations/:automationId/runs', accountRoute(async ({ db, params }): Promise<AutomationRun[]> =>
   db.select().from(automationRuns).where(eq(automationRuns.automationId, params.automationId ?? ''))
     .orderBy(desc(automationRuns.startedAt)).limit(20).all()));
 

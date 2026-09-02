@@ -1,11 +1,12 @@
 import { invalid, notFound } from '../refusal';
+import type { Task } from '@mail/domain';
 import { resource } from '../response';
 import { createTaskWorkflow } from '../tasks';
 import { accountRoute } from './account';
 
 export const taskRoutes = resource();
 
-taskRoutes.get('/organizations/:accountId/tasks', accountRoute(async (request) => {
+taskRoutes.get('/organizations/:accountId/tasks', accountRoute(async (request): Promise<Task[]> => {
   const assignee = request.query('assignee')?.trim();
   const event = request.query('event')?.trim();
   return createTaskWorkflow(request.db).list({
@@ -14,7 +15,7 @@ taskRoutes.get('/organizations/:accountId/tasks', accountRoute(async (request) =
   });
 }));
 
-taskRoutes.patch('/organizations/:accountId/tasks/:taskId', accountRoute<{ completed?: unknown; remarks?: unknown; assigneeContactId?: unknown }>(async (request) => {
+taskRoutes.patch('/organizations/:accountId/tasks/:taskId', accountRoute<{ completed?: unknown; remarks?: unknown; assigneeContactId?: unknown }>(async (request): Promise<Task> => {
   const input = request.body;
   if (input.completed !== undefined && typeof input.completed !== 'boolean') throw invalid('Completed must be a boolean.');
   if (input.remarks !== undefined && (typeof input.remarks !== 'string' || input.remarks.length > 10_000)) throw invalid('Remarks must be at most 10,000 characters.');

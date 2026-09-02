@@ -1,4 +1,5 @@
 import { createAutomation } from '../automation';
+import type { EventRefreshOutcome, EventRefreshPlan, EventRefreshRequest, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview } from '@mail/domain';
 import { expiresIn } from '../clock';
 import { decrypt, encrypt, type CipherEnvelope } from '../cryptography';
 import type { EventDetails, MailExtraction, TaskDetails } from '../event-details';
@@ -153,7 +154,7 @@ export const mailboxRoutes = (providers: Providers) => {
   const routes = resource();
   const automation = (request: AccountRequest<unknown>) => createAutomation(request.env, providers);
 
-  routes.post('/organizations/:accountId/mail-tests/search', accountRoute<{ subject?: string }>(async (request) => {
+  routes.post('/organizations/:accountId/mail-tests/search', accountRoute<{ subject?: string }>(async (request): Promise<{ accountEmail: string; messages: MailboxTestMatch[] }> => {
     const subject = request.body.subject?.trim() ?? '';
     if (!subject || subject.length > 300) throw invalid('件名は 1〜300 文字で入力してください。');
     const inbox = await createAccountStore(request.db).currentAutomation();
@@ -165,7 +166,7 @@ export const mailboxRoutes = (providers: Providers) => {
   }));
 
   /** Returns the exact, redacted OpenAI-compatible payload without calling the AI API. */
-  routes.post('/organizations/:accountId/mail-tests/:messageId/ai-request', accountRoute(async (request) => {
+  routes.post('/organizations/:accountId/mail-tests/:messageId/ai-request', accountRoute(async (request): Promise<MailboxTestAiRequest> => {
     const messageId = messageIdOf(request);
     const mailbox = automation(request).mailboxTest;
     const source = await mailbox.readSource({ accountId: request.accountId, database: request.database, messageId });
@@ -179,7 +180,7 @@ export const mailboxRoutes = (providers: Providers) => {
   }));
 
   /** Draft Rule Preview is a Rule Runs concern, separate from the permanent Mailbox Test. */
-  routes.post('/organizations/:accountId/mail-tests/:messageId/draft-preview', accountRoute<{ ruleId?: string }>(async (request) => {
+  routes.post('/organizations/:accountId/mail-tests/:messageId/draft-preview', accountRoute<{ ruleId?: string }>(async (request): Promise<MailboxTestPreview> => {
     const messageId = messageIdOf(request);
     if (!request.body.ruleId) throw invalid('Draft Schema Rule を選択してください。');
     const preview = await automation(request).ruleRuns.previewDraft({
@@ -191,7 +192,7 @@ export const mailboxRoutes = (providers: Providers) => {
     return previewResponse(request, 'draft_rule_preview', preview);
   }));
 
-  routes.post('/organizations/:accountId/mail-tests/:messageId/preview', accountRoute(async (request) => {
+  routes.post('/organizations/:accountId/mail-tests/:messageId/preview', accountRoute(async (request): Promise<MailboxTestPreview> => {
     const messageId = messageIdOf(request);
     const preview = await automation(request).mailboxTest.preview({ accountId: request.accountId, database: request.database, messageId });
     return previewResponse(request, 'mailbox_test', preview);
@@ -228,7 +229,7 @@ export const mailboxRoutes = (providers: Providers) => {
   };
 
   /** Prepares the correspondence request against the Scheduled Events this message already produced. */
-  routes.post('/organizations/:accountId/mail-tests/:messageId/refresh-request', accountRoute<{ confirmationToken?: string }>(async (request) => {
+  routes.post('/organizations/:accountId/mail-tests/:messageId/refresh-request', accountRoute<{ confirmationToken?: string }>(async (request): Promise<EventRefreshRequest> => {
     const confirmation = await confirmedForMessage(request);
     return automation(request).mailboxTest.previewRefreshRequest({
       accountId: request.accountId,
@@ -239,7 +240,7 @@ export const mailboxRoutes = (providers: Providers) => {
   }));
 
   /** Runs the correspondence decision and returns the plan an AccountIdentity approves. */
-  routes.post('/organizations/:accountId/mail-tests/:messageId/refresh-plan', accountRoute<{ confirmationToken?: string }>(async (request) => {
+  routes.post('/organizations/:accountId/mail-tests/:messageId/refresh-plan', accountRoute<{ confirmationToken?: string }>(async (request): Promise<EventRefreshPlan> => {
     const confirmation = await confirmedForMessage(request);
     const plan = await automation(request).mailboxTest.planRefresh({
       accountId: request.accountId,
@@ -274,7 +275,7 @@ export const mailboxRoutes = (providers: Providers) => {
   }));
 
   /** Applies the approved Event Refresh, and re-offers anything the Calendar changed underneath it. */
-  routes.post('/organizations/:accountId/mail-tests/refresh', accountRoute<{ confirmationToken?: string; candidateIndexes?: unknown }>(async (request) => {
+  routes.post('/organizations/:accountId/mail-tests/refresh', accountRoute<{ confirmationToken?: string; candidateIndexes?: unknown }>(async (request): Promise<EventRefreshOutcome> => {
     const token = presentedToken(request, '既存予定と照合');
     const selected = Array.isArray(request.body.candidateIndexes) && request.body.candidateIndexes.every((value) => typeof value === 'number')
       ? new Set(request.body.candidateIndexes as number[])
@@ -292,7 +293,7 @@ export const mailboxRoutes = (providers: Providers) => {
       messageId: confirmation.messageId,
       entries: entries.map((entry) => ({ googleEventId: entry.googleEventId, etag: entry.etag, candidate: entry.candidate })),
     });
-    if (!outcome.conflicts.length) return { ...outcome, confirmationToken: null, expiresAt: null };
+    if (!outcome.conflicts.length) return { ...outcome, conflicts: [], confirmationToken: null, expiresAt: null };
     const indexOf = new Map(entries.map((entry) => [entry.candidate.title + entry.candidate.startsAt, entry.candidateIndex]));
     const retry: MailTestRefreshConfirmation = {
       messageId: confirmation.messageId,

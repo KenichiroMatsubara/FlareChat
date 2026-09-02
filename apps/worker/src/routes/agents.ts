@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import type { AgentRule, AgentRun, RunTranscript } from '@mail/domain';
 
 import { readAgentRunTranscript } from '../agent-runs';
 import { now } from '../clock';
@@ -14,7 +15,7 @@ import {
   prompts,
 } from '../storage/account-schema';
 import type { AccountDatabase } from '../storage/database';
-import { accountRoute, created } from './account';
+import { accountRoute, created, type Created } from './account';
 
 export const agentRoutes = resource();
 
@@ -82,7 +83,7 @@ const assertPromptExists = async (db: AccountDatabase, accountId: string, prompt
   if (!prompt) throw conflict('Agent Rule Prompt was not found.');
 };
 
-agentRoutes.get('/organizations/:accountId/agent-rules', accountRoute(async ({ db }) => {
+agentRoutes.get('/organizations/:accountId/agent-rules', accountRoute(async ({ db }): Promise<AgentRule[]> => {
   const rows = await db.select().from(agentRules).orderBy(desc(agentRules.priority), asc(agentRules.name)).all();
   const ids = rows.map(({ id }) => id);
   const [recipientReferences, lineReferences] = ids.length ? await Promise.all([
@@ -96,7 +97,7 @@ agentRoutes.get('/organizations/:accountId/agent-rules', accountRoute(async ({ d
   ));
 }));
 
-agentRoutes.post('/organizations/:accountId/agent-rules', accountRoute<AgentRuleInput>(async ({ db, accountId, body }) => {
+agentRoutes.post('/organizations/:accountId/agent-rules', accountRoute<AgentRuleInput>(async ({ db, accountId, body }): Promise<Created<AgentRule>> => {
   const name = body.name?.trim() ?? '';
   const promptId = body.promptId?.trim() ?? '';
   const state = (body.state ?? 'draft') as RuleState;
@@ -123,7 +124,7 @@ agentRoutes.post('/organizations/:accountId/agent-rules', accountRoute<AgentRule
   return created(agentRuleView(row, permittedRecipientListIds, permittedLineListIds));
 }));
 
-agentRoutes.patch('/organizations/:accountId/agent-rules/:agentRuleId', accountRoute<AgentRuleInput>(async ({ db, accountId, body, params }) => {
+agentRoutes.patch('/organizations/:accountId/agent-rules/:agentRuleId', accountRoute<AgentRuleInput>(async ({ db, accountId, body, params }): Promise<AgentRule> => {
   if (body.state !== undefined && !RULE_STATES.includes(body.state as RuleState)) throw invalid('Unsupported Agent Rule State.');
   if (body.executionMode !== undefined && !EXECUTION_MODES.includes(body.executionMode as ExecutionMode)) throw invalid('Unsupported Agent Rule Execution Mode.');
   const permittedRecipientListIds = idListOf(body.permittedRecipientListIds, 'Calendar Recipient');
@@ -172,7 +173,7 @@ agentRoutes.patch('/organizations/:accountId/agent-rules/:agentRuleId', accountR
   return agentRuleView(updated, ...await permittedListsOf(db, id));
 }));
 
-agentRoutes.get('/organizations/:accountId/agent-runs', accountRoute(async ({ db }) =>
+agentRoutes.get('/organizations/:accountId/agent-runs', accountRoute(async ({ db }): Promise<AgentRun[]> =>
   db.select({
     id: agentRuns.id,
     agentRuleId: agentRuns.agentRuleId,
@@ -189,7 +190,7 @@ agentRoutes.get('/organizations/:accountId/agent-runs', accountRoute(async ({ db
     expiresAt: agentRuns.expiresAt,
   }).from(agentRuns).orderBy(desc(agentRuns.startedAt)).limit(100).all()));
 
-agentRoutes.get('/organizations/:accountId/agent-runs/:runId/transcript', accountRoute(async (request) => {
+agentRoutes.get('/organizations/:accountId/agent-runs/:runId/transcript', accountRoute(async (request): Promise<RunTranscript> => {
   const runId = request.params.runId ?? '';
   const run = await request.db.select({ id: agentRuns.id }).from(agentRuns).where(eq(agentRuns.id, runId)).get();
   if (!run) throw notFound('Run Transcript was not found.');

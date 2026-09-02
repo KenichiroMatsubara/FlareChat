@@ -116,11 +116,13 @@ export const RuleRunHistory = ({ runs, ruleName, heading, pending, onDecide }: {
   {runs.length ? runs.map((run) => {
     const name = ruleName(run);
     const deciding = pending(pendingKey.ruleRunDecision(run.id, 'approve')) || pending(pendingKey.ruleRunDecision(run.id, 'reject'));
+    // An Operator Chat turn is a Rule Run with no Source Message (ADR 0168).
+    const source = run.sourceMessage ?? { subject: '', sender: '', receivedAt: '' };
     return <details className="rule-run-detail" key={run.id} aria-busy={deciding}>
       <summary>
         <div className="rule-run-source">
-          <strong>{run.sourceMessage.subject || '件名なし'}</strong>
-          <small>{run.sourceMessage.sender || '差出人なし'} ・ {formatted(run.sourceMessage.receivedAt)}</small>
+          <strong>{source.subject || '件名なし'}</strong>
+          <small>{source.sender || '差出人なし'} ・ {source.receivedAt ? formatted(source.receivedAt) : '受信日時なし'}</small>
           <span>{name} ・ {ruleRunStatusLabel(run.status)}</span>
         </div>
         <span className={`rule-run-status ${run.status}`}>{ruleRunStatusLabel(run.status)}</span>
@@ -128,11 +130,11 @@ export const RuleRunHistory = ({ runs, ruleName, heading, pending, onDecide }: {
       </summary>
       <div className="rule-run-body">
         <dl className="rule-run-metadata">
-          <div><dt>処理したメール</dt><dd>{run.sourceMessage.subject || '件名なし'}</dd></div>
-          <div><dt>差出人</dt><dd>{run.sourceMessage.sender || '差出人なし'}</dd></div>
-          <div><dt>受信日時</dt><dd>{formatted(run.sourceMessage.receivedAt)}</dd></div>
+          <div><dt>処理したメール</dt><dd>{source.subject || '件名なし'}</dd></div>
+          <div><dt>差出人</dt><dd>{source.sender || '差出人なし'}</dd></div>
+          <div><dt>受信日時</dt><dd>{source.receivedAt ? formatted(source.receivedAt) : '受信日時なし'}</dd></div>
           <div><dt>使用したルール</dt><dd>{name}（第{run.rule.revision}版）</dd></div>
-          <div><dt>処理方法</dt><dd>{run.intent === 'draft_preview' ? 'Draftルールの確認' : '自動メール処理'} ・ {run.executionMode === 'read_only' ? '確認のみ' : run.executionMode === 'approval' ? '承認後に実行' : '自動実行'}</dd></div>
+          <div><dt>処理方法</dt><dd>{run.intent === 'draft_preview' ? 'Draftルールの確認' : run.intent === 'chat' ? 'Operator Chat' : '自動メール処理'} ・ {run.executionMode === 'read_only' ? '確認のみ' : run.executionMode === 'approval' ? '承認後に実行' : '自動実行'}</dd></div>
         </dl>
         <section className="rule-run-effects">
           <h3>実行内容</h3>

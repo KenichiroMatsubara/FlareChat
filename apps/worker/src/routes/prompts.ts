@@ -1,17 +1,18 @@
 import { asc, eq } from 'drizzle-orm';
+import type { Prompt } from '@mail/domain';
 
 import { now } from '../clock';
 import { invalid, notFound } from '../refusal';
 import { resource } from '../response';
 import { promptRevisions, prompts } from '../storage/account-schema';
-import { accountRoute, created } from './account';
+import { accountRoute, created, type Created } from './account';
 
 export const promptRoutes = resource();
 
 const NAME_LIMIT = 100;
 const INSTRUCTIONS_LIMIT = 100_000;
 
-promptRoutes.get('/organizations/:accountId/prompts', accountRoute(async (request) => {
+promptRoutes.get('/organizations/:accountId/prompts', accountRoute(async (request): Promise<Prompt[]> => {
   const rows = await request.db.select().from(prompts).orderBy(asc(prompts.name)).all();
   return rows.map((row) => ({
     id: row.id,
@@ -24,7 +25,7 @@ promptRoutes.get('/organizations/:accountId/prompts', accountRoute(async (reques
   }));
 }));
 
-promptRoutes.post('/organizations/:accountId/prompts', accountRoute<{ name?: string; instructions?: string }>(async (request) => {
+promptRoutes.post('/organizations/:accountId/prompts', accountRoute<{ name?: string; instructions?: string }>(async (request): Promise<Created<Prompt>> => {
   const name = request.body.name?.trim() ?? '';
   const instructions = request.body.instructions?.trim() ?? '';
   if (!name || name.length > NAME_LIMIT) throw invalid('A Prompt name of at most 100 characters is required.');

@@ -1,4 +1,5 @@
 import { and, asc, count, eq, gte, inArray, max } from 'drizzle-orm';
+import type { Dashboard, GuestRegistrationRoster } from '@mail/domain';
 
 import { now } from '../clock';
 import { affiliationCounts } from '../guests';
@@ -16,7 +17,7 @@ import { accountRoute } from './account';
 
 export const dashboardRoutes = resource();
 
-dashboardRoutes.get('/organizations/:accountId/dashboard', accountRoute(async ({ db }) => {
+dashboardRoutes.get('/organizations/:accountId/dashboard', accountRoute(async ({ db }): Promise<Dashboard> => {
   const [schemaRules, activeAgentRules, upcoming, pending, open, connection] = await Promise.all([
     db.select({ value: count() }).from(rules).where(eq(rules.status, 'active')).get(),
     db.select({ value: count() }).from(agentRules).where(eq(agentRules.status, 'active')).get(),
@@ -39,7 +40,7 @@ dashboardRoutes.get('/organizations/:accountId/dashboard', accountRoute(async ({
  * place the guests' names are shown: the Calendar description an invited Contact
  * reads carries the counts alone.
  */
-dashboardRoutes.get('/organizations/:accountId/guest-registrations', accountRoute(async ({ db }) => {
+dashboardRoutes.get('/organizations/:accountId/guest-registrations', accountRoute(async ({ db }): Promise<GuestRegistrationRoster[]> => {
   const rows = await db.select({
     eventId: events.id,
     title: events.title,

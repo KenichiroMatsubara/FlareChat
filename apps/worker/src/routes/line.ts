@@ -1,4 +1,5 @@
 import { and, desc, eq, gt, isNull } from 'drizzle-orm';
+import type { LineHandleRecord } from '@mail/domain';
 import { discoveredLineDestinations, displayLineDestinationId, verifyLineWebhookSignature } from '@mail/domain';
 
 import { now } from '../clock';
@@ -7,7 +8,7 @@ import type { Providers } from '../providers';
 import { conflict, gone, invalid, notFound, Refusal } from '../refusal';
 import { resource } from '../response';
 import { contactLineDestinations, contactLinkTokens, lineDestinations } from '../storage/account-schema';
-import { accountRoute, created, publicAccount } from './account';
+import { accountRoute, created, publicAccount, type RouteResult } from './account';
 import { LINE_DESTINATION_ID_PATTERN } from './contacts';
 
 interface LineWebhookPayload {
@@ -54,7 +55,7 @@ const lineDestinationDisplayName = async (
 export const lineRoutes = (providers: Providers) => {
   const routes = resource();
 
-  routes.get('/organizations/:accountId/line-destinations', accountRoute(async ({ db }) => {
+  routes.get('/organizations/:accountId/line-destinations', accountRoute(async ({ db }): Promise<LineHandleRecord[]> => {
     const rows = await db.select({
       id: lineDestinations.id,
       destinationId: lineDestinations.destinationId,
@@ -70,7 +71,7 @@ export const lineRoutes = (providers: Providers) => {
     return rows.map((row) => ({ ...row, destinationId: displayLineDestinationId(row.destinationId) }));
   }));
 
-  routes.post('/organizations/:accountId/line-destinations', accountRoute<{ destinationId?: string; kind?: string; displayName?: string }>(async ({ db, body }) => {
+  routes.post('/organizations/:accountId/line-destinations', accountRoute<{ destinationId?: string; kind?: string; displayName?: string }>(async ({ db, body }): Promise<RouteResult<LineHandleRecord>> => {
     const destinationId = body.destinationId?.trim() ?? '';
     if (!LINE_DESTINATION_ID_PATTERN.test(destinationId)) throw invalid('A valid LINE ID is required.');
     const kind: LineKind = body.kind === 'group' || body.kind === 'room' ? body.kind : 'user';

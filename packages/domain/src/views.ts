@@ -213,13 +213,14 @@ export interface RuleEffect {
 
 export type RuleRunStatus = 'planning' | 'read_only' | 'pending_approval' | 'applying' | 'completed' | 'rejected' | 'expired' | 'failed';
 
+/** One Rule Run of the Account's Rule Execution (ADR 0168). An Operator Chat turn is a run with no Source Message. */
 export interface RuleRun {
   id: string;
-  rule: { type: 'schema' | 'agent'; id: string; revision: number };
-  sourceMessageId: string;
-  sourceMessage: { subject: string; sender: string; receivedAt: string };
+  rule: { type: 'schema' | 'agent' | 'chat'; id: string; revision: number };
+  sourceMessageId: string | null;
+  sourceMessage: { subject: string; sender: string; receivedAt: string } | null;
   executionMode: ExecutionMode;
-  intent: 'live' | 'draft_preview';
+  intent: 'live' | 'draft_preview' | 'chat';
   status: RuleRunStatus;
   expiresAt: string | null;
   effects: RuleEffect[];
@@ -302,9 +303,13 @@ export interface MailboxTestMatch {
   sender: string;
 }
 
-/** The OpenAI-compatible JSON body prepared for review; credentials are never included. */
+/** An OpenAI-compatible request body as it will be sent, shown for review; credentials are never included. */
+export interface AiRequestBody {
+  messages: Array<{ role: string; content: string }>;
+}
+
 export interface MailboxTestAiRequest extends MailboxTestMatch {
-  request: Record<string, unknown>;
+  request: AiRequestBody;
 }
 
 export interface EventCandidate {
@@ -348,7 +353,7 @@ export interface ScheduledEvent {
 export interface EventRefreshRequest {
   existing: ScheduledEvent[];
   outOfWindow: ScheduledEvent[];
-  request: Record<string, unknown> | null;
+  request: AiRequestBody | null;
 }
 
 export interface EventRefreshEntry {

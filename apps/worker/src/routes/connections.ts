@@ -1,4 +1,5 @@
 import { LEGACY_AI_BASE_URL } from '../ai';
+import type { Connections } from '@mail/domain';
 import { readConnection, saveConnection, type ConnectionCredential } from '../connections';
 import { normalizedAiBaseUrl, openAiChatCompletionsUrl } from '../event-details';
 import type { Providers } from '../providers';
@@ -32,7 +33,7 @@ const aiView = (ai: ConnectionCredential) => ({
 export const connectionRoutes = (providers: Providers) => {
   const routes = resource();
 
-  routes.get('/organizations/:accountId/connections', accountRoute(async (request) => {
+  routes.get('/organizations/:accountId/connections', accountRoute(async (request): Promise<Connections> => {
     const key = await request.key();
     const [line, ai] = await Promise.all([
       readConnection({ db: request.db, key, accountId: request.accountId, kind: 'line' }),
@@ -46,7 +47,7 @@ export const connectionRoutes = (providers: Providers) => {
     };
   }));
 
-  routes.put('/organizations/:accountId/connections/line', accountRoute<{ channelAccessToken?: string; channelSecret?: string }>(async (request) => {
+  routes.put('/organizations/:accountId/connections/line', accountRoute<{ channelAccessToken?: string; channelSecret?: string }>(async (request): Promise<Connections['line']> => {
     const key = await request.key();
     const current = await readConnection({ db: request.db, key, accountId: request.accountId, kind: 'line' });
     const next: ConnectionCredential = { ...current, ...request.body };
@@ -55,7 +56,7 @@ export const connectionRoutes = (providers: Providers) => {
     return { ...lineView(next), webhookUrl: lineWebhookUrl(request.env.APP_URL, request.accountId) };
   }));
 
-  routes.put('/organizations/:accountId/connections/ai', accountRoute<{ apiKey?: string; model?: string; baseUrl?: string }>(async (request) => {
+  routes.put('/organizations/:accountId/connections/ai', accountRoute<{ apiKey?: string; model?: string; baseUrl?: string }>(async (request): Promise<Connections['ai']> => {
     const key = await request.key();
     const current = await readConnection({ db: request.db, key, accountId: request.accountId, kind: 'ai' });
     const next: ConnectionCredential = { ...current, ...request.body };

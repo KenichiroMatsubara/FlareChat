@@ -1,4 +1,5 @@
 import { asc, desc, eq, inArray } from 'drizzle-orm';
+import type { RuleRun, SchemaRule } from '@mail/domain';
 
 import { now } from '../clock';
 import { ruleExecutionFor } from '../execution';
@@ -13,7 +14,7 @@ import {
   rules,
 } from '../storage/account-schema';
 import { assertPermittedLists } from './agents';
-import { accountRoute, created, type AccountRequest } from './account';
+import { accountRoute, created, type AccountRequest, type Created } from './account';
 
 type RuleState = 'draft' | 'active' | 'suspended' | 'archived';
 type ExecutionMode = 'read_only' | 'approval' | 'unattended';
@@ -44,9 +45,9 @@ export const ruleRoutes = (providers: Providers) => {
   const execution = (request: AccountRequest<unknown>) =>
     ruleExecutionFor({ env: request.env, database: request.database, accountId: request.accountId, providers });
 
-  routes.get('/organizations/:accountId/rule-runs', accountRoute(async (request) => execution(request).list()));
+  routes.get('/organizations/:accountId/rule-runs', accountRoute(async (request): Promise<RuleRun[]> => execution(request).list()));
 
-  routes.get('/organizations/:accountId/rule-runs/:runId', accountRoute(async (request) => execution(request).read(request.params.runId ?? '')));
+  routes.get('/organizations/:accountId/rule-runs/:runId', accountRoute(async (request): Promise<RuleRun> => execution(request).read(request.params.runId ?? '')));
 
   routes.post('/organizations/:accountId/rule-runs/:runId/decision', accountRoute<{ decision?: string }>(async (request) => {
     if (request.body.decision !== 'approve' && request.body.decision !== 'reject') throw invalid('Decision must be approve or reject.');
@@ -57,7 +58,7 @@ export const ruleRoutes = (providers: Providers) => {
     });
   }));
 
-  routes.get('/organizations/:accountId/rules', accountRoute(async ({ db, accountId }) => {
+  routes.get('/organizations/:accountId/rules', accountRoute(async ({ db, accountId }): Promise<SchemaRule[]> => {
     const rows = await db.select().from(rules).orderBy(desc(rules.priority), asc(rules.name)).all();
     const ruleIds = rows.map(({ id }) => id);
     const [recipientLists, lineLists] = ruleIds.length ? await Promise.all([
@@ -82,7 +83,7 @@ export const ruleRoutes = (providers: Providers) => {
     }));
   }));
 
-  routes.post('/organizations/:accountId/rules', accountRoute<RuleInput>(async ({ db, accountId, body }) => {
+  routes.post('/organizations/:accountId/rules', accountRoute<RuleInput>(async ({ db, accountId, body }): Promise<Created<SchemaRule>> => {
     const name = typeof body.name === 'string' ? body.name.trim() : '';
     const state = (body.state ?? 'draft') as RuleState;
     if (!name) throw invalid('Rule name is required.');

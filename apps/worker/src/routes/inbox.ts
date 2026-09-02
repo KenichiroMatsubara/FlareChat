@@ -9,6 +9,7 @@ import {
   readResponseWindowDays,
   readReminderDays,
 } from '@mail/domain';
+import type { AutomationStatus, AutomationSummary, ScheduledReminder } from '@mail/domain';
 
 import { accountAttachmentFolderPath, saveAccountAttachmentFolderPath } from '../attachment-folders';
 import { createAutomation } from '../automation';
@@ -60,12 +61,12 @@ const reminderSettingsView = async (settings: ReturnType<typeof reminderSettings
 export const inboxRoutes = (providers: Providers) => {
   const routes = resource();
 
-  routes.get('/organizations/:accountId/automation', accountRoute(async ({ db, session }) => {
+  routes.get('/organizations/:accountId/automation', accountRoute(async ({ db, session }): Promise<AutomationStatus | null> => {
     const automation = await createAccountStore(db).currentAutomation();
     return automation ? { ...automation, displayName: session.display_name } : null;
   }));
 
-  routes.post('/organizations/:accountId/automation/run', accountRoute(async ({ env, accountId, database }) =>
+  routes.post('/organizations/:accountId/automation/run', accountRoute(async ({ env, accountId, database }): Promise<AutomationSummary> =>
     createAutomation(env, providers).runAccount({ accountId, database })));
 
   routes.post('/organizations/:accountId/automation/reauthorize', accountRoute(async (request) => {
@@ -117,7 +118,7 @@ export const inboxRoutes = (providers: Providers) => {
   }
 
   /** The Reminder Schedule: every reminder still ahead, whichever subject it is about. */
-  routes.get('/organizations/:accountId/reminders/schedule', accountRoute(async ({ database }) => upcomingReminders(database, now())));
+  routes.get('/organizations/:accountId/reminders/schedule', accountRoute(async ({ database }): Promise<ScheduledReminder[]> => upcomingReminders(database, now())));
 
   routes.get('/organizations/:accountId/attachment-folder', accountRoute(async ({ db }) => ({ path: await accountAttachmentFolderPath(db) })));
 

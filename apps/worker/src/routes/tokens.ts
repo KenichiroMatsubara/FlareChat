@@ -1,4 +1,5 @@
 import { asc, eq, inArray } from 'drizzle-orm';
+import type { AccessToken, IssuedAccessToken } from '@mail/domain';
 
 import { accessTokenHash, generateAccessToken, presentedToken } from '../access-token';
 import { channelCredentials } from '../channel';
@@ -21,7 +22,7 @@ import { accountRoute } from './account';
 
 export const tokenRoutes = resource();
 
-tokenRoutes.get('/organizations/:accountId/access-tokens', accountRoute(async ({ db }) => {
+tokenRoutes.get('/organizations/:accountId/access-tokens', accountRoute(async ({ db }): Promise<AccessToken[]> => {
   const rows = await db.select().from(accessTokens).orderBy(asc(accessTokens.name)).all();
   const grants = rows.length
     ? await db.select().from(accessTokenTools).where(inArray(accessTokenTools.tokenId, rows.map(({ id }) => id))).all()
@@ -39,7 +40,7 @@ tokenRoutes.get('/organizations/:accountId/access-tokens', accountRoute(async ({
 }));
 
 /** Issues a Token once; the credential is shown here and never again, because only its hash is stored. */
-tokenRoutes.post('/organizations/:accountId/access-tokens', accountRoute<{ name?: string; contactListId?: string; tools?: unknown; suppressionWindow?: string; callsPerHour?: number; writesPerDay?: number }>(async ({ db, env, accountId, body }) => {
+tokenRoutes.post('/organizations/:accountId/access-tokens', accountRoute<{ name?: string; contactListId?: string; tools?: unknown; suppressionWindow?: string; callsPerHour?: number; writesPerDay?: number }>(async ({ db, env, accountId, body }): Promise<IssuedAccessToken> => {
   const name = body.name?.trim() ?? '';
   const contactListId = body.contactListId?.trim() ?? '';
   if (!name || name.length > 60) throw invalid('Access Token 名は 1〜60 文字で入力してください。');

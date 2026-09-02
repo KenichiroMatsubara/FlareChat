@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, ne } from 'drizzle-orm';
+import type { AutomationException, AutomationWarning, DeliveryRecord, StuckJob } from '@mail/domain';
 import { displayLineDestinationId } from '@mail/domain';
 
 import { now } from '../clock';
@@ -11,7 +12,7 @@ import { accountRoute, created, sessionRoute } from './account';
 
 export const operationRoutes = resource();
 
-operationRoutes.get('/organizations/:accountId/automation-warnings', accountRoute(async ({ db }) =>
+operationRoutes.get('/organizations/:accountId/automation-warnings', accountRoute(async ({ db }): Promise<AutomationWarning[]> =>
   db.select().from(automationWarnings).orderBy(desc(automationWarnings.createdAt)).limit(100).all()));
 
 /**
@@ -22,7 +23,7 @@ operationRoutes.get('/organizations/:accountId/automation-warnings', accountRout
  * retries. Both are invisible until somebody notices a reminder that never
  * arrived, so the operations screen states them.
  */
-operationRoutes.get('/organizations/:accountId/operations/jobs', accountRoute(async ({ db }) =>
+operationRoutes.get('/organizations/:accountId/operations/jobs', accountRoute(async ({ db }): Promise<StuckJob[]> =>
   db.select({
     id: jobs.id,
     kind: jobs.kind,
@@ -33,7 +34,7 @@ operationRoutes.get('/organizations/:accountId/operations/jobs', accountRoute(as
     updatedAt: jobs.updatedAt,
   }).from(jobs).where(inArray(jobs.state, ['running', 'failed'])).orderBy(desc(jobs.updatedAt)).limit(100).all()));
 
-operationRoutes.get('/organizations/:accountId/audit/deliveries', accountRoute(async ({ db }) => {
+operationRoutes.get('/organizations/:accountId/audit/deliveries', accountRoute(async ({ db }): Promise<DeliveryRecord[]> => {
   const rows = await db.select().from(deliveries).orderBy(desc(deliveries.createdAt)).limit(100).all();
   return rows.map((row) => ({
     id: row.id,
@@ -47,7 +48,7 @@ operationRoutes.get('/organizations/:accountId/audit/deliveries', accountRoute(a
   }));
 }));
 
-operationRoutes.get('/organizations/:accountId/operations/exceptions', accountRoute(async ({ db }) => {
+operationRoutes.get('/organizations/:accountId/operations/exceptions', accountRoute(async ({ db }): Promise<AutomationException[]> => {
   const rows = await db.select().from(exceptions).orderBy(desc(exceptions.createdAt)).limit(100).all();
   return rows.map((row) => ({
     id: row.id, sourceMessageId: row.sourceMessageId, code: row.code, message: row.message, state: row.state, createdAt: row.createdAt, resolvedAt: row.resolvedAt,

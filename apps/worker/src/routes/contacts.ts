@@ -1,4 +1,5 @@
 import { and, asc, eq, isNull, ne } from 'drizzle-orm';
+import type { Contact, LineHandle } from '@mail/domain';
 import { displayLineDestinationId } from '@mail/domain';
 
 import { expiresIn, now } from '../clock';
@@ -14,7 +15,7 @@ import {
   lineDestinations,
   portalInvitations,
 } from '../storage/account-schema';
-import { accountRoute, created } from './account';
+import { accountRoute, created, type Created, type RouteResult } from './account';
 
 export const contactRoutes = resource();
 
@@ -32,7 +33,7 @@ const tagsOf = (value: unknown): string[] => {
 
 const appUrl = (env: { APP_URL: string }): string => env.APP_URL.replace(/\/$/u, '');
 
-contactRoutes.get('/organizations/:accountId/members', accountRoute(async ({ db, accountId }) => {
+contactRoutes.get('/organizations/:accountId/members', accountRoute(async ({ db, accountId }): Promise<Contact[]> => {
   const rows = await db.select({
     id: contacts.id,
     name: contacts.name,
@@ -105,7 +106,7 @@ contactRoutes.get('/organizations/:accountId/members/export', accountRoute(async
   return new Response(exportContactCsv(rows), { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="members.csv"' } });
 }));
 
-contactRoutes.post('/organizations/:accountId/members', accountRoute<{ name?: string; email?: string; description?: string; tags?: unknown; lineDestinationId?: string }>(async ({ db, accountId, body }) => {
+contactRoutes.post('/organizations/:accountId/members', accountRoute<{ name?: string; email?: string; description?: string; tags?: unknown; lineDestinationId?: string }>(async ({ db, accountId, body }): Promise<Created<Contact>> => {
   const name = body.name?.trim();
   const email = body.email?.trim().toLowerCase() ?? '';
   if (!name) throw invalid('Contact name is required.');
@@ -119,6 +120,7 @@ contactRoutes.post('/organizations/:accountId/members', accountRoute<{ name?: st
       displayName: lineDestinations.displayName,
       kind: lineDestinations.kind,
       status: lineDestinations.status,
+      source: lineDestinations.source,
     }).from(lineDestinations)
       .leftJoin(contactLineDestinations, eq(contactLineDestinations.lineDestinationId, lineDestinations.id))
       .where(and(
@@ -219,7 +221,7 @@ contactRoutes.post('/organizations/:accountId/members/:contactId/portal-invitati
   });
 }));
 
-contactRoutes.put('/organizations/:accountId/members/:contactId/line-destination', accountRoute<{ destinationId?: string; kind?: string; displayName?: string }>(async ({ db, body, params }) => {
+contactRoutes.put('/organizations/:accountId/members/:contactId/line-destination', accountRoute<{ destinationId?: string; kind?: string; displayName?: string }>(async ({ db, body, params }): Promise<RouteResult<LineHandle>> => {
   const destinationId = body.destinationId?.trim() ?? '';
   if (!LINE_DESTINATION_ID_PATTERN.test(destinationId)) throw invalid('A valid LINE ID is required.');
   const kind = lineKindOf(body.kind);

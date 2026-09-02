@@ -1,4 +1,5 @@
 import { channelCredentials, LINE_BATCH_LIMIT, reachableContacts, sendOnChannel } from '../channel';
+import type { ChannelTestDelivery, ChannelTestTarget } from '@mail/domain';
 import { now } from '../clock';
 import { invalid } from '../refusal';
 import { resource } from '../response';
@@ -6,7 +7,7 @@ import { accountRoute } from './account';
 
 export const channelRoutes = resource();
 
-channelRoutes.get('/organizations/:accountId/channel-tests/targets', accountRoute(async ({ database }) => {
+channelRoutes.get('/organizations/:accountId/channel-tests/targets', accountRoute(async ({ database }): Promise<ChannelTestTarget[]> => {
   const reachable = await reachableContacts({ database });
   return reachable.filter((contact) => contact.channels.length > 0);
 }));
@@ -22,7 +23,7 @@ channelRoutes.get('/organizations/:accountId/channel-tests/targets', accountRout
  * messages may be stated, so an operator can watch LINE's five-per-request batch
  * happen instead of taking it on trust.
  */
-channelRoutes.post('/organizations/:accountId/channel-tests', accountRoute<{ contactId?: string; channel?: string; texts?: unknown }>(async (request) => {
+channelRoutes.post('/organizations/:accountId/channel-tests', accountRoute<{ contactId?: string; channel?: string; texts?: unknown }>(async (request): Promise<ChannelTestDelivery> => {
   const contactId = request.body.contactId?.trim() ?? '';
   const channel = request.body.channel?.trim() ?? '';
   const texts = Array.isArray(request.body.texts) ? request.body.texts.filter((text): text is string => typeof text === 'string') : [];
