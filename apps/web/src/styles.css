@@ -572,6 +572,7 @@ nav a.loading { opacity: .65; }
 .chat-failure { color: #864b3e; background: #f7e9e5; border: 1px solid #eed4cd; }
 .chat-degraded { color: var(--warning); background: #fcf3e5; border: 1px solid #efdfbf; }
 .chat-composer textarea { resize: vertical; }
+.chat-conversations { display: flex; flex-wrap: wrap; gap: 8px; }
 .chat-composer .primary { justify-self: end; }
 .chat-servers ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .chat-servers li { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 11px 13px; color: #34463a; background: #fbfcfa; border: 1px solid #e3e9e2; border-radius: 9px; font-size: 12px; }

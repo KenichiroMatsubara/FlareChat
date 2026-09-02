@@ -1,16 +1,8 @@
 import { Mail, ShieldCheck } from 'lucide-react';
-import type { AppState, ProvisioningPhase } from '@mail/domain';
-
-import type { AuthMe } from './api';
+import type { AppIdentity, ProvisioningPhase } from '@mail/domain';
 
 /** Uses the authenticated Google profile as the only setup-name default. */
-export const defaultAccountName = (contact: AuthMe | null): string => contact?.displayName.trim() || '';
-
-export const shouldShowAccountLoading = (
-  contact: AuthMe | null,
-  accountId: string,
-  loading: boolean,
-): boolean => Boolean(contact?.accounts.length && (!accountId || loading));
+export const defaultAccountName = (identity: AppIdentity | null): string => identity?.displayName.trim() || '';
 
 export const setupPhaseLabel = (phase: ProvisioningPhase | null): string => {
   if (!phase) return '準備を開始しています';
@@ -39,5 +31,3 @@ export const SignedOutEntry = ({
   <button className="primary" onClick={() => onSelect('organization_setup')} disabled={busy}>{busy ? 'Googleへ接続中…' : '新しいAccountを作る'}</button>
   <button className="secondary google-login entry-login" onClick={() => onSelect('login')} disabled={busy}><ShieldCheck size={18} />既存Accountへログイン</button>
 </section></main>;
-
-export const appStateKind = (state: AppState): AppState['kind'] => state.kind;

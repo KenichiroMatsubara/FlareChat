@@ -1,13 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { CircleAlert, KeyRound, Trash2 } from 'lucide-react';
 
-import { api, type AccessTokenView, type AccountContact, type ContactListView, type IssuedAccessToken } from './api';
+import type { AccessToken, Contact, ContactList, IssuedAccessToken } from '@mail/domain';
+
+import { api } from './api';
+import { errorText } from './parts';
 
 const SERVER_TOOLS = ['contacts.search', 'channel.send', 'reminder.schedule'] as const;
 const WINDOWS = ['none', 'hour', 'day', 'week', 'forever'] as const;
 
-const errorText = (error: unknown, fallback: string): string =>
-  error instanceof Error && error.message ? error.message : fallback;
+const toggle = (values: string[], value: string): string[] =>
+  values.includes(value) ? values.filter((entry) => entry !== value) : [...values, value];
 
 /** Shows the credential exactly once, because only its hash is stored (ADR 0152). */
 export const IssuedTokenNotice = ({ issued }: { issued: IssuedAccessToken }) => <div className="access-issued">
@@ -21,43 +24,31 @@ export const IssuedTokenNotice = ({ issued }: { issued: IssuedAccessToken }) => 
  * it may reach. Both bounds are set in the same place because a grant without a
  * bound list would reach every Contact the Account has.
  */
-export const AccessPanel = ({ accountId }: { accountId: string }) => {
-  const [contacts, setContacts] = useState<AccountContact[]>([]);
-  const [lists, setLists] = useState<ContactListView[]>([]);
-  const [tokens, setTokens] = useState<AccessTokenView[]>([]);
+export const AccessPanel = ({ accountId, contacts, lists, tokens, reload }: {
+  accountId: string;
+  contacts: readonly Contact[];
+  lists: readonly ContactList[];
+  tokens: readonly AccessToken[];
+  reload: () => Promise<void>;
+}) => {
   const [issued, setIssued] = useState<IssuedAccessToken | null>(null);
   const [error, setError] = useState('');
-
   const [listName, setListName] = useState('');
   const [listContactIds, setListContactIds] = useState<string[]>([]);
   const [tokenName, setTokenName] = useState('');
-  const [tokenListId, setTokenListId] = useState('');
+  const [tokenListId, setTokenListId] = useState(lists[0]?.id ?? '');
   const [tokenTools, setTokenTools] = useState<string[]>([...SERVER_TOOLS]);
   const [tokenWindow, setTokenWindow] = useState<string>('day');
-
-  const reload = (): void => {
-    Promise.all([api.accountContacts(accountId), api.contactLists(accountId), api.accessTokens(accountId)])
-      .then(([loadedContacts, loadedLists, loadedTokens]) => {
-        setContacts(loadedContacts);
-        setLists(loadedLists);
-        setTokens(loadedTokens);
-        setTokenListId((current) => current || loadedLists[0]?.id || '');
-      })
-      .catch((cause: unknown) => setError(errorText(cause, '外部連携の設定を取得できませんでした。')));
-  };
-
-  useEffect(reload, [accountId]);
-
-  const toggle = (values: string[], value: string): string[] =>
-    values.includes(value) ? values.filter((entry) => entry !== value) : [...values, value];
 
   const saveList = async (): Promise<void> => {
     setError('');
     try {
-      await api.saveContactList(accountId, crypto.randomUUID(), { name: listName.trim(), contactIds: listContactIds });
+      const id = crypto.randomUUID();
+      await api.saveContactList(accountId, id, { name: listName.trim(), contactIds: listContactIds });
       setListName('');
       setListContactIds([]);
-      reload();
+      setTokenListId((current) => current || id);
+      await reload();
     } catch (cause) {
       setError(errorText(cause, 'Contact List を保存できませんでした。'));
     }
@@ -73,7 +64,7 @@ export const AccessPanel = ({ accountId }: { accountId: string }) => {
         suppressionWindow: tokenWindow,
       }));
       setTokenName('');
-      reload();
+      await reload();
     } catch (cause) {
       setError(errorText(cause, 'Access Token を発行できませんでした。'));
     }
@@ -83,7 +74,7 @@ export const AccessPanel = ({ accountId }: { accountId: string }) => {
     setError('');
     try {
       await api.revokeAccessToken(accountId, id);
-      reload();
+      await reload();
     } catch (cause) {
       setError(errorText(cause, 'Access Token を失効できませんでした。'));
     }

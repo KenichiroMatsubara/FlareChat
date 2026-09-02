@@ -2,9 +2,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import { MilestoneEditor, ReminderSchedule, milestoneLabel, taskPreviewRows } from './reminders';
-import type { ScheduledTaskReminder } from './api';
+import type { TaskReminder } from '@mail/domain';
 
-const reminder = (overrides: Partial<ScheduledTaskReminder>): ScheduledTaskReminder => ({
+const reminder = (overrides: Partial<TaskReminder>): TaskReminder => ({
   taskId: 'task-1',
   title: '参加費を振り込む',
   deadline: '2026-08-20',
