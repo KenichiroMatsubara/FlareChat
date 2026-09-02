@@ -1,13 +1,10 @@
-import { enqueueDueAccountAttendanceReminders } from '../attendance-reminders';
-import { enqueueDueAccountTaskReminders } from '../task-reminders';
 import { createAutomation } from '../automation';
 import { createDatabaseAccess } from '../database-access';
 import { retryProvisioning } from '../onboarding';
 import { dispatchDueAccountJobs } from '../job-dispatch';
 import { runDueAccountAutomations } from '../automation-schedule';
-import { MCP_REMINDER_JOB_KIND, reminderJobHandler } from '../reminder-job';
-import { TASK_REMINDER_JOB_KIND, taskReminderJobHandler } from '../task-reminder-job';
-import { ATTENDANCE_REMINDER_JOB_KIND, attendanceReminderJobHandler } from '../attendance-reminder-job';
+import { productionProviders, type Providers } from '../providers';
+import { REMINDER_JOB_KIND, enqueueDueAccountReminders, reminderJobHandler } from '../reminders';
 import type { Bindings } from '../types';
 
 /** The frequent tick: work that is late the moment its stated time passes. */
@@ -30,19 +27,14 @@ export const MAIL_POLL_CRON = '0 */3 * * *';
  * cadence — a local trigger, or a test — stands for both, so nothing is silently
  * skipped by a caller that does not know the schedule.
  */
-export const runBackgroundWork = async (env: Bindings, cron?: string): Promise<void> => {
+export const runBackgroundWork = async (env: Bindings, cron?: string, providers: Providers = productionProviders()): Promise<void> => {
   await createDatabaseAccess(env).open({ kind: 'control' });
   const dueAt = new Date().toISOString();
   if (cron !== MAIL_POLL_CRON) {
     await retryProvisioning(env);
-    await enqueueDueAccountAttendanceReminders(env, dueAt);
-    await enqueueDueAccountTaskReminders(env, dueAt);
-    await dispatchDueAccountJobs(env, dueAt, {
-      [MCP_REMINDER_JOB_KIND]: reminderJobHandler(env),
-      [TASK_REMINDER_JOB_KIND]: taskReminderJobHandler(env),
-      [ATTENDANCE_REMINDER_JOB_KIND]: attendanceReminderJobHandler(env),
-    });
+    await enqueueDueAccountReminders(env, dueAt);
+    await dispatchDueAccountJobs(env, dueAt, { [REMINDER_JOB_KIND]: reminderJobHandler(env, providers) });
     await runDueAccountAutomations(env, new Date(dueAt));
   }
-  if (cron !== DUE_WORK_CRON) await createAutomation(env).runEnabledAccounts();
+  if (cron !== DUE_WORK_CRON) await createAutomation(env, providers).runEnabledAccounts();
 };

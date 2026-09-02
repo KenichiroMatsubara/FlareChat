@@ -180,7 +180,7 @@ describe('MCP Server endpoint', () => {
 
     expect((await response.json() as { result: { isError: boolean } }).result.isError).toBe(false);
     expect(fixture.account.rows<{ kind: string; available_at: string }>('SELECT kind, available_at FROM jobs'))
-      .toEqual([{ kind: 'mcp.reminder', available_at: '2099-01-01T00:00:00.000Z' }]);
+      .toEqual([{ kind: 'reminder', available_at: '2099-01-01T00:00:00.000Z' }]);
     expect(fixture.account.rows<{ count: number }>('SELECT COUNT(*) AS count FROM deliveries')).toEqual([{ count: 0 }]);
   });
 

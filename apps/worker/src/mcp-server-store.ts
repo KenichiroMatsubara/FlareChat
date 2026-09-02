@@ -6,8 +6,8 @@
 import { asc, eq } from 'drizzle-orm';
 
 import { accessTokenHash, withinCallLimits } from './access-token';
-import { isChannelName, reachableContacts, sendOnChannel, type ChannelCredentials } from './channel';
-import { enqueueJob } from './jobs';
+import { reachableContacts, sendOnChannel, type ChannelCredentials } from './channel';
+import { scheduleReminder } from './reminders';
 import { suppressionExpiry, suppressionHolds, type SuppressionWindow } from './suppression';
 import { accountDatabase as drizzleAccountDatabase } from './storage/database';
 import {
@@ -15,7 +15,6 @@ import {
   accessTokens,
   accessTokenTools,
   contactListMembers,
-  jobs as jobsTable,
   prompts,
   suppressions,
 } from './storage/account-schema';
@@ -139,15 +138,5 @@ export const mcpServerPorts = (input: {
     });
     return { delivered: delivery.delivered, channel: delivery.channel, contactId: delivery.contactId };
   },
-  scheduleReminder: async ({ contactId, channel, text, at }) => {
-    if (!isChannelName(channel)) throw new Error(`This server does not reach a Contact on ${channel} yet.`);
-    const job = await enqueueJob(input.database, {
-      kind: 'mcp.reminder',
-      payload: { contactId, channel, text },
-      idempotencyKey: `mcp-reminder:${contactId}:${at}:${text}`,
-    });
-    await drizzleAccountDatabase(input.database).update(jobsTable).set({ availableAt: at, updatedAt: at })
-      .where(eq(jobsTable.id, job.id)).run();
-    return { scheduled: true, at, contactId };
-  },
+  scheduleReminder: ({ contactId, channel, text, at }) => scheduleReminder(input.database, { contactId, channel, text, at }),
 });
