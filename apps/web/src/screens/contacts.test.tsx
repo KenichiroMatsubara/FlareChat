@@ -44,6 +44,35 @@ describe('Contacts screen', () => {
     expect(await screen.findByRole('heading', { level: 3, name: '花子' })).toBeTruthy();
   });
 
+  it('removes a Contact only after the Account confirms, and re-reads the roster', async () => {
+    vi.mocked(api.deleteContact).mockResolvedValue({ id: 'contact-1', removed: true });
+    vi.mocked(api.contacts).mockResolvedValueOnce([contact()]).mockResolvedValue([]);
+    const user = userEvent.setup();
+    renderScreen('contacts', contacts);
+    const remove = await screen.findByRole('button', { name: '山田 太郎を削除' });
+
+    await user.click(remove);
+    expect(screen.getByText(/「山田 太郎」を削除しますか/u)).toBeTruthy();
+    expect(api.deleteContact).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: '削除する' }));
+
+    await waitFor(() => expect(api.deleteContact).toHaveBeenCalledWith(ACCOUNT_ID, 'contact-1'));
+    expect(await screen.findByText('連絡先はまだ登録されていません')).toBeTruthy();
+  });
+
+  it('shows the Worker\'s reason when a Contact cannot be added', async () => {
+    vi.mocked(api.createContact).mockRejectedValue(new Error('このメールアドレスは既に「山田 太郎」に登録されています。'));
+    const user = userEvent.setup();
+    renderScreen('contacts', contacts);
+    await screen.findByText('LINEアカウント');
+
+    await user.type(screen.getByLabelText('名称'), '同じメールの人');
+    await user.type(screen.getByLabelText('メールアドレス（任意）'), 'taro@example.com');
+    await user.click(screen.getByRole('button', { name: '連絡先を追加' }));
+
+    expect(await screen.findByText('このメールアドレスは既に「山田 太郎」に登録されています。')).toBeTruthy();
+  });
+
   it('saves an edited Contact and reports the save on that card alone', async () => {
     vi.mocked(api.updateContact).mockResolvedValue({ id: 'contact-1' });
     const user = userEvent.setup();

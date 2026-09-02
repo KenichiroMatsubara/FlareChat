@@ -8,6 +8,7 @@ import {
   seedAttendanceRegistration,
   seedAutomationException,
   seedAutomationRule,
+  seedContact,
   seedDeliveryRecord,
   seedAccountContact,
   seedScheduledEvent,
@@ -652,6 +653,96 @@ describe('Account management', () => {
         expect.objectContaining({ name: 'Second', email: 'second@example.com' }),
       ]),
     });
+  });
+
+  it('refuses an email address another Contact already holds, on creation and on edit, and says whose it is', async () => {
+    fixture = createTestApp();
+    const first = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/members',
+      { name: '西田 悠人', email: 'yuto@example.com' },
+    ), fixture.environment);
+    const firstBody = await first.json() as { data: { id: string } };
+    const duplicate = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/members',
+      { name: '別の人', email: 'Yuto@Example.com' },
+    ), fixture.environment);
+    const third = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/members',
+      { name: '三人目' },
+    ), fixture.environment);
+    const thirdBody = await third.json() as { data: { id: string } };
+    const edited = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/members/${thirdBody.data.id}`,
+      { email: 'yuto@example.com' },
+      'PATCH',
+    ), fixture.environment);
+    const unchanged = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/members/${firstBody.data.id}`,
+      { email: 'yuto@example.com', name: '西田 悠人' },
+      'PATCH',
+    ), fixture.environment);
+    const listed = await app.fetch(fixture.request('/api/organizations/organization-1/members'), fixture.environment);
+
+    expect([first.status, duplicate.status, third.status, edited.status, unchanged.status]).toEqual([201, 409, 201, 409, 200]);
+    await expect(duplicate.json()).resolves.toMatchObject({ error: { code: 'conflict', message: expect.stringContaining('西田 悠人') as unknown as string } });
+    await expect(edited.json()).resolves.toMatchObject({ error: { code: 'conflict' } });
+    const roster = (await listed.json() as { data: Array<{ name: string }> }).data;
+    expect(roster.map((contact) => contact.name).sort()).toEqual(['三人目', '西田 悠人']);
+  });
+
+  it('removes a Contact, returns its LINE handle to the pool, and leaves its Tasks holding its name', async () => {
+    fixture = createTestApp();
+    seedContact(fixture.account, { id: 'contact-1', name: '西田 悠人', email: 'yuto@example.com', lineDestinationId: 'U4776' });
+    seedScheduledEvent(fixture.account, { id: 'event-1' });
+    fixture.account.execute(
+      `INSERT INTO source_messages (id, gmail_message_id, gmail_history_id, sender, subject, received_at, state)
+       VALUES ('source-1', 'gmail-1', 'history-1', 'sender@example.com', '年次行事', '2026-08-01', 'processed')`,
+    );
+    fixture.account.execute(
+      `INSERT INTO tasks (id, organization_id, source_message_id, source_message_subject, title, deadline,
+         assignee_member_id, assignee_name, description, completed, created_at, updated_at)
+       VALUES ('task-1', 'organization-1', 'source-1', '年次行事', '振り込む', '2026-08-20', 'contact-1', '西田 悠人', '振込する', 0, '2026-08-01', '2026-08-01')`,
+    );
+    const snapshotted = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/events/event-1/recipient-snapshots',
+      { contactIds: ['contact-1'] },
+    ), fixture.environment);
+
+    const removed = await app.fetch(fixture.request('/api/organizations/organization-1/members/contact-1', { method: 'DELETE' }), fixture.environment);
+    const again = await app.fetch(fixture.request('/api/organizations/organization-1/members/contact-1', { method: 'DELETE' }), fixture.environment);
+    const handles = await app.fetch(fixture.request('/api/organizations/organization-1/line-destinations'), fixture.environment);
+    const listedTasks = await app.fetch(fixture.request('/api/organizations/organization-1/tasks'), fixture.environment);
+    const reused = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/members',
+      { name: '西田 悠人', email: 'yuto@example.com' },
+    ), fixture.environment);
+    const roster = await app.fetch(fixture.request('/api/organizations/organization-1/members'), fixture.environment);
+
+    expect([snapshotted.status, removed.status, again.status, reused.status]).toEqual([201, 200, 404, 201]);
+    await expect(removed.json()).resolves.toEqual({ data: { id: 'contact-1', removed: true } });
+    await expect(roster.json()).resolves.toMatchObject({ data: [expect.objectContaining({ name: '西田 悠人', email: 'yuto@example.com' })] });
+    await expect(handles.json()).resolves.toMatchObject({ data: [expect.objectContaining({ destinationId: 'U4776', contactId: null })] });
+    await expect(listedTasks.json()).resolves.toMatchObject({ data: [{ assigneeContactId: null, assigneeName: '西田 悠人' }] });
+  });
+
+  it('removes a hand-entered LINE handle together with the Contact that held it', async () => {
+    fixture = await createAutomationTestApp({ lineSecret: 'line-secret' });
+    const contact = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/members',
+      { name: '手動 太郎' },
+    ), fixture.environment);
+    const contactId = (await contact.json() as { data: { id: string } }).data.id;
+    const attached = await app.fetch(fixture.jsonRequest(
+      `/api/organizations/organization-1/members/${contactId}/line-destination`,
+      { destinationId: 'Umanual00000000000000000000000000' },
+      'PUT',
+    ), fixture.environment);
+
+    const removed = await app.fetch(fixture.request(`/api/organizations/organization-1/members/${contactId}`, { method: 'DELETE' }), fixture.environment);
+    const handles = await app.fetch(fixture.request('/api/organizations/organization-1/line-destinations'), fixture.environment);
+
+    expect([attached.status, removed.status]).toEqual([201, 200]);
+    await expect(handles.json()).resolves.toEqual({ data: [] });
   });
 
   it('creates multiple Contacts without email and allows email to be edited later', async () => {
