@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { app } from './api';
+import { app } from './app';
 import { claimDueJobs } from './jobs';
 import { enqueueDueReminders, reminderJobHandler, reminderSettings, scheduleReminder, upcomingReminders } from './reminders';
 import { accountDatabase } from './storage/database';

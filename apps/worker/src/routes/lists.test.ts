@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { typedListRoutes } from './typed-lists';
+import { listRoutes } from './lists';
 import { createTestApp, type TestApp } from '../../test/app';
 
 let fixture: TestApp | undefined;
@@ -11,11 +11,11 @@ describe('Typed List routes', () => {
   it('creates and lists a Typed List through the module interface', async () => {
     fixture = createTestApp();
 
-    const created = await typedListRoutes.fetch(fixture.jsonRequest(
+    const created = await listRoutes.fetch(fixture.jsonRequest(
       '/organizations/organization-1/lists',
       { kind: 'source', name: 'Contacts' },
     ), fixture.environment);
-    const listed = await typedListRoutes.fetch(
+    const listed = await listRoutes.fetch(
       fixture.request('/organizations/organization-1/lists'),
       fixture.environment,
     );

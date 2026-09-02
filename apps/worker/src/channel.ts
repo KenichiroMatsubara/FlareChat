@@ -18,6 +18,7 @@
 import { and, asc, eq, inArray, like, or } from 'drizzle-orm';
 
 import { decrypt } from './cryptography';
+import { conflict, invalid } from './refusal';
 import { recordDeliveryAttempt, type DeliveryAttempt } from './delivery';
 import { sendDiscordMessage } from './discord';
 import { accountDatabase } from './storage/database';
@@ -423,13 +424,13 @@ export const sendOnChannel = async (input: {
   sourceMessageId?: string | null;
   fetch?: ChannelFetch;
 }): Promise<ChannelDelivery> => {
-  if (!isChannelName(input.channel)) throw new Error(`This product does not reach a Contact on ${input.channel} yet.`);
+  if (!isChannelName(input.channel)) throw invalid(`This product does not reach a Contact on ${input.channel} yet.`);
   const channel = input.channel;
   const texts = stated(input.texts);
   const destination = await destinationFor({ database: input.database, contactId: input.contactId, channel });
-  if (!destination) throw new Error(`Contact ${input.contactId} has no ${channel === 'line' ? 'LINE' : 'Discord'} handle to reach.`);
+  if (!destination) throw conflict(`Contact ${input.contactId} has no ${channel === 'line' ? 'LINE' : 'Discord'} handle to reach.`);
   const outcome = await sendOnDestination({ ...input, channel, destination, texts });
-  if (!outcome.delivered) throw new Error(outcome.error ?? `${channel} refused the message.`);
+  if (!outcome.delivered) throw conflict(outcome.error ?? `${channel} refused the message.`);
   return {
     delivered: true,
     channel,

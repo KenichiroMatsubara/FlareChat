@@ -1,5 +1,6 @@
 import { and, asc, eq, gte, isNull } from 'drizzle-orm';
 
+import { conflict, gone, invalid, noAccess, notFound } from './refusal';
 import { contactLogins } from './storage/control-schema';
 import { attendance, events, contacts, portalInvitations, tasks } from './storage/account-schema';
 import type { ControlDatabase, AccountDatabase } from './storage/database';
@@ -71,24 +72,24 @@ export const bindContactToGoogleAccount = async (input: {
     .from(portalInvitations)
     .where(and(eq(portalInvitations.token, input.token), isNull(portalInvitations.usedAt)))
     .get();
-  if (!link) throw new Error('Portal invitation has expired or was already used.');
-  if (Date.parse(link.expiresAt) <= Date.parse(input.now)) throw new Error('Portal invitation has expired or was already used.');
+  if (!link) throw gone('Portal invitation has expired or was already used.');
+  if (Date.parse(link.expiresAt) <= Date.parse(input.now)) throw gone('Portal invitation has expired or was already used.');
 
   const bound = await input.database.select({ contactId: contacts.id }).from(contacts)
     .where(eq(contacts.googleSubject, input.googleSubject)).get();
-  if (bound && bound.contactId !== link.contactId) throw new Error('This Google account is already linked to another Contact.');
+  if (bound && bound.contactId !== link.contactId) throw conflict('This Google account is already linked to another Contact.');
 
   const contact = await input.database.update(contacts)
     .set({ googleSubject: input.googleSubject, updatedAt: input.now })
     .where(and(eq(contacts.id, link.contactId), eq(contacts.state, 'active')))
     .returning({ contactId: contacts.id, name: contacts.name })
     .get();
-  if (!contact) throw new Error('Contact was not found.');
+  if (!contact) throw notFound('Contact was not found.');
 
   const consumed = await input.database.update(portalInvitations).set({ usedAt: input.now })
     .where(and(eq(portalInvitations.token, input.token), isNull(portalInvitations.usedAt)))
     .returning({ token: portalInvitations.token }).get();
-  if (!consumed) throw new Error('Portal invitation was already used.');
+  if (!consumed) throw gone('Portal invitation was already used.');
 
   await input.control.insert(contactLogins).values({
     googleSubject: input.googleSubject,
@@ -175,9 +176,9 @@ export const registerAttendance = async (input: {
     .from(attendance).innerJoin(events, eq(events.id, attendance.eventId))
     .where(and(eq(attendance.eventId, input.eventId), eq(attendance.contactId, input.contact.contactId)))
     .get();
-  if (!registration) throw new Error('この予定の出欠登録対象ではありません。');
+  if (!registration) throw conflict('この予定の出欠登録対象ではありません。');
   if (!canRegisterAttendance({ registrationDeadline: registration.registrationDeadline, now: input.now })) {
-    throw new Error('出欠登録の期限を過ぎています。');
+    throw conflict('出欠登録の期限を過ぎています。');
   }
   await input.database.update(attendance)
     .set({ status: input.status, comment: input.comment, updatedAt: input.now })
@@ -195,7 +196,7 @@ export const completeOwnTask = async (input: {
   remarks?: string | undefined;
   now: string;
 }): Promise<{ taskId: string; completed: boolean; remarks: string }> => {
-  if (input.completed === undefined && input.remarks === undefined) throw new Error('変更内容がありません。');
+  if (input.completed === undefined && input.remarks === undefined) throw invalid('変更内容がありません。');
   const updated = await input.database.update(tasks).set({
     ...(input.completed === undefined ? {} : { completed: input.completed, completedAt: input.completed ? input.now : null }),
     ...(input.remarks === undefined ? {} : { remarks: input.remarks }),
@@ -203,6 +204,6 @@ export const completeOwnTask = async (input: {
   }).where(and(eq(tasks.id, input.taskId), eq(tasks.assigneeContactId, input.contact.contactId)))
     .returning({ taskId: tasks.id, completed: tasks.completed, remarks: tasks.remarks })
     .get();
-  if (!updated) throw new Error('自分に割り当てられたタスクのみ完了できます。');
+  if (!updated) throw noAccess('自分に割り当てられたタスクのみ完了できます。');
   return updated;
 };

@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 
 import { decrypt } from './cryptography';
+import { conflict } from './refusal';
 import { accountKeyFor } from './keys';
 import { accountDatabase } from './storage/database';
 import { connections } from './storage/account-schema';
@@ -39,6 +40,6 @@ export const aiConnection = async (env: Bindings, accountId: string, database: D
 /** The AI Connection, or the refusal an operator reads when there is none. */
 export const requiredAiConnection = async (env: Bindings, accountId: string, database: D1Database): Promise<AiConnection> => {
   const connection = await aiConnection(env, accountId, database);
-  if (!connection) throw new Error('先に OpenAI 互換 API を設定してください。');
+  if (!connection) throw conflict('先に OpenAI 互換 API を設定してください。');
   return connection;
 };

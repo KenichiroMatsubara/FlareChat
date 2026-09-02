@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { app } from './api';
+import { app } from './app';
 import { encrypt, masterKey, unwrapAccountKey } from './cryptography';
 import { randomToken } from './encoding';
 import { GOOGLE_IDENTITY_SCOPES, GOOGLE_SCOPES } from './google';

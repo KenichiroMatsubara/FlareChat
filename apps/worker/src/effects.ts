@@ -8,6 +8,7 @@
  * compile. Callers of Rule Execution never see this adapter; they hand it a
  * plan and the Account does the rest.
  */
+import { now } from './clock';
 
 import { and, asc, eq } from 'drizzle-orm';
 
@@ -115,7 +116,6 @@ export interface RuleEffectAdapter {
   apply(run: RuleEffectRun, effect: RuleEffect): Promise<unknown>;
 }
 
-const now = (): string => new Date().toISOString();
 
 /** Stands in for a publication that never ran because no Drive folder was available. */
 const unpublishedAttachment: PublishedDriveAttachment = { outcome: 'failed', driveFileId: null, publicUrl: null };

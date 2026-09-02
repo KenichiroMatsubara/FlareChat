@@ -1,4 +1,4 @@
-import { app } from './api';
+import { app } from './app';
 import { runBackgroundWork } from './background/runner';
 
 import type { Bindings } from './types';

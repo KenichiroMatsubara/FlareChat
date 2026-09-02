@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { app } from './api';
+import { app } from './app';
 import { createTestApp, type TestApp } from '../test/app';
 import { seedScheduledEvent } from '../test/seed';
 import { canApplyCalendarUpdate, recordCalendarDeletion } from './calendar';

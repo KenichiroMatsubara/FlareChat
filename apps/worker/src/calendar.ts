@@ -4,6 +4,7 @@
  * without overwriting a Manual Override, and the revision lock that makes the
  * write safe (ADR 0034, ADR 0056, ADR 0134).
  */
+import { now } from './clock';
 
 import { and, eq, inArray } from 'drizzle-orm';
 
@@ -34,7 +35,6 @@ import { accountDatabase } from './storage/database';
 import { eventAttachments, events, exceptions, guestRegistrations } from './storage/account-schema';
 import type { Bindings } from './types';
 
-const now = (): string => new Date().toISOString();
 
 /** The fields an Event Refresh or a merge reads from a Calendar event, or null when it is not a timed event. */
 export const calendarEventFields = (event: CalendarEventResource): CalendarEventFields | null => {

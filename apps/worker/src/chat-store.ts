@@ -8,6 +8,7 @@
 
 import { and, asc, desc, eq } from 'drizzle-orm';
 
+import { notFound } from './refusal';
 import { decrypt, encrypt } from './cryptography';
 import { accountDatabase as drizzleAccountDatabase } from './storage/database';
 import {
@@ -143,7 +144,7 @@ export const ensureChatConversation = async (input: {
   if (input.conversationId) {
     const existing = await db.select({ id: chatConversations.id }).from(chatConversations)
       .where(eq(chatConversations.id, input.conversationId)).get();
-    if (!existing) throw new Error('Operator Chat conversation was not found.');
+    if (!existing) throw notFound('Operator Chat conversation was not found.');
     await db.update(chatConversations).set({ updatedAt: input.timestamp }).where(eq(chatConversations.id, input.conversationId)).run();
     return input.conversationId;
   }

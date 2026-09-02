@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { app } from './api';
+import { app } from './app';
 import { GOOGLE_SCOPES } from './google';
 import { randomToken } from './encoding';
 import type { Bindings } from './types';

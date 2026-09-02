@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { app } from './api';
+import { app } from './app';
 import { provisionAccount } from './provisioning';
 import { fleetMigration } from './fleet-migration';
 import { retryProvisioning } from './onboarding';

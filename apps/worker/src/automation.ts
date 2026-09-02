@@ -4,6 +4,7 @@
  * plan to Rule Execution (ADR 0134, ADR 0168). Applying the plan is not this
  * module's business; reading the world and stating what should happen is.
  */
+import { now } from './clock';
 
 import { and, count, eq, inArray, isNotNull } from 'drizzle-orm';
 import { validateAttachmentIntake } from '@mail/domain';
@@ -72,7 +73,6 @@ export interface AccountRun {
   execution: RuleExecution;
 }
 
-const now = (): string => new Date().toISOString();
 
 const requireActiveAiConnection = async (database: D1Database): Promise<void> => {
   const connection = await accountDatabase(database).select({ id: connections.id }).from(connections)

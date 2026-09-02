@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { automationRoutes } from './automation';
+import { inboxRoutes } from './inbox';
+import { memoryProviders } from '../../test/providers';
 import { createTestApp, type TestApp } from '../../test/app';
 import { seedContact } from '../../test/seed';
 import { enqueueDueReminders } from '../reminders';
+
+const automationRoutes = inboxRoutes(memoryProviders());
 
 let fixture: TestApp | undefined;
 
@@ -55,7 +58,7 @@ describe('Account Automation routes', () => {
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({
-      error: { message: '自動化を有効にする前に OpenAI 互換 API を設定してください。' },
+      error: { code: 'conflict', message: '自動化を有効にする前に OpenAI 互換 API を設定してください。' },
     });
   });
 

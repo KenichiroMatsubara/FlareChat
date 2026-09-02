@@ -4,6 +4,7 @@
  * here, and the way a failed run is recorded and reported (ADR 0124) is one
  * decision rather than one per caller.
  */
+import { now } from './clock';
 
 import { and, eq } from 'drizzle-orm';
 
@@ -35,7 +36,6 @@ const ACCESS_TOKEN_REFRESH_MARGIN_MS = 15 * 60 * 1_000;
 /** Below this the stored token can no longer be trusted to carry one request. */
 const ACCESS_TOKEN_USABLE_MARGIN_MS = 60_000;
 
-const now = (): string => new Date().toISOString();
 
 const tokenContext = (accountId: string): string => `google-connection:${accountId}:automation-inbox`;
 

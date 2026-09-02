@@ -30,6 +30,7 @@ import { sourceMessageAttribution } from './event-refresh';
 import { ruleExecutionFor, type RuleRunView } from './execution';
 import { openInbox, type InboxSession } from './inbox';
 import type { GmailMessage, Providers, SourceAttachmentContent } from './providers';
+import { conflict, upstream } from './refusal';
 import { applyEventRefresh, planEventRefresh, previewEventRefreshRequest } from './refresh';
 import { accountDatabase } from './storage/database';
 import { rulePermittedLineLists, rulePermittedRecipientLists, rules as schemaRules, sourceMessages } from './storage/account-schema';
@@ -65,7 +66,7 @@ const exactSubject = (subject: string, expected: string): boolean => normalizedS
 
 const readMessage = async (session: InboxSession, providers: Providers, messageId: string): Promise<GmailMessage> => {
   const message = await providers.google.gmail.readMessage(session.accessToken, messageId);
-  if (!message.id) throw new Error('Gmail メッセージを取得できませんでした。');
+  if (!message.id) throw upstream('Gmail メッセージを取得できませんでした。');
   return message;
 };
 
@@ -90,7 +91,7 @@ const readSource = async (session: InboxSession, providers: Providers, messageId
   const body = decodedBody(message.payload) || (message.snippet ?? '');
   const attachments = sourceAttachments(message.payload);
   const intake = validateAttachmentIntake(attachments.map((attachment) => attachment.size));
-  if (!intake.accepted) throw new Error('Source Message attachments exceed the configured intake limit.');
+  if (!intake.accepted) throw conflict('Source Message attachments exceed the configured intake limit.');
   const receivedAt = receivedAtOf(message.internalDate);
   return {
     id: message.id!,
@@ -125,9 +126,9 @@ const previewWithActiveRule = async (
     attachments: source.attachments,
     ...(source.receivedAt === undefined ? {} : { receivedAt: source.receivedAt }),
   });
-  if (preparation.kind === 'no_matching_rule') throw new Error('このメールに一致する有効な Primary Rule がありません。');
-  if (preparation.kind === 'ai_connection_missing') throw new Error('先に OpenAI 互換 API を設定してください。');
-  if (preparation.kind === 'invalid_extraction') throw new Error('メールから安全な予定を抽出できませんでした。日付・開始時刻・終了時刻を確認してください。');
+  if (preparation.kind === 'no_matching_rule') throw conflict('このメールに一致する有効な Primary Rule がありません。');
+  if (preparation.kind === 'ai_connection_missing') throw conflict('先に OpenAI 互換 API を設定してください。');
+  if (preparation.kind === 'invalid_extraction') throw upstream('メールから安全な予定を抽出できませんでした。日付・開始時刻・終了時刻を確認してください。');
   return { source, rule: preparation.rule, extraction: preparation.extraction };
 };
 
@@ -141,7 +142,7 @@ const createCalendarEvents = async (
   const message = await readMessage(input.session, providers, input.messageId);
   const attachments = sourceAttachments(message.payload);
   const intake = validateAttachmentIntake(attachments.map((attachment) => attachment.size));
-  if (!intake.accepted) throw new Error('Source Message attachments exceed the configured intake limit.');
+  if (!intake.accepted) throw conflict('Source Message attachments exceed the configured intake limit.');
   const contents = await input.session.readAttachments(input.messageId, attachments);
   const folderId = contents.length ? await resolveSourceMessageFolder({
     database: accountDatabase(input.database),
@@ -157,7 +158,7 @@ const createCalendarEvents = async (
       : { outcome: 'failed' as const, driveFileId: null, publicUrl: null },
   })));
   if (publications.some(({ publication }) => publication.outcome === 'failed')) {
-    throw new Error('添付ファイルを公開できなかったため、テスト予定を作成しませんでした。');
+    throw upstream('添付ファイルを公開できなかったため、テスト予定を作成しませんでした。');
   }
   const attachmentLinks = publications.flatMap(({ attachment, publication }) => publication.publicUrl
     ? [{ filename: attachment.filename, url: publication.publicUrl }]
@@ -178,7 +179,7 @@ const createCalendarEvents = async (
       end: { dateTime: details.endsAt, timeZone: details.timeZone },
       attachments: calendarAttachments,
     });
-    if (!event.id) throw new Error('Google Calendar が予定 ID を返しませんでした。');
+    if (!event.id) throw upstream('Google Calendar が予定 ID を返しませんでした。');
     return event.id;
   }));
   return { eventIds };
@@ -221,18 +222,18 @@ const previewDraftRule = async (
   input: AccountInput & { session: InboxSession; ruleId: string; messageId: string },
 ): Promise<{ source: MailboxTestSource; rule: ActiveRule; extraction: MailExtraction }> => {
   const rule = await accountDatabase(input.database).select().from(schemaRules).where(eq(schemaRules.id, input.ruleId)).get();
-  if (!rule || rule.status !== 'draft') throw new Error('Mailbox Test requires a Draft Schema Rule.');
+  if (!rule || rule.status !== 'draft') throw conflict('Mailbox Test requires a Draft Schema Rule.');
   const source = await readSource(input.session, providers, input.messageId);
   if (!ruleMatches({ selectionPolicy: JSON.parse(rule.selectionPolicy) as Record<string, unknown> }, {
     sender: source.sender, subject: source.subject, body: source.source,
   })) {
-    throw new Error('The selected Source Message does not match this Rule Selection Policy.');
+    throw conflict('The selected Source Message does not match this Rule Selection Policy.');
   }
   const extraction = await extractPackage(env, providers, {
     accountId: input.accountId, database: input.database, source: source.source, attachments: source.attachments,
     ...(source.receivedAt === undefined ? {} : { receivedAt: source.receivedAt }),
   });
-  if (!extraction) throw new Error('メールから安全な予定を抽出できませんでした。日付・開始時刻・終了時刻を確認してください。');
+  if (!extraction) throw upstream('メールから安全な予定を抽出できませんでした。日付・開始時刻・終了時刻を確認してください。');
   return {
     source,
     rule: {
@@ -254,8 +255,8 @@ const startDraftRuleRun = async (
 ): Promise<RuleRunView> => {
   const db = accountDatabase(input.database);
   const row = await db.select().from(schemaRules).where(eq(schemaRules.id, input.ruleId)).get();
-  if (!row || row.status !== 'draft') throw new Error('Mailbox Test requires a Draft Schema Rule.');
-  if (row.currentRevision !== input.ruleRevision) throw new Error('確認した Rule Revision と異なります。');
+  if (!row || row.status !== 'draft') throw conflict('Mailbox Test requires a Draft Schema Rule.');
+  if (row.currentRevision !== input.ruleRevision) throw conflict('確認した Rule Revision と異なります。');
   const [recipientReferences, lineReferences] = await Promise.all([
     db.select().from(rulePermittedRecipientLists).where(eq(rulePermittedRecipientLists.ruleId, row.id)).all(),
     db.select().from(rulePermittedLineLists).where(eq(rulePermittedLineLists.ruleId, row.id)).all(),
@@ -272,7 +273,7 @@ const startDraftRuleRun = async (
   };
   const source = await readSource(input.session, providers, input.messageId);
   if (!ruleMatches(rule, { sender: source.sender, subject: source.subject, body: source.source })) {
-    throw new Error('The selected Source Message does not match this Rule Selection Policy.');
+    throw conflict('The selected Source Message does not match this Rule Selection Policy.');
   }
   // Rule Run needs a Source Message foreign key, but a preview must never mark
   // the real Gmail message as known: doing so would make live Automation skip it.

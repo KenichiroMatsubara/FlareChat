@@ -1,6 +1,7 @@
 import membershipAccount from '../presets/membership-organization.json';
 import { eq, sql } from 'drizzle-orm';
 
+import { notFound, Refusal } from './refusal';
 import type { AccountDatabase } from './storage/database';
 import {
   agentRulePermittedLineLists,
@@ -69,9 +70,9 @@ export interface PresetApplicationSummary {
   agentRules: number;
 }
 
-export class PresetConfigurationConflictError extends Error {
+export class PresetConfigurationConflictError extends Refusal {
   constructor() {
-    super('This Account already has configuration. Explicitly choose to add another copy of the Preset.');
+    super('conflict', 'This Account already has configuration. Explicitly choose to add another copy of the Preset.');
     this.name = 'PresetConfigurationConflictError';
   }
 }
@@ -103,7 +104,7 @@ export const applyPreset = async (
   options: { conflictPolicy?: 'duplicate'; applicationKey?: string } = {},
 ): Promise<PresetApplicationSummary> => {
   const preset = catalog.find((candidate) => candidate.id === presetId);
-  if (!preset) throw new Error('Preset was not found.');
+  if (!preset) throw notFound('Preset was not found.');
   const applicationSettingKey = options.applicationKey ? `preset-application:${options.applicationKey}` : null;
   if (applicationSettingKey) {
     const previous = await database.select({ value: settings.value }).from(settings)

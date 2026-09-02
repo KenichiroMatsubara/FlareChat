@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { app } from './api';
+import { app } from './app';
 import { extractAiEventDetails, type EventDetails, type MailExtraction } from './event-details';
 import { createAutomation } from './automation';
 import { decodedBody, receivedAtOf, selectActiveRule, sourceAttachments, sourceAttachmentSizes } from './source';

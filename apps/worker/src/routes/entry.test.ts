@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createMigratedTestD1 } from '../../test/d1';
-import { app } from '../api';
+import { app } from '../app';
 import type { Bindings } from '../types';
 import { entryRoutes } from './entry';
 

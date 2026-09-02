@@ -13,6 +13,7 @@ import { and, asc, desc, eq } from 'drizzle-orm';
 
 import { decodeRuleEffect, ruleEffectsFor, settleSourceMessage, type RuleEffect, type RuleEffectAdapter } from './effects';
 import type { InboxSession } from './inbox';
+import { conflict, notFound } from './refusal';
 import type { Providers } from './providers';
 import { accountDatabase as drizzleAccountDatabase } from './storage/database';
 import { ruleEffects, ruleRuns, sourceMessages } from './storage/account-schema';
@@ -133,7 +134,7 @@ export const createRuleExecution = (dependencies: RuleExecutionDependencies): Ru
 
   const view = async (runId: string): Promise<RuleRunView> => {
     const run = await database.select().from(ruleRuns).where(eq(ruleRuns.id, runId)).get();
-    if (!run) throw new Error('Rule Run was not found.');
+    if (!run) throw notFound('Rule Run was not found.');
     const sourceMessage = run.sourceMessageId
       ? await database.select({
         subject: sourceMessages.subject,
@@ -141,7 +142,7 @@ export const createRuleExecution = (dependencies: RuleExecutionDependencies): Ru
         receivedAt: sourceMessages.receivedAt,
       }).from(sourceMessages).where(eq(sourceMessages.id, run.sourceMessageId)).get()
       : null;
-    if (run.sourceMessageId && !sourceMessage) throw new Error('Rule Run Source Message was not found.');
+    if (run.sourceMessageId && !sourceMessage) throw notFound('Rule Run Source Message was not found.');
     const effects = await database.select().from(ruleEffects).where(eq(ruleEffects.ruleRunId, runId)).orderBy(asc(ruleEffects.createdAt)).all();
     return {
       id: run.id,
@@ -224,7 +225,7 @@ export const createRuleExecution = (dependencies: RuleExecutionDependencies): Ru
   const claimDecision = async (runId: string, values: Partial<typeof ruleRuns.$inferInsert>): Promise<void> => {
     const claimed = await database.update(ruleRuns).set(values)
       .where(and(eq(ruleRuns.id, runId), eq(ruleRuns.status, 'pending_approval'))).run();
-    if (claimed.meta.changes === 0) throw new Error('Rule Run was already decided.');
+    if (claimed.meta.changes === 0) throw conflict('Rule Run was already decided.');
   };
 
   return {
@@ -312,13 +313,13 @@ export const createRuleExecution = (dependencies: RuleExecutionDependencies): Ru
     },
     decide: async (input): Promise<RuleRunView> => {
       const run = await database.select().from(ruleRuns).where(eq(ruleRuns.id, input.ruleRunId)).get();
-      if (!run) throw new Error('Rule Run was not found.');
-      if (run.status !== 'pending_approval') throw new Error(`Rule Run is already ${run.status}.`);
+      if (!run) throw notFound('Rule Run was not found.');
+      if (run.status !== 'pending_approval') throw conflict(`Rule Run is already ${run.status}.`);
       const decidedAt = currentTime().toISOString();
       if (!run.expiresAt || Date.parse(run.expiresAt) <= Date.parse(decidedAt)) {
         await claimDecision(run.id, { status: 'expired', decidedAt, updatedAt: decidedAt });
         await database.update(ruleEffects).set({ status: 'expired', updatedAt: decidedAt }).where(eq(ruleEffects.ruleRunId, run.id)).run();
-        throw new Error('Rule Run approval has expired.');
+        throw conflict('Rule Run approval has expired.');
       }
       if (input.decision === 'reject') {
         await claimDecision(run.id, { status: 'rejected', decidedAt, decidedBy: input.actorIdentityId, updatedAt: decidedAt });

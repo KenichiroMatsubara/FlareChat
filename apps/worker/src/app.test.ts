@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { app } from './api';
+import { app } from './app';
 import { enqueueJob } from './jobs';
 import { createTestApp, type TestApp } from '../test/app';
 import { createAutomationTestApp } from '../test/automation';

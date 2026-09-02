@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { app } from './api';
+import { app } from './app';
 import { createTestApp, type TestApp } from '../test/app';
 import { seedContact, seedAccountContact, seedScheduledEvent } from '../test/seed';
 
@@ -103,7 +103,8 @@ describe('Contact Portal entry', () => {
       {},
     ), fixture.environment);
 
-    expect(second.status).toBe(410);
+    expect(second.status).toBe(409);
+    await expect(second.json()).resolves.toMatchObject({ error: { code: 'conflict' } });
   });
 
   it('turns away a signed-in account that was never brought in through an invitation', async () => {
