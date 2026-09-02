@@ -421,23 +421,14 @@ export interface ReminderCadenceInput {
   enabled?: boolean;
 }
 
-/** One attendance reminder the Reminder Schedule still has ahead of it. */
-export interface AttendanceReminder {
-  eventId: string;
-  eventTitle: string;
-  deadline: string;
-  contactId: string;
-  contactName: string;
-  channel: string;
-  destination: string;
-  milestone: number;
-  sendOn: string;
-  text: string;
-}
+/** What a reminder is about: a Task's deadline or a Registration's Response Deadline. */
+export type ReminderSubject = 'task' | 'registration';
 
-/** One Task reminder the Reminder Schedule still has ahead of it. */
-export interface TaskReminder {
-  taskId: string;
+/** One reminder the Reminder Schedule still has ahead of it, addressed and worded as it will arrive. */
+export interface ScheduledReminder {
+  subject: ReminderSubject;
+  /** The Task or the Scheduled Event the reminder is about. */
+  subjectId: string;
   title: string;
   deadline: string;
   contactId: string;

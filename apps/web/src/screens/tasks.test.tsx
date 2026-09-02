@@ -15,9 +15,8 @@ describe('Tasks screen', () => {
     vi.mocked(api.tasks).mockResolvedValue([task(), task({ id: 'task-2', title: '会場を予約する', assigneeContactId: null, assigneeName: '' })]);
     vi.mocked(api.contacts).mockResolvedValue([contact(), contact({ id: 'contact-2', name: '退会者', state: 'inactive' })]);
     vi.mocked(api.taskReminders).mockResolvedValue(cadence());
-    vi.mocked(api.scheduledTaskReminders).mockResolvedValue([]);
     vi.mocked(api.attendanceReminders).mockResolvedValue(cadence({ enabled: false, days: [7] }));
-    vi.mocked(api.scheduledAttendanceReminders).mockResolvedValue([]);
+    vi.mocked(api.reminderSchedule).mockResolvedValue([]);
   });
 
   it('names the Contact each Task was given to and offers only active Contacts to hand it on', async () => {
