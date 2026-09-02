@@ -63,6 +63,24 @@ const databaseBeforeOperationalTaskRoles = (): TestD1Database => {
   return database;
 };
 
+const databaseBeforeOneReminderKind = (): TestD1Database => {
+  const database = createTestD1Database();
+  openDatabases.push(database);
+  const migrationDirectory = resolve(import.meta.dirname, '../migrations/organization');
+  const names = readdirSync(migrationDirectory)
+    .filter((name) => name.endsWith('.sql') && name < '0030_one_reminder_kind.sql')
+    .sort();
+  for (const name of names) {
+    const migration = readFileSync(resolve(migrationDirectory, name), 'utf8');
+    for (const statement of migration.split('--> statement-breakpoint').map((value) => value.trim()).filter(Boolean)) database.execute(statement);
+  }
+  database.execute(
+    'CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)',
+  );
+  for (const name of names) database.execute('INSERT INTO d1_migrations (name) VALUES (?)', name);
+  return database;
+};
+
 const databaseBeforeRuleExecution = (): TestD1Database => {
   const database = createTestD1Database();
   openDatabases.push(database);
@@ -298,6 +316,32 @@ describe('Schema Lifecycle', () => {
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('operational_task_roles', 'task_role_assignments', 'task_role_revisions')",
     )).toEqual([]);
     expect(database.rows('PRAGMA foreign_key_check')).toEqual([]);
+  });
+
+  it('rewrites every reminder Job into the one kind, reading the Contact a row queued before the rename named as a Member', async () => {
+    const database = databaseBeforeOneReminderKind();
+    const job = (id: string, kind: string, payload: string, key: string, state = 'pending'): void => database.execute(
+      'INSERT INTO jobs (id, kind, payload, state, attempts, available_at, idempotency_key, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)',
+      id, kind, payload, state, '2026-08-01T00:00:00.000Z', key, '2026-08-01', '2026-08-01',
+    );
+    job('job-member', 'task_reminder', '{"taskId":"task-1","memberId":"contact-1","milestone":3}', 'task-reminder:task-1:3', 'running');
+    job('job-contact', 'task_reminder', '{"taskId":"task-2","contactId":"contact-1","milestone":1}', 'task-reminder:task-2:contact-1:1');
+    job('job-twin', 'task_reminder', '{"taskId":"task-2","contactId":"contact-1","milestone":1}', 'task-reminder:task-2:contact-1:1:twin', 'failed');
+    job('job-registration', 'attendance_reminder', '{"eventId":"event-1","contactId":"contact-1","milestone":0}', 'attendance-reminder:event-1:contact-1:0');
+    job('job-scheduled', 'mcp.reminder', '{"contactId":"contact-1","channel":"line","text":"水を持って"}', 'mcp-reminder:contact-1:2026-08-01T00:00:00.000Z:水を持って');
+
+    await expect(schemaLifecycle.ensureCurrent({ kind: 'organization', database: database.binding }))
+      .resolves.toMatchObject({ currentMigration: '0030_one_reminder_kind.sql' });
+
+    expect(database.rows<{ id: string; kind: string; payload: string; idempotency_key: string }>(
+      'SELECT id, kind, payload, idempotency_key FROM jobs ORDER BY id',
+    )).toEqual([
+      { id: 'job-contact', kind: 'reminder', payload: '{"taskId":"task-2","contactId":"contact-1","milestone":1,"subject":"task"}', idempotency_key: 'reminder:task:task-2:contact-1:1' },
+      { id: 'job-member', kind: 'reminder', payload: '{"taskId":"task-1","memberId":"contact-1","milestone":3,"subject":"task","contactId":"contact-1"}', idempotency_key: 'reminder:task:task-1:contact-1:3' },
+      { id: 'job-registration', kind: 'reminder', payload: '{"eventId":"event-1","contactId":"contact-1","milestone":0,"subject":"registration"}', idempotency_key: 'reminder:registration:event-1:contact-1:0' },
+      { id: 'job-scheduled', kind: 'reminder', payload: '{"contactId":"contact-1","channel":"line","text":"水を持って","subject":"scheduled"}', idempotency_key: 'reminder:scheduled:contact-1:2026-08-01T00:00:00.000Z:水を持って' },
+      { id: 'job-twin', kind: 'task_reminder', payload: '{"taskId":"task-2","contactId":"contact-1","milestone":1}', idempotency_key: 'task-reminder:task-2:contact-1:1:twin' },
+    ]);
   });
 
   it('migrates an existing Agent Proposed Action into the common Rule Run with the Agent Run identity', async () => {
