@@ -2,9 +2,7 @@ import { useState } from 'react';
 import { CircleAlert, MessagesSquare } from 'lucide-react';
 
 import { api } from './api';
-
-const errorText = (error: unknown, fallback: string): string =>
-  error instanceof Error && error.message ? error.message : fallback;
+import { errorText } from './parts';
 
 /**
  * The Discord Channel's credentials. Workers cannot hold the Gateway connection

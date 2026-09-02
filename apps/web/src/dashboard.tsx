@@ -1,16 +1,47 @@
 import { CalendarClock, CheckSquare, CircleAlert, LogOut, Mail, Menu, MessageSquare, Pencil, Play, RefreshCw, Settings, ShieldAlert, ShieldCheck, SlidersHorizontal, UsersRound, X } from 'lucide-react';
-import { Fragment, useEffect, useState } from 'react';
-import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { createContext, useContext, useEffect, useState } from 'react';
+import { isRouteErrorResponse, NavLink, Outlet, useLoaderData, useLocation, useNavigate, useNavigation, useRevalidator, useRouteError, type LoaderFunctionArgs } from 'react-router-dom';
 
-import type { DeliveryAuditRecord, AgentRunIndex, AgentRunTranscript, AutomationStatus, AutomationSummary, GuestRegistrationRoster, MailboxTestAiRequest, MailboxTestMatch, MailboxTestPreview, MailboxTestRefreshOutcome, MailboxTestRefreshPlan, MailboxTestRefreshRequest, AccountAgentRule, AccountConnections, AccountLineDestination, AccountMembership, AccountPrompt, AccountContact, AccountContactInput, AccountRule, AccountRuleInput, AccountTask, AccountTypedList, PresetSummary, ContactLineDestinationInput, RuleRun } from './api';
-import { AgentRulePage, AutomationPage, ConnectionsPage, ContactsPage, PromptsPage, RulesPage, SchemaRulePage, TasksPage } from './dashboard-pages';
-import { OperationsPage } from './operations';
-import { ChatPage } from './chat';
-import { AutomationsPage } from './automations';
-import { pendingKey, ROUTE_NAVIGATION_KEY } from './pending';
+import type { AccountMembership, AppState } from '@mail/domain';
+
+import { api } from './api';
+import { pendingKey, ROUTE_NAVIGATION_KEY, usePendingOperations } from './pending';
 import { PendingOverlay } from './progress';
 
-export type Page = 'automation' | 'chat' | 'automations' | 'connections' | 'rules' | 'schema-rule' | 'agent-rule' | 'prompts' | 'contacts' | 'operations' | 'tasks';
+export type ReadyState = Extract<AppState, { kind: 'ready' }>;
+
+/** What every screen shares (ADR 0170): the application state and the Account. */
+export interface AccountData {
+  state: ReadyState;
+  account: AccountMembership;
+}
+
+export const loadAccount = async (accountId: string): Promise<AccountData> => {
+  const state = await api.bootstrap();
+  if (state.kind !== 'ready') throw new Response('Account is not ready', { status: 409 });
+  const account = state.accounts.find((value) => value.accountId === accountId);
+  if (!account) throw new Response('Account was not found', { status: 404 });
+  return { state, account };
+};
+
+/** The Account a screen loader is asked for, read from the route. */
+export const accountIdOf = ({ params }: LoaderFunctionArgs): string => params.accountId ?? '';
+
+/** The shell's context: the state, the Account, and the two actions every screen offers. */
+export interface AccountShell extends AccountData {
+  logout: () => void;
+  reauthenticate: () => void;
+  leaving: boolean;
+  reauthenticating: boolean;
+}
+
+const AccountContext = createContext<AccountShell | null>(null);
+
+export const useAccount = (): AccountShell => {
+  const value = useContext(AccountContext);
+  if (!value) throw new Error('Account shell context is unavailable.');
+  return value;
+};
 
 export const needsGoogleReauthentication = (error: string): boolean =>
   /token has been expired or revoked/iu.test(error);
@@ -32,172 +63,37 @@ interface NavigationItem {
   readonly icon: React.ReactNode;
 }
 
-/** One heading's worth of destinations, so rarely used tooling stops competing with daily work. */
-interface NavigationGroup {
-  readonly heading: string;
-  readonly items: readonly NavigationItem[];
-}
-
-const navigationGroups: readonly NavigationGroup[] = [
-  {
-    heading: '運用',
-    items: [
-      { to: '../automation', label: '自動化', icon: <Play size={16} /> },
-      { to: '../chat', label: 'チャット', icon: <MessageSquare size={16} /> },
-      { to: '../automations', label: '定期実行', icon: <CalendarClock size={16} /> },
-      { to: '../tasks', label: 'タスク', icon: <CheckSquare size={16} /> },
-      { to: '../operations', label: '運用', icon: <ShieldAlert size={16} /> },
-    ],
-  },
-  {
-    heading: '設定',
-    items: [
-      { to: '../rules', label: 'ルール', icon: <SlidersHorizontal size={16} /> },
-      { to: '../prompts', label: 'Prompt', icon: <Pencil size={16} /> },
-      { to: '../contacts', label: '連絡先', icon: <UsersRound size={16} /> },
-      { to: '../connections', label: '接続設定', icon: <Settings size={16} /> },
-    ],
-  },
+/** The nine screens, each named for what it is responsible for (ADR 0167). */
+const navigationItems: readonly NavigationItem[] = [
+  { to: 'automation', label: '自動化', icon: <Play size={16} /> },
+  { to: 'chat', label: 'チャット', icon: <MessageSquare size={16} /> },
+  { to: 'automations', label: '定期実行', icon: <CalendarClock size={16} /> },
+  { to: 'tasks', label: 'タスク', icon: <CheckSquare size={16} /> },
+  { to: 'operations', label: '運用', icon: <ShieldAlert size={16} /> },
+  { to: 'rules', label: 'ルール', icon: <SlidersHorizontal size={16} /> },
+  { to: 'prompts', label: 'Prompt', icon: <Pencil size={16} /> },
+  { to: 'contacts', label: '連絡先', icon: <UsersRound size={16} /> },
+  { to: 'connections', label: '接続設定', icon: <Settings size={16} /> },
 ];
 
-export interface DashboardProps {
-  page?: Page;
-  automation: AutomationStatus | null;
-  summary: AutomationSummary | null;
-  /** True while the named operation runs, so only its own control reports it. */
-  isPending: (key: string) => boolean;
-  /** True for a short while after the named operation succeeded. */
-  isSettled: (key: string) => boolean;
-  /** True while React Router is loading another route's data. */
-  navigating: boolean;
-  /** Every operation this screen has in flight, named in the centre of the page. */
-  runningOperations: readonly string[];
-  error: string;
-  onRun: () => void;
-  onSetEnabled: (enabled: boolean) => void;
-  onLogout: () => void;
-  onReauthenticate: () => void;
-  account: { name: string } | null;
-  accountId?: string;
-  accounts?: AccountMembership[];
-  connections: AccountConnections | null;
-  lineChannelAccessToken: string;
-  lineChannelSecret: string;
-  aiApiKey: string;
-  aiModel: string;
-  aiBaseUrl: string;
-  onLineChannelAccessTokenChange: (value: string) => void;
-  onLineChannelSecretChange: (value: string) => void;
-  onAiApiKeyChange: (value: string) => void;
-  onAiModelChange: (value: string) => void;
-  onAiBaseUrlChange: (value: string) => void;
-  guestRegistrations: GuestRegistrationRoster[];
-  attachmentFolderPath: string;
-  savedAttachmentFolderPath: string;
-  onAttachmentFolderPathChange: (value: string) => void;
-  onSaveAttachmentFolderPath: () => void;
-  responseWindowDays: string;
-  savedResponseWindowDays: number;
-  onResponseWindowDaysChange: (value: string) => void;
-  onSaveResponseWindowDays: () => void;
-  onSaveLineConnection: () => void;
-  onSaveAiConnection: () => void;
-  aiTestPrompt: string;
-  aiTestResult: string;
-  onAiTestPromptChange: (value: string) => void;
-  onTestAi: () => void;
-  mailTestSubject: string;
-  mailTestMatches: MailboxTestMatch[];
-  mailTestAiRequest: MailboxTestAiRequest | null;
-  mailTestPreview: MailboxTestPreview | null;
-  draftRulePreview: MailboxTestPreview | null;
-  mailTestCreatedEventIds: string[];
-  mailTestRuleRunIds: string[];
-  mailTestRefreshRequest: MailboxTestRefreshRequest | null;
-  mailTestRefreshPlan: MailboxTestRefreshPlan | null;
-  mailTestRefreshOutcome: MailboxTestRefreshOutcome | null;
-  onMailTestSubjectChange: (value: string) => void;
-  onSearchMailbox: () => void;
-  onPrepareMailbox: (messageId: string) => void;
-  onPreviewMailbox: (messageId: string) => void;
-  onPreviewDraftMailbox: (messageId: string, ruleId: string) => void;
-  onCreateMailboxTestEvents: () => void;
-  onStartDraftRuleRun: (ruleId: string) => void;
-  onPrepareRefresh: () => void;
-  onPlanRefresh: () => void;
-  onApplyRefresh: (candidateIndexes: number[]) => void;
-  accountRules: AccountRule[];
-  accountLists: AccountTypedList[];
-  onCreateRule: (input: AccountRuleInput) => Promise<void>;
-  /** The Contacts a notice can actually reach, and the Channels each is reachable on. */
-  noticeTargets: Array<{ id: string; name: string; channels: string[] }>;
-  /** The named sets of Contacts this Account holds, so a Rule can say who it tells. */
-  contactLists: Array<{ id: string; name: string; contactIds: string[] }>;
-  onSaveNoticeContacts: (ruleId: string, contactIds: string[]) => Promise<void>;
-  onUpdateRule: (ruleId: string, input: Partial<Pick<AccountRule, 'name' | 'state' | 'executionMode' | 'selectionPolicy' | 'priority' | 'noticeContactListId' | 'permittedRecipientListIds' | 'permittedLineListIds'>>) => Promise<void>;
-  prompts: AccountPrompt[];
-  agentRules: AccountAgentRule[];
-  agentRuns: AgentRunIndex[];
-  agentTranscript: AgentRunTranscript | null;
-  ruleRuns: RuleRun[];
-  onDecideRuleRun: (runId: string, decision: 'approve' | 'reject') => void;
-  onCreatePrompt: (input: { name: string; instructions: string }) => Promise<void>;
-  onUpdatePrompt: (promptId: string, input: { name?: string; instructions?: string }) => Promise<void>;
-  onDeletePrompt: (promptId: string) => Promise<void>;
-  onCreateAgentRule: (input: { name: string; promptId: string; state: 'draft' | 'active'; executionMode?: 'read_only' | 'approval' | 'unattended'; selectionPolicy: Record<string, unknown>; permittedRecipientListIds?: string[]; permittedLineListIds?: string[]; priority?: number }) => Promise<void>;
-  onUpdateAgentRule: (agentRuleId: string, input: { state?: 'draft' | 'active' | 'suspended' | 'archived'; executionMode?: 'read_only' | 'approval' | 'unattended'; permittedRecipientListIds?: string[]; permittedLineListIds?: string[] }) => Promise<void>;
-  onLoadAgentTranscript: (runId: string) => void;
-  accountTasks: AccountTask[];
-  onUpdateTask: (taskId: string, input: { completed?: boolean; remarks?: string; assigneeContactId?: string | null }) => void;
-  taskContacts: Array<{ contactId: string; displayName: string }>;
-  /** Task ids an accepted proposal could not be applied to. */
-  accountContacts: AccountContact[];
-  lineDestinations: AccountLineDestination[];
-  onCreateContact: (input: AccountContactInput) => Promise<AccountContact | null>;
-  onUpdateContact: (contactId: string, input: Partial<Pick<AccountContact, 'name' | 'email' | 'description' | 'tags' | 'state'>>) => Promise<void>;
-  onSetLineDestination: (contactId: string, input: ContactLineDestinationInput) => Promise<void>;
-  onUnlinkLineDestination: (contactId: string, lineDestinationId: string) => Promise<void>;
-  onRegisterLineDestination: (input: ContactLineDestinationInput) => Promise<void>;
-  onRemoveLineDestination: (lineDestinationId: string) => Promise<void>;
-  onRefreshContacts: () => void;
-  presets: PresetSummary[];
-  onApplyPreset: (presetId: string, conflictPolicy?: 'duplicate') => void;
-  /** The Rule this screen is about, read from the route by the routing layer. */
-  ruleId?: string | undefined;
-  /** Every Delivery Record this Account holds, newest first (ADR 0167). */
-  audit: DeliveryAuditRecord[];
-}
-
-export const Dashboard = (props: DashboardProps) => {
+/**
+ * The Account shell: navigation, the picker, and an outlet for the screen
+ * (ADR 0170). It loads nothing a screen reads and holds no screen's state.
+ */
+export const Dashboard = () => {
+  const { state, account } = useLoaderData<AccountData>();
   const navigate = useNavigate();
+  const navigation = useNavigation();
   const location = useLocation();
+  const operations = usePendingOperations();
   const [menuOpen, setMenuOpen] = useState(false);
-  const loggingOut = props.isPending(pendingKey.logout);
-  const page = props.page ?? 'automation';
-  const content = page === 'automation'
-    ? <AutomationPage {...props} />
-    : page === 'chat'
-      ? <ChatPage accountId={props.accountId ?? ''} />
-      : page === 'automations'
-        ? <AutomationsPage accountId={props.accountId ?? ''} />
-        : page === 'connections'
-          ? <ConnectionsPage {...props} />
-          : page === 'rules'
-            ? <RulesPage {...props} />
-            : page === 'schema-rule'
-              ? <SchemaRulePage {...props} />
-              : page === 'agent-rule'
-                ? <AgentRulePage {...props} />
-                : page === 'prompts'
-                  ? <PromptsPage {...props} />
-                  : page === 'contacts'
-                    ? <ContactsPage {...props} />
-                    : page === 'operations'
-                      ? <OperationsPage {...props} />
-                      : <TasksPage {...props} />;
-  const requiresGoogleReauthentication = needsGoogleReauthentication(props.error)
-    || props.automation?.status === 'reauthentication_required';
-  const recoveryMessage = props.error || 'Automation Inbox の認証が失効しています。Google に再接続してください。';
+  const navigating = navigation.state !== 'idle';
+  const leaving = operations.pending(pendingKey.logout);
+  const reauthenticating = operations.pending(pendingKey.reauthenticate);
+  const logout = (): void => void operations.run(pendingKey.logout, async () => { await api.logout(); navigate('/', { replace: true }); });
+  const reauthenticate = (): void => void operations.run(pendingKey.reauthenticate, async () => {
+    window.location.assign((await api.reauthorizeAutomationInbox(account.accountId)).authorizationUrl);
+  });
 
   useEffect(() => setMenuOpen(false), [location.pathname]);
 
@@ -217,28 +113,45 @@ export const Dashboard = (props: DashboardProps) => {
     };
   }, [menuOpen]);
 
-  return <div className="app-shell">
+  const shell: AccountShell = { state, account, logout, reauthenticate, leaving, reauthenticating };
+  return <AccountContext.Provider value={shell}><div className="app-shell">
     <header className="app-topbar">
       <div className="app-brand"><span><Mail size={20} /></span><strong>FlareChat</strong></div>
       <button type="button" className="topbar-toggle" aria-controls={NAVIGATION_PANEL_ID} aria-expanded={menuOpen} aria-label={menuOpen ? 'メニューを閉じる' : 'メニューを開く'} onClick={() => setMenuOpen((open) => !open)}>{menuOpen ? <X size={20} /> : <Menu size={20} />}</button>
     </header>
-    <PendingOverlay running={props.navigating ? [ROUTE_NAVIGATION_KEY, ...props.runningOperations] : props.runningOperations} />
+    <PendingOverlay running={navigating ? [ROUTE_NAVIGATION_KEY, ...operations.running] : operations.running} />
     {menuOpen && <button type="button" className="topbar-scrim" tabIndex={-1} aria-hidden="true" onClick={() => setMenuOpen(false)} />}
     <div className="app-body">
       <div id={NAVIGATION_PANEL_ID} className={menuOpen ? 'topbar-panel open' : 'topbar-panel'}>
-        {props.accounts && props.accountId && <label className="organization-picker"><span className="sr-only">Account</span><select aria-label="Account" value={props.accountId} disabled={props.navigating} onChange={(event) => navigate(`/organizations/${encodeURIComponent(event.target.value)}/automation`)}>{props.accounts.map((account) => <option key={account.accountId} value={account.accountId}>{account.name}</option>)}</select></label>}
+        <label className="organization-picker"><span className="sr-only">Account</span><select aria-label="Account" value={account.accountId} disabled={navigating} onChange={(event) => navigate(`/organizations/${encodeURIComponent(event.target.value)}/automation`)}>{state.accounts.map((membership) => <option key={membership.accountId} value={membership.accountId}>{membership.name}</option>)}</select></label>
         <nav aria-label="メインナビゲーション">
-          {navigationGroups.map((group) => <Fragment key={group.heading}>
-            <p className="nav-group">{group.heading}</p>
-            {group.items.map((item) => <NavLink key={item.to} to={item.to} className={({ isActive, isPending }) => [isActive ? 'active' : '', isPending ? 'loading' : ''].filter(Boolean).join(' ')} onClick={() => setMenuOpen(false)}>{item.icon}{item.label}</NavLink>)}
-          </Fragment>)}
+          {navigationItems.map((item) => <NavLink key={item.to} to={item.to} className={({ isActive, isPending }) => [isActive ? 'active' : '', isPending ? 'loading' : ''].filter(Boolean).join(' ')} onClick={() => setMenuOpen(false)}>{item.icon}{item.label}</NavLink>)}
         </nav>
-        <button className="topbar-logout" onClick={props.onLogout} disabled={loggingOut}>{loggingOut ? <RefreshCw className="spin" size={16} /> : <LogOut size={16} />}{loggingOut ? 'ログアウト中…' : 'ログアウト'}</button>
+        <button className="topbar-logout" onClick={logout} disabled={leaving}>{leaving ? <RefreshCw className="spin" size={16} /> : <LogOut size={16} />}{leaving ? 'ログアウト中…' : 'ログアウト'}</button>
       </div>
-      <main className={props.navigating ? 'app-content navigating' : 'app-content'} aria-busy={props.navigating}>
-        {(props.error || requiresGoogleReauthentication) && <div className="dashboard-error"><p><CircleAlert size={17} />{recoveryMessage}</p>{requiresGoogleReauthentication && <GoogleReauthenticationAction onClick={props.onReauthenticate} busy={props.isPending(pendingKey.reauthenticate)} />}</div>}
-        {content}
+      <main className={navigating ? 'app-content navigating' : 'app-content'} aria-busy={navigating}>
+        {operations.error && <div className="dashboard-error"><p><CircleAlert size={17} />{operations.error}</p></div>}
+        <Outlet key={account.accountId} />
       </main>
     </div>
-  </div>;
+  </div></AccountContext.Provider>;
+};
+
+/** A screen whose loader failed, shown inside the shell so the way out stays visible. */
+export const ScreenError = () => {
+  const error = useRouteError();
+  const revalidator = useRevalidator();
+  const { reauthenticate, reauthenticating } = useAccount();
+  const message = isRouteErrorResponse(error)
+    ? error.status === 404 ? 'この画面の対象が見つかりません。' : error.statusText || '画面を表示できませんでした。'
+    : error instanceof Error ? error.message : '画面を表示できませんでした。';
+  return <section className="page-layout">
+    <div className="dashboard-error">
+      <p><CircleAlert size={17} />{message}</p>
+      {needsGoogleReauthentication(message) && <GoogleReauthenticationAction onClick={reauthenticate} busy={reauthenticating} />}
+      <button className="secondary" type="button" onClick={() => void revalidator.revalidate()} disabled={revalidator.state !== 'idle'}>
+        {revalidator.state !== 'idle' ? <><RefreshCw className="spin" size={14} />再試行中…</> : '再試行'}
+      </button>
+    </div>
+  </section>;
 };

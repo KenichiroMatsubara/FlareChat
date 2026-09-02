@@ -1,8 +1,20 @@
 import type { AppState } from '@mail/domain';
-import { createBrowserRouter, redirect, type LoaderFunctionArgs } from 'react-router-dom';
+import { createBrowserRouter, redirect, type LoaderFunctionArgs, type RouteObject } from 'react-router-dom';
 
 import { api } from './api';
-import { loadAccount, LoadingRoute, ContactPortalJoinRoute, ContactPortalRoute, NotFoundRoute, OAuthError, AccountLayout, AccountPage, RootLayout, RouteError, SetupConfirmRoute, SetupProgressRoute, SetupRoute } from './routes';
+import { Dashboard, loadAccount, ScreenError } from './dashboard';
+import { LoadingRoute, ContactPageJoinRoute, ContactPageRoute, NotFoundRoute, OAuthError, RootLayout, RouteError, SetupConfirmRoute, SetupProgressRoute, SetupRoute } from './routes';
+import * as agentRule from './screens/agent-rule';
+import * as automation from './screens/automation';
+import * as automations from './screens/automations';
+import * as chat from './screens/chat';
+import * as connections from './screens/connections';
+import * as contacts from './screens/contacts';
+import * as operations from './screens/operations';
+import * as prompts from './screens/prompts';
+import * as rules from './screens/rules';
+import * as schemaRule from './screens/schema-rule';
+import * as tasks from './screens/tasks';
 
 export const routePaths = {
   signedOut: '/',
@@ -86,7 +98,23 @@ const stateLoader = (client: RouterClient) => async ({ request }: LoaderFunction
   return state;
 };
 
-const rootRoute = (client: RouterClient) => ({
+/** A screen module: the loader that reads what it needs, and the component that renders it (ADR 0170). */
+export interface Screen {
+  loader: (args: LoaderFunctionArgs) => Promise<unknown>;
+  default: () => React.ReactNode;
+}
+
+/** One screen route: its own loader, its own element, and an error surface inside the shell. */
+export const screenRoute = (path: string, screen: Screen): RouteObject => ({
+  path,
+  loader: screen.loader,
+  element: <screen.default />,
+  errorElement: <ScreenError />,
+});
+
+const retired = (path: string, to: string): RouteObject => ({ path, loader: () => redirect(to), element: <LoadingRoute /> });
+
+const rootRoute = (client: RouterClient): RouteObject => ({
   id: 'root',
   path: '/',
   loader: stateLoader(client),
@@ -95,41 +123,42 @@ const rootRoute = (client: RouterClient) => ({
   errorElement: <RouteError logout={client.logout} />,
   children: [
     { index: true, element: <OAuthError /> },
-    { path: 'portal', loader: stateLoader(client), element: <ContactPortalRoute />, errorElement: <RouteError logout={client.logout} /> },
-    { path: 'portal/join/:accountId/:token', loader: stateLoader(client), element: <ContactPortalJoinRoute />, errorElement: <RouteError logout={client.logout} /> },
+    { path: 'portal', loader: stateLoader(client), element: <ContactPageRoute />, errorElement: <RouteError logout={client.logout} /> },
+    { path: 'portal/join/:accountId/:token', loader: stateLoader(client), element: <ContactPageJoinRoute />, errorElement: <RouteError logout={client.logout} /> },
     { path: 'setup', loader: stateLoader(client), element: <SetupRoute />, errorElement: <RouteError logout={client.logout} /> },
     { path: 'setup/confirm', loader: stateLoader(client), element: <SetupConfirmRoute />, errorElement: <RouteError logout={client.logout} /> },
     { path: 'setup/provisioning', loader: stateLoader(client), element: <SetupProgressRoute failed={false} />, errorElement: <RouteError logout={client.logout} /> },
     { path: 'setup/failed', loader: stateLoader(client), element: <SetupProgressRoute failed />, errorElement: <RouteError logout={client.logout} /> },
     {
+      id: 'account',
       path: 'organizations/:accountId',
       loader: ({ params }: LoaderFunctionArgs) => loadAccount(params.accountId ?? ''),
-      element: <AccountLayout />,
+      element: <Dashboard />,
       errorElement: <RouteError logout={client.logout} />,
       children: [
         { index: true, loader: () => redirect('automation'), element: <LoadingRoute /> },
-        { path: 'automation', element: <AccountPage page="automation" /> },
-        { path: 'chat', element: <AccountPage page="chat" /> },
-        { path: 'automations', element: <AccountPage page="automations" /> },
-        { path: 'connections', element: <AccountPage page="connections" /> },
-        { path: 'rules', element: <AccountPage page="rules" /> },
-        { path: 'rules/schema/:ruleId', element: <AccountPage page="schema-rule" /> },
-        { path: 'rules/agent/:ruleId', element: <AccountPage page="agent-rule" /> },
-        { path: 'prompts', element: <AccountPage page="prompts" /> },
-        { path: 'contacts', element: <AccountPage page="contacts" /> },
-        { path: 'operations', element: <AccountPage page="operations" /> },
-        { path: 'tasks', element: <AccountPage page="tasks" /> },
-        { path: 'members', loader: () => redirect('../contacts'), element: <LoadingRoute /> },
-        { path: 'mailbox-test', loader: () => redirect('../rules'), element: <LoadingRoute /> },
-        { path: 'channel-test', loader: () => redirect('../contacts'), element: <LoadingRoute /> },
-        { path: 'rule-runs', loader: () => redirect('../rules'), element: <LoadingRoute /> },
-        { path: 'event-refresh', loader: () => redirect('../operations'), element: <LoadingRoute /> },
-        { path: 'reminders', loader: () => redirect('../tasks'), element: <LoadingRoute /> },
+        screenRoute(accountRoutePaths.automation, automation),
+        screenRoute(accountRoutePaths.chat, chat),
+        screenRoute(accountRoutePaths.automations, automations),
+        screenRoute(accountRoutePaths.connections, connections),
+        screenRoute(accountRoutePaths.rules, rules),
+        screenRoute(accountRoutePaths.schemaRule, schemaRule),
+        screenRoute(accountRoutePaths.agentRule, agentRule),
+        screenRoute(accountRoutePaths.prompts, prompts),
+        screenRoute(accountRoutePaths.contacts, contacts),
+        screenRoute(accountRoutePaths.operations, operations),
+        screenRoute(accountRoutePaths.tasks, tasks),
+        retired(accountRoutePaths.members, '../contacts'),
+        retired(accountRoutePaths.mailboxTest, '../rules'),
+        retired(accountRoutePaths.channelTest, '../contacts'),
+        retired(accountRoutePaths.ruleRuns, '../rules'),
+        retired(accountRoutePaths.eventRefresh, '../operations'),
+        retired(accountRoutePaths.reminders, '../tasks'),
       ],
     },
     { path: '*', element: <NotFoundRoute /> },
   ],
 });
 
-export const createAppRoutes = (client: RouterClient = api) => [rootRoute(client)];
+export const createAppRoutes = (client: RouterClient = api): RouteObject[] => [rootRoute(client)];
 export const createAppRouter = (client: RouterClient = api) => createBrowserRouter(createAppRoutes(client));

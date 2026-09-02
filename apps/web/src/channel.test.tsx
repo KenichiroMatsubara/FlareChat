@@ -1,8 +1,9 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
-import { ChannelTestOutcome } from './channel-test';
-import type { ChannelTestDelivery } from './api';
+import type { ChannelTestDelivery } from '@mail/domain';
+
+import { ChannelTestOutcome } from './channel';
 
 const delivery = (overrides: Partial<ChannelTestDelivery> = {}): ChannelTestDelivery => ({
   delivered: true,

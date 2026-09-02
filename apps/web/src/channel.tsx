@@ -1,14 +1,13 @@
 import { useEffect, useState } from 'react';
+import { CircleAlert, CircleCheck, Plug, Send, Trash2 } from 'lucide-react';
 
-import { CircleAlert, CircleCheck, Plug, Send } from 'lucide-react';
+import type { ChannelTestDelivery, ChannelTestTarget, McpServer, McpServerTool, McpServerToolResult } from '@mail/domain';
 
-import { api, type ChannelTestDelivery, type ChannelTestTarget, type McpServerToolResult, type McpServerToolView, type McpServerView } from './api';
+import { api } from './api';
+import { errorText } from './parts';
 
 /** What one LINE push carries, so the GUI offers exactly what the Channel can batch. */
 const MESSAGE_LIMIT = 5;
-
-const errorText = (error: unknown, fallback: string): string =>
-  error instanceof Error && error.message ? error.message : fallback;
 
 const CHANNEL_LABELS: Record<string, string> = { line: 'LINE', discord: 'Discord' };
 
@@ -21,29 +20,17 @@ export const ChannelTestOutcome = ({ delivery }: { delivery: ChannelTestDelivery
 </p>;
 
 /**
- * Channel Test (ADR 0158).
- *
- * Sends one arbitrary message through the same seam an Automation and the MCP
- * Server send through, and calls a registered MCP Server for real, so both
- * answers are evidence about the production path rather than about a test path.
+ * Channel Test (ADR 0158): one send through the same seam an Automation and
+ * the MCP Server send through, so the answer is evidence about the production
+ * path rather than about a test path.
  */
-export const ContactChannelTest = ({ accountId }: { accountId: string }) => {
-  const [targets, setTargets] = useState<ChannelTestTarget[]>([]);
-  const [contactId, setContactId] = useState('');
+export const ContactChannelTest = ({ accountId, targets }: { accountId: string; targets: readonly ChannelTestTarget[] }) => {
+  const [contactId, setContactId] = useState(targets[0]?.id ?? '');
   const [channel, setChannel] = useState('line');
   const [texts, setTexts] = useState(['FlareChat からのテスト送信です。']);
   const [sending, setSending] = useState(false);
   const [delivery, setDelivery] = useState<ChannelTestDelivery | null>(null);
   const [error, setError] = useState('');
-
-  useEffect(() => {
-    api.channelTestTargets(accountId)
-      .then((loaded) => {
-        setTargets(loaded);
-        setContactId((current) => current || loaded[0]?.id || '');
-      })
-      .catch((cause: unknown) => setError(errorText(cause, '送信先を取得できませんでした。')));
-  }, [accountId]);
 
   const selected = targets.find((target) => target.id === contactId) ?? null;
   const available = selected?.channels ?? [];
@@ -111,31 +98,47 @@ export const ContactChannelTest = ({ accountId }: { accountId: string }) => {
 };
 
 /**
- * Calling a registered MCP Server for real, beside that server's registration
- * (ADR 0167). It answers whether the credential and the server work, which is a
+ * MCP Servers, registered and called for real in one place (ADR 0167). Calling
+ * a server answers whether the credential and the server work, which is a
  * question about the connection rather than about any one Contact.
  */
-export const McpServerPanel = ({ accountId }: { accountId: string }) => {
-  const [servers, setServers] = useState<McpServerView[]>([]);
-  const [serverId, setServerId] = useState('');
-  const [tools, setTools] = useState<McpServerToolView[]>([]);
+export const McpServerPanel = ({ accountId, servers, reload }: { accountId: string; servers: readonly McpServer[]; reload: () => Promise<void> }) => {
+  const [serverName, setServerName] = useState('');
+  const [serverUrl, setServerUrl] = useState('');
+  const [serverToken, setServerToken] = useState('');
+  const [serverId, setServerId] = useState(servers[0]?.id ?? '');
+  const [tools, setTools] = useState<McpServerTool[]>([]);
   const [tool, setTool] = useState('');
   const [toolArguments, setToolArguments] = useState('{}');
   const [calling, setCalling] = useState(false);
   const [result, setResult] = useState<McpServerToolResult | null>(null);
-  const [serverError, setServerError] = useState('');
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    api.mcpServers(accountId)
-      .then((loaded) => {
-        setServers(loaded);
-        setServerId((current) => current || loaded[0]?.id || '');
-      })
-      .catch((cause: unknown) => setServerError(errorText(cause, 'MCP Server を取得できませんでした。')));
-  }, [accountId]);
+  const save = async (): Promise<void> => {
+    setError('');
+    try {
+      await api.saveMcpServer(accountId, crypto.randomUUID(), { name: serverName.trim(), url: serverUrl.trim(), token: serverToken.trim() || null });
+      setServerName('');
+      setServerUrl('');
+      setServerToken('');
+      await reload();
+    } catch (cause) {
+      setError(errorText(cause, 'MCP Server を保存できませんでした。'));
+    }
+  };
+
+  const remove = async (id: string): Promise<void> => {
+    setError('');
+    try {
+      await api.removeMcpServer(accountId, id);
+      await reload();
+    } catch (cause) {
+      setError(errorText(cause, 'MCP Server を削除できませんでした。'));
+    }
+  };
 
   const loadTools = async (): Promise<void> => {
-    setServerError('');
+    setError('');
     setResult(null);
     try {
       const listed = await api.listMcpServerTools(accountId, serverId);
@@ -143,12 +146,12 @@ export const McpServerPanel = ({ accountId }: { accountId: string }) => {
       setTool((current) => current || listed.tools[0]?.name || '');
     } catch (cause) {
       setTools([]);
-      setServerError(errorText(cause, 'MCP Server のツール一覧を取得できませんでした。'));
+      setError(errorText(cause, 'MCP Server のツール一覧を取得できませんでした。'));
     }
   };
 
   const callTool = async (): Promise<void> => {
-    setServerError('');
+    setError('');
     setResult(null);
     setCalling(true);
     try {
@@ -158,7 +161,7 @@ export const McpServerPanel = ({ accountId }: { accountId: string }) => {
       }
       setResult(await api.callMcpServerTool(accountId, serverId, { tool, arguments: parsed as Record<string, unknown> }));
     } catch (cause) {
-      setServerError(errorText(cause, 'MCP Server を呼び出せませんでした。'));
+      setError(errorText(cause, 'MCP Server を呼び出せませんでした。'));
     } finally {
       setCalling(false);
     }
@@ -169,35 +172,53 @@ export const McpServerPanel = ({ accountId }: { accountId: string }) => {
     return definition ? JSON.stringify(definition.inputSchema, null, 2) : '';
   };
 
-  return <section className="test-card">
-    <h2>登録した MCP Server を呼ぶ</h2>
-    <span>LINE の MCP Server のように外部サーバーを登録している場合は、その tools/list と tools/call をそのまま実行して結果を確かめます。</span>
-    <form className="access-form" onSubmit={(event) => { event.preventDefault(); void callTool(); }}>
-      <label>MCP Server
-        <select value={serverId} onChange={(event) => { setServerId(event.target.value); setTools([]); setTool(''); }}>
-          {servers.length === 0 && <option value="">登録された MCP Server がありません</option>}
-          {servers.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}
-        </select>
-      </label>
-      <button type="button" className="secondary" disabled={!serverId} onClick={() => void loadTools()}>
-        <Plug size={16} />ツール一覧を取得する
-      </button>
-      {tools.length > 0 && <label>ツール
-        <select value={tool} onChange={(event) => { setTool(event.target.value); setToolArguments(schemaOf(event.target.value) ? '{}' : toolArguments); }}>
-          {tools.map((entry) => <option key={entry.name} value={entry.name}>{entry.name}</option>)}
-        </select>
-      </label>}
-      {tool && schemaOf(tool) && <pre className="channel-test-schema">{schemaOf(tool)}</pre>}
-      <label>引数（JSON）
-        <textarea value={toolArguments} rows={4} onChange={(event) => setToolArguments(event.target.value)} />
-      </label>
-      <button type="submit" className="primary" disabled={calling || !serverId || !tool}>
-        <Send size={16} />{calling ? '呼び出し中…' : 'ツールを実行する'}
-      </button>
+  return <section className="chat-servers">
+    <h3><Plug size={18} />MCP Server</h3>
+    <p>リモートの HTTP / SSE サーバのみ接続できます。認証は固定トークンです。</p>
+    {error && <p className="chat-failure"><CircleAlert size={16} />{error}</p>}
+    <ul>
+      {servers.map((server) => <li key={server.id}>
+        <span className="chat-server-name">{server.name}</span>
+        <span className="chat-server-url">{server.url}</span>
+        <span>{server.authenticated ? 'トークンあり' : '認証なし'}</span>
+        <button type="button" className="secondary" onClick={() => void remove(server.id)} aria-label={`${server.name} を削除`}><Trash2 size={16} /></button>
+      </li>)}
+    </ul>
+    <form onSubmit={(event) => { event.preventDefault(); void save(); }}>
+      <label>名前<input value={serverName} onChange={(event) => setServerName(event.target.value)} placeholder="notion" /></label>
+      <label>URL<input value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} placeholder="https://example.com/mcp" /></label>
+      <label>トークン<input value={serverToken} type="password" onChange={(event) => setServerToken(event.target.value)} placeholder="任意" /></label>
+      <button type="submit" className="primary" disabled={!serverName.trim() || !serverUrl.trim()}>追加</button>
     </form>
-    {serverError && <p className="chat-failure"><CircleAlert size={16} />{serverError}</p>}
-    {result && (result.isError
-      ? <p className="chat-failure"><CircleAlert size={16} />{result.server}.{result.tool} は失敗しました: {result.text}</p>
-      : <pre className="channel-test-result">{result.text || '（本文のない結果）'}</pre>)}
+    <section className="test-card">
+      <h2>登録した MCP Server を呼ぶ</h2>
+      <span>登録したサーバーの tools/list と tools/call をそのまま実行して結果を確かめます。</span>
+      <form className="access-form" onSubmit={(event) => { event.preventDefault(); void callTool(); }}>
+        <label>MCP Server
+          <select value={serverId} onChange={(event) => { setServerId(event.target.value); setTools([]); setTool(''); }}>
+            {servers.length === 0 && <option value="">登録された MCP Server がありません</option>}
+            {servers.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}
+          </select>
+        </label>
+        <button type="button" className="secondary" disabled={!serverId} onClick={() => void loadTools()}>
+          <Plug size={16} />ツール一覧を取得する
+        </button>
+        {tools.length > 0 && <label>ツール
+          <select value={tool} onChange={(event) => { setTool(event.target.value); setToolArguments(schemaOf(event.target.value) ? '{}' : toolArguments); }}>
+            {tools.map((entry) => <option key={entry.name} value={entry.name}>{entry.name}</option>)}
+          </select>
+        </label>}
+        {tool && schemaOf(tool) && <pre className="channel-test-schema">{schemaOf(tool)}</pre>}
+        <label>引数（JSON）
+          <textarea value={toolArguments} rows={4} onChange={(event) => setToolArguments(event.target.value)} />
+        </label>
+        <button type="submit" className="primary" disabled={calling || !serverId || !tool}>
+          <Send size={16} />{calling ? '呼び出し中…' : 'ツールを実行する'}
+        </button>
+      </form>
+      {result && (result.isError
+        ? <p className="chat-failure"><CircleAlert size={16} />{result.server}.{result.tool} は失敗しました: {result.text}</p>
+        : <pre className="channel-test-result">{result.text || '（本文のない結果）'}</pre>)}
+    </section>
   </section>;
 };

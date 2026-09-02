@@ -2,7 +2,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
 import { SignedOutEntry } from './entry';
-import { DEFAULT_MAIL_TEST_SUBJECT, PresetSetupChoice } from './routes';
+import { DEFAULT_MAIL_TEST_SUBJECT } from './mailbox';
+import { PresetSetupChoice } from './routes';
 
 describe('signed-out application entry', () => {
   it('presents Account creation and existing-member login as separate choices', () => {
