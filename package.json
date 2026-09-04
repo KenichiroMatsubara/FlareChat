@@ -19,10 +19,11 @@
     "db:drizzle": "drizzle-kit studio --config=drizzle.config.ts",
     "db:generate:control": "drizzle-kit generate --config=drizzle.control.config.ts",
     "db:generate:account": "drizzle-kit generate --config=drizzle.account.config.ts",
+    "db:rehearse:remote": "node --import tsx --import ./scripts/register-sql-text-loader.mjs scripts/rehearse-migrations.ts",
     "db:migrate:control:remote": "wrangler d1 migrations apply CONTROL_DB --remote --config apps/worker/wrangler.jsonc",
     "db:migrate:organization:remote": "node --import tsx --import ./scripts/register-sql-text-loader.mjs scripts/migrate-organization-fleet.ts prepare",
     "db:migrate:complete:remote": "node --import tsx --import ./scripts/register-sql-text-loader.mjs scripts/migrate-organization-fleet.ts complete",
-    "deploy:cloudflare": "npm run db:migrate:control:remote && npm run db:migrate:organization:remote && npm run deploy:worker:release -w @mail/worker && npm run db:migrate:complete:remote",
+    "deploy:cloudflare": "npm run db:rehearse:remote && npm run db:migrate:control:remote && npm run db:migrate:organization:remote && npm run deploy:worker:release -w @mail/worker && npm run db:migrate:complete:remote",
     "deploy": "npm run build && npm run deploy:cloudflare"
   },
   "devDependencies": {
