@@ -33,15 +33,30 @@ describe('Contacts screen', () => {
     vi.mocked(api.contacts).mockResolvedValueOnce([contact()]).mockResolvedValue([contact(), contact({ id: 'contact-3', name: '花子' })]);
     const user = userEvent.setup();
     renderScreen('contacts', contacts);
-    await screen.findByText('LINEアカウント');
+    await screen.findByText('LINEアカウント（任意）');
 
-    await user.selectOptions(screen.getByLabelText('LINEアカウント'), 'handle-1');
+    await user.selectOptions(screen.getByLabelText('LINEアカウント（任意）'), 'handle-1');
     expect(screen.getByLabelText('名称')).toHaveProperty('value', '花子');
-    await user.type(screen.getByLabelText('説明'), '広報');
+    await user.type(screen.getByLabelText('説明（任意）'), '広報');
     await user.click(screen.getByRole('button', { name: '連絡先を追加' }));
 
     await waitFor(() => expect(api.createContact).toHaveBeenCalledWith(ACCOUNT_ID, { name: '花子', description: '広報', tags: [], lineDestinationId: 'handle-1' }));
     expect(await screen.findByRole('heading', { level: 3, name: '花子' })).toBeTruthy();
+  });
+
+  it('registers a Contact with a name alone, without a LINE handle or an email', async () => {
+    vi.mocked(api.createContact).mockResolvedValue(contact({ id: 'contact-4', name: '佐藤 次郎', email: '', lineDestinations: [] }));
+    vi.mocked(api.contacts).mockResolvedValueOnce([contact()]).mockResolvedValue([contact(), contact({ id: 'contact-4', name: '佐藤 次郎', email: '', lineDestinations: [] })]);
+    const user = userEvent.setup();
+    renderScreen('contacts', contacts);
+    await screen.findByText('LINEアカウント（任意）');
+
+    expect(screen.getByLabelText('LINEアカウント（任意）')).toHaveProperty('value', '');
+    await user.type(screen.getByLabelText('名称'), '佐藤 次郎');
+    await user.click(screen.getByRole('button', { name: '連絡先を追加' }));
+
+    await waitFor(() => expect(api.createContact).toHaveBeenCalledWith(ACCOUNT_ID, { name: '佐藤 次郎', description: '', tags: [] }));
+    expect(await screen.findByRole('heading', { level: 3, name: '佐藤 次郎' })).toBeTruthy();
   });
 
   it('removes a Contact only after the Account confirms, and re-reads the roster', async () => {
@@ -64,7 +79,7 @@ describe('Contacts screen', () => {
     vi.mocked(api.createContact).mockRejectedValue(new Error('このメールアドレスは既に「山田 太郎」に登録されています。'));
     const user = userEvent.setup();
     renderScreen('contacts', contacts);
-    await screen.findByText('LINEアカウント');
+    await screen.findByText('LINEアカウント（任意）');
 
     await user.type(screen.getByLabelText('名称'), '同じメールの人');
     await user.type(screen.getByLabelText('メールアドレス（任意）'), 'taro@example.com');
