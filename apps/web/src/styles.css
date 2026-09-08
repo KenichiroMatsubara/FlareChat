@@ -230,6 +230,8 @@ svg { flex: none; }
 .member-onboarding-copy > div > span { color: #718073; font-size: 11px; line-height: 1.55; }
 .line-mark { display: grid; flex: none; width: 46px; height: 46px; place-items: center; color: white; background: #06c755; border-radius: 13px; font-size: 10px; font-weight: 800; box-shadow: 0 6px 18px rgba(6,199,85,.2); }
 .member-refresh { flex: none; }
+.member-onboarding-mark { flex: none; width: 46px; height: 46px; border-radius: 13px; }
+.member-create-note { color: #8a938c; font-size: 9px; line-height: 1.5; }
 .member-connection-warning { justify-content: space-between; }
 .member-connection-warning a { color: inherit; font-weight: 700; }
 .member-create-form { display: grid; grid-template-columns: minmax(190px, 1.4fr) repeat(3, minmax(135px, 1fr)) auto; align-items: end; gap: 12px; padding: 15px; background: #f4f8f4; border: 1px solid #e0eae1; border-radius: 11px; }

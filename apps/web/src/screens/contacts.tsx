@@ -227,7 +227,7 @@ const ContactsScreen = () => {
   return <section className="page-layout members-page">
     <PendingOverlay running={operations.running} />
     <OperationError error={operations.error} />
-    <div className="page-title"><p>CONTACT ROSTER</p><h1>連絡先</h1><span>LINEで見つけた表示名・ユーザーIDに、名称、メールアドレス、分類を紐付けます。個人でもグループでも同じ一件です。</span></div>
+    <div className="page-title"><p>CONTACT ROSTER</p><h1>連絡先</h1><span>名称だけで登録できます。LINEやメールアドレスは任意で、後から紐付けられます。個人でもグループでも同じ一件です。</span></div>
     <section className="member-metrics">
       <div><span className="member-metric-icon green"><UsersRound size={18} /></span><p><b>{data.contacts.length}</b><small>登録済みの連絡先</small></p></div>
       <div><span className="member-metric-icon blue"><MessageCircle size={18} /></span><p><b>{linkedToLine}</b><small>LINE紐付け済み</small></p></div>
@@ -237,11 +237,27 @@ const ContactsScreen = () => {
 
     <section className="member-onboarding">
       <div className="member-onboarding-copy">
+        <span className="member-metric-icon green member-onboarding-mark"><UserPlus size={20} /></span>
+        <div><p>連絡先を追加</p><h2>名称だけで登録できます</h2><span>LINE、メールアドレス、説明、タグは任意で、後から編集できます。個人でもグループでも同じ一件です。</span></div>
+      </div>
+      <form className="member-create-form" onSubmit={createContact}>
+        <label>名称<input ref={nameInputRef} value={name} onChange={(event) => setName(event.target.value)} placeholder="例: 山田 太郎 / ○○グループ" required /></label>
+        <label>メールアドレス（任意）<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="後から設定できます" /></label>
+        <label>説明（任意）<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="例: 会計を見ている人 / 全員が入っているグループ" /></label>
+        <label>分類タグ（任意）<input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="例: 2026年度, 全体連絡" /></label>
+        <label className="member-line-select">LINEアカウント（任意）<select value={selectedHandleId} onChange={(event) => selectHandle(event.target.value)}><option value="">LINEなしで登録</option>{unassigned.map((handle) => <option key={handle.id} value={handle.id}>{handle.displayName || '表示名未取得'} · {handleKindLabel(handle.kind)} · {handle.destinationId}</option>)}</select></label>
+        <button className="primary" disabled={creatingContact}>{creatingContact ? <RefreshCw className="spin" size={16} /> : <UserPlus size={16} />}{creatingContact ? '登録中…' : '連絡先を追加'}</button>
+      </form>
+      <small className="member-create-note">LINEを後から紐付けるには、連絡先の「編集」でLINE IDを設定するか、下の保留中のLINE連絡先から「連絡先として登録」を選びます。</small>
+    </section>
+
+    <section className="member-onboarding">
+      <div className="member-onboarding-copy">
         <span className="line-mark">LINE</span>
-        <div><p>LINEから連絡先を追加</p><h2>{unassigned.length ? `${unassigned.length}件のLINEアカウントが登録待ちです` : 'LINEアカウントの受信を待っています'}</h2><span>公式アカウントにメッセージが届くと、表示名とIDを自動取得します。手動でも登録できます。</span></div>
+        <div><p>LINEから連絡先を追加</p><h2>{unassigned.length ? `${unassigned.length}件のLINEアカウントが登録待ちです` : 'LINEアカウントの受信を待っています'}</h2><span>公式アカウントにメッセージが届くと、表示名とIDを自動取得します。手動でも登録できます。LINEがなくても上のフォームから登録できます。</span></div>
         <button type="button" className="secondary member-refresh" onClick={() => act(pendingKey.contactRefresh, async () => undefined)} disabled={refreshing}><RefreshCw className={refreshing ? 'spin' : ''} size={16} />{refreshing ? '更新中…' : '更新'}</button>
       </div>
-      {!lineConfigured && <p className="dashboard-warning member-connection-warning">LINE Messaging APIが未設定です。<Link to="../connections">接続設定を開く</Link></p>}
+      {!lineConfigured && <p className="dashboard-warning member-connection-warning">LINE Messaging APIが未設定です。LINEなしでの登録には影響しません。<Link to="../connections">接続設定を開く</Link></p>}
 
       <div className="pending-line-pool">
         <p>保留中のLINE連絡先</p>
@@ -259,17 +275,8 @@ const ContactsScreen = () => {
           <label>種別<select value={poolKind} onChange={(event) => setPoolKind(event.target.value as LineHandleKind)}><option value="user">個人</option><option value="group">グループ</option><option value="room">ルーム</option></select></label>
           <button type="submit" className="secondary" disabled={registeringHandle || !poolHandleId.trim()}>{registeringHandle ? <><RefreshCw className="spin" size={13} />追加中…</> : '追加'}</button>
         </form>
-        <small>友だち追加前やWebhook未設定でも、既知のLINE IDを先に登録しておけます。氏名やメールは下のフォームで後から設定してください。</small>
+        <small>友だち追加前やWebhook未設定でも、既知のLINE IDを先に登録しておけます。氏名やメールは上のフォームで後から設定してください。</small>
       </div>
-
-      <form className="member-create-form" onSubmit={createContact}>
-        <label className="member-line-select">LINEアカウント<select value={selectedHandleId} onChange={(event) => selectHandle(event.target.value)}><option value="">LINEなしで登録</option>{unassigned.map((handle) => <option key={handle.id} value={handle.id}>{handle.displayName || '表示名未取得'} · {handleKindLabel(handle.kind)} · {handle.destinationId}</option>)}</select></label>
-        <label>名称<input ref={nameInputRef} value={name} onChange={(event) => setName(event.target.value)} placeholder="例: 山田 太郎 / ○○グループ" required /></label>
-        <label>メールアドレス（任意）<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="後から設定できます" /></label>
-        <label>説明<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="例: 会計を見ている人 / 全員が入っているグループ" /></label>
-        <label>分類タグ<input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="例: 2026年度, 全体連絡" /></label>
-        <button className="primary" disabled={creatingContact}>{creatingContact ? <RefreshCw className="spin" size={16} /> : <UserPlus size={16} />}{creatingContact ? '登録中…' : '連絡先を追加'}</button>
-      </form>
     </section>
 
     <section className="member-directory">
@@ -315,7 +322,7 @@ const ContactsScreen = () => {
             </div>}
           </>}
         </article>)}
-        {visible.length === 0 && <div className="member-empty"><UsersRound size={28} /><h3>{data.contacts.length ? '条件に一致する連絡先がありません' : '連絡先はまだ登録されていません'}</h3><p>{data.contacts.length ? '検索条件を変更してください。' : 'LINEアカウントと氏名だけで追加できます。メールアドレスやタグは後から編集できます。'}</p></div>}
+        {visible.length === 0 && <div className="member-empty"><UsersRound size={28} /><h3>{data.contacts.length ? '条件に一致する連絡先がありません' : '連絡先はまだ登録されていません'}</h3><p>{data.contacts.length ? '検索条件を変更してください。' : '名称だけで追加できます。LINE、メールアドレス、タグは後から編集できます。'}</p></div>}
       </div>
     </section>
     <ContactChannelTest accountId={accountId} targets={data.channelTargets} />

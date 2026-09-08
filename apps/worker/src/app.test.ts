@@ -655,6 +655,31 @@ describe('Account management', () => {
     });
   });
 
+  it('registers a Contact from a name alone, and a second one the same way, with no LINE handle and no email', async () => {
+    fixture = createTestApp();
+    const first = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/members',
+      { name: '佐藤 次郎' },
+    ), fixture.environment);
+    const second = await app.fetch(fixture.jsonRequest(
+      '/api/organizations/organization-1/members',
+      { name: '鈴木 花子', description: '会計', tags: ['2026年度'] },
+    ), fixture.environment);
+    const listed = await app.fetch(
+      fixture.request('/api/organizations/organization-1/members'),
+      fixture.environment,
+    );
+
+    expect([first.status, second.status]).toEqual([201, 201]);
+    await expect(first.json()).resolves.toMatchObject({ data: { name: '佐藤 次郎', email: '', state: 'active', lineDestinations: [] } });
+    await expect(listed.json()).resolves.toMatchObject({
+      data: expect.arrayContaining([
+        expect.objectContaining({ name: '佐藤 次郎', email: '', lineDestinations: [] }),
+        expect.objectContaining({ name: '鈴木 花子', email: '', description: '会計', tags: ['2026年度'], lineDestinations: [] }),
+      ]),
+    });
+  });
+
   it('refuses an email address another Contact already holds, on creation and on edit, and says whose it is', async () => {
     fixture = createTestApp();
     const first = await app.fetch(fixture.jsonRequest(
