@@ -5,6 +5,9 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # Lets the rehearsal be re-run by hand after a secret or a production
+  # database changes, without pushing a commit to ask for it.
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
