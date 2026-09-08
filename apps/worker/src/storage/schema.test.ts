@@ -97,9 +97,9 @@ describe('canonical D1 schemas', () => {
     expect(workerPackage().scripts?.predev).toBe('npm run db:local');
   });
 
-  it('migrates and verifies the production database fleet before promoting Worker code', () => {
+  it('rehearses, migrates, and verifies the production database fleet before promoting Worker code', () => {
     expect(rootPackage().scripts?.['deploy:cloudflare']).toBe(
-      'npm run db:migrate:control:remote && npm run db:migrate:organization:remote && npm run deploy:worker:release -w @mail/worker && npm run db:migrate:complete:remote',
+      'npm run db:rehearse:remote && npm run db:migrate:control:remote && npm run db:migrate:organization:remote && npm run deploy:worker:release -w @mail/worker && npm run db:migrate:complete:remote',
     );
   });
 
