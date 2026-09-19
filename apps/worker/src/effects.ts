@@ -73,6 +73,24 @@ export interface AgentScheduledEventArguments {
   description?: string;
 }
 
+export interface AgentCreateTaskArguments {
+  title: string;
+  deadline: string;
+  description: string;
+  assigneeContactId?: string | null;
+  scheduledEventId?: string | null;
+}
+
+export interface AgentUpdateTaskArguments {
+  taskId: string;
+  title?: string;
+  deadline?: string;
+  description?: string;
+  completed?: boolean;
+  assigneeContactId?: string | null;
+  scheduledEventId?: string | null;
+}
+
 export type RuleEffect =
   | { kind: 'schema.record_warnings'; arguments: { sourceMessageId: string; warnings: MailExtractionWarning[] } }
   | { kind: 'schema.create_tasks'; arguments: { accountId: string; sourceMessageId: string; subject: string; tasks: TaskDetails[] } }
@@ -80,7 +98,9 @@ export type RuleEffect =
   | { kind: 'schema.deliver_summary'; arguments: SummaryArguments }
   | { kind: 'agent.send_line_message'; arguments: { destination: string; message: string } }
   | { kind: 'agent.send_email_summary'; arguments: { destination: string; subject: string; body: string } }
-  | { kind: 'agent.create_scheduled_event'; arguments: AgentScheduledEventArguments };
+  | { kind: 'agent.create_scheduled_event'; arguments: AgentScheduledEventArguments }
+  | { kind: 'agent.create_task'; arguments: AgentCreateTaskArguments }
+  | { kind: 'agent.update_task'; arguments: AgentUpdateTaskArguments };
 
 export type RuleEffectKind = RuleEffect['kind'];
 
@@ -92,6 +112,8 @@ export const RULE_EFFECT_KINDS: readonly RuleEffectKind[] = [
   'agent.send_line_message',
   'agent.send_email_summary',
   'agent.create_scheduled_event',
+  'agent.create_task',
+  'agent.update_task',
 ];
 
 export const isRuleEffectKind = (value: string): value is RuleEffectKind =>
@@ -444,6 +466,24 @@ export const ruleEffectsFor = (input: {
             extractedTasks: effect.arguments.tasks,
           });
           return { applied: true };
+        case 'agent.create_task': {
+          if (!run.sourceMessageId) throw new Error('An Agent Rule Task effect needs the Source Message its run read.');
+          const source = await accountDatabase(input.database).select({ subject: sourceMessages.subject })
+            .from(sourceMessages).where(eq(sourceMessages.id, run.sourceMessageId)).get();
+          if (!source) throw new Error('The Source Message for the Agent Rule Task was not found.');
+          await createTaskWorkflow(accountDatabase(input.database)).createFromAgent({
+            accountId: input.accountId,
+            sourceMessageId: run.sourceMessageId,
+            sourceMessageSubject: source.subject,
+            ...effect.arguments,
+          });
+          return { applied: true };
+        }
+        case 'agent.update_task': {
+          const updated = await createTaskWorkflow(accountDatabase(input.database)).updateFromAgent(input.accountId, effect.arguments.taskId, effect.arguments);
+          if (!updated) throw new Error('The Agent Rule Task to update was not found or no field changed.');
+          return { applied: true };
+        }
         case 'schema.apply_events':
           await applyScheduledEvents({ env: input.env, database: input.database, providers: input.providers, session: await inbox(), arguments: effect.arguments });
           return { applied: true };

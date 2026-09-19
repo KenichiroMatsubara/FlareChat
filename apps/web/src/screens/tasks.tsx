@@ -47,7 +47,7 @@ const TaskRow = ({ task, assignees, operations, today, near, onUpdate }: {
       disabled={saving}
       onChange={(change) => onUpdate(task.id, { assigneeContactId: change.target.value || null })}
     ><option value="">未割り当て</option>{assignees.map((contact) => <option key={contact.id} value={contact.id}>{contact.name}</option>)}</select></td>
-    <td>{task.sourceMessageSubject}</td>
+    <td>{task.scheduledEventTitle ?? 'イベント未紐付け'}</td>
     <td><strong>{task.title}</strong><small>{task.description}</small></td>
     <td><textarea aria-label={`${task.title}の備考`} defaultValue={task.remarks} disabled={saving} onBlur={(change) => { if (change.target.value !== task.remarks) onUpdate(task.id, { remarks: change.target.value }); }} maxLength={10_000} /><FieldSaveState saving={saving} saved={saved} /></td>
   </tr>;
@@ -64,11 +64,11 @@ const TasksScreen = () => {
   const [event, setEvent] = useState('');
   const assignees = contacts.filter((contact) => contact.state === 'active');
   const named = [...new Map(tasks.flatMap((task) => task.assigneeContactId ? [[task.assigneeContactId, task.assigneeName] as const] : [])).entries()];
-  const events = [...new Set(tasks.map((task) => task.sourceMessageSubject))];
+  const events = [...new Set(tasks.flatMap((task) => task.scheduledEventTitle ? [task.scheduledEventTitle] : []))];
   const visible = tasks.filter((task) => (
     !assignee
     || (assignee === 'unassigned' ? !task.assigneeContactId : task.assigneeContactId === assignee)
-  ) && (!event || task.sourceMessageSubject === event));
+  ) && (!event || task.scheduledEventTitle === event));
   const today = new Date().toISOString().slice(0, 10);
   const near = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
   const update = (taskId: string, input: TaskUpdate): void => void operations.run(pendingKey.taskUpdate(taskId), async () => {
@@ -78,7 +78,7 @@ const TasksScreen = () => {
   return <section className="page-layout tasks-page">
     <PendingOverlay running={operations.running} />
     <OperationError error={operations.error} />
-    <div className="page-title"><p>ACCOUNT TASKS</p><h1>タスク</h1><span>Source Message から抽出された期限タスクです。担当は抽出時に連絡先が指名され、ここで付け替えられます。</span></div>
+    <div className="page-title"><p>ACCOUNT TASKS</p><h1>タスク</h1><span>Agent Rule が Source Message の依頼を確認して登録した、Account の実行項目です。</span></div>
     <section className="task-filters"><label>担当者<select value={assignee} onChange={(change) => setAssignee(change.target.value)}><option value="">すべて</option><option value="unassigned">未割り当て</option>{named.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label><label>イベント<select value={event} onChange={(change) => setEvent(change.target.value)}><option value="">すべて</option>{events.map((name) => <option key={name} value={name}>{name}</option>)}</select></label><button className="secondary" onClick={() => { setAssignee(''); setEvent(''); }}>フィルターをリセット</button></section>
     <section className="tasks-table-wrap"><table className="tasks-table"><thead><tr><th>完了</th><th>期限</th><th>担当</th><th>イベント名</th><th>内容</th><th>備考</th></tr></thead><tbody>{visible.map((task) => <TaskRow key={task.id} task={task} assignees={assignees} operations={operations} today={today} near={near} onUpdate={update} />)}</tbody></table>{visible.length === 0 && <p className="rules-empty">表示するタスクはありません。</p>}</section>
     <Reminders accountId={accountId} reminders={reminders} reload={() => revalidator.revalidate()} />

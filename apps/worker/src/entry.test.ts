@@ -68,10 +68,10 @@ describe('application entry', () => {
     )).toEqual([{ name: '0005_member_logins.sql' }]);
     expect(fixture.account.rows<{ name: string }>(
       'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1',
-    )).toEqual([{ name: '0030_one_reminder_kind.sql' }]);
+    )).toEqual([{ name: '0031_agent_tasks.sql' }]);
     expect(secondAccount.rows<{ name: string }>(
       'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1',
-    )).toEqual([{ name: '0030_one_reminder_kind.sql' }]);
+    )).toEqual([{ name: '0031_agent_tasks.sql' }]);
   });
 
   it('reports the exact Account schema mismatch without revoking the session', async () => {
@@ -95,7 +95,7 @@ describe('application entry', () => {
         databaseId: 'database-1',
         bindingName: 'ORG_ORGANIZATION1',
         currentMigration: '9999_future.sql',
-        expectedMigration: '0030_one_reminder_kind.sql',
+        expectedMigration: '0031_agent_tasks.sql',
         requestId: expect.any(String),
       },
     });
@@ -143,7 +143,6 @@ describe('application entry', () => {
       if (url === 'https://oauth2.googleapis.com/token') {
         return new Response(JSON.stringify({
           access_token: 'identity-access',
-          refresh_token: 'identity-refresh',
           expires_in: 3_600,
           scope: GOOGLE_IDENTITY_SCOPES.join(' '),
           token_type: 'Bearer',
@@ -156,7 +155,7 @@ describe('application entry', () => {
           name: 'Owner',
         }));
       }
-      if (url.startsWith('https://oauth2.googleapis.com/revoke?')) return new Response(null);
+      if (url.startsWith('https://oauth2.googleapis.com/revoke?')) throw new Error('Ordinary login must not revoke Google grants.');
       throw new Error(`Unexpected Google request: ${url}`);
     }));
 
@@ -176,6 +175,8 @@ describe('application entry', () => {
     }), fixture.environment);
 
     expect(authorization.searchParams.get('scope')).toBe(GOOGLE_IDENTITY_SCOPES.join(' '));
+    expect(authorization.searchParams.get('access_type')).toBe('online');
+    expect(authorization.searchParams.get('prompt')).toBe('select_account');
     expect(callback.headers.get('set-cookie')).not.toContain('mail_setup=');
     await expect(bootstrap.json()).resolves.toEqual({
       data: {

@@ -29,7 +29,7 @@
     {
       "key": "membership-assistant",
       "name": "Membership assistant",
-      "instructions": "Read the Source Message and help the organization coordinate the work it explicitly requests. Use only the destinations permitted by this Agent Rule."
+      "instructions": "Read the Source Message and help the organization coordinate only the work it explicitly requests. Query existing Tasks before creating one; update the matching Task when a reply concerns the same work. Do not create Tasks for event-registration replies, acknowledgements, returned forms, promotional messages, or informational messages unless they contain explicit actionable work. Use the Task's Scheduled Event relation when the work belongs to a known event, and use only the destinations permitted by this Agent Rule."
     }
   ],
   "schemaRules": [

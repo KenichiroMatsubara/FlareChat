@@ -34,6 +34,8 @@ const ruleEffectKindLabel = (kind: string): string => ({
   'agent.send_line_message': 'LINEメッセージを送信',
   'agent.create_scheduled_event': '予定を作成',
   'agent.send_email_summary': '要約メールを送信',
+  'agent.create_task': 'タスクを作成',
+  'agent.update_task': 'タスクを更新',
   'calendar.create': '予定を作成',
   'drive.publish': '添付ファイルをDriveへ保存',
   'task.create': '期限タスクを作成',
@@ -69,6 +71,15 @@ export const ruleEffectDetails = (effect: RuleEffect): string[] => {
       textValue(arguments_.startsAt) ? `開始: ${formatted(String(arguments_.startsAt))}` : null,
       textValue(arguments_.destination) ? `追加先: ${String(arguments_.destination)}` : null,
     ]);
+  }
+  if (effect.kind === 'agent.create_task') {
+    return present([
+      textValue(arguments_.title) ? `タスク: ${String(arguments_.title)}` : null,
+      textValue(arguments_.deadline) ? `期限: ${String(arguments_.deadline)}` : null,
+    ]);
+  }
+  if (effect.kind === 'agent.update_task') {
+    return present([textValue(arguments_.taskId) ? `対象タスク: ${String(arguments_.taskId)}` : null]);
   }
   if (effect.kind === 'task.create') return present([textValue(arguments_.title) ? `タスク: ${String(arguments_.title)}` : null]);
   const extraction = recordValue(arguments_.extraction);

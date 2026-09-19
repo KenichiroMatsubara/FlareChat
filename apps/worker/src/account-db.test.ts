@@ -149,6 +149,7 @@ describe('Account database resolver', () => {
       { name: '0028_rule_notice_contacts.sql' },
       { name: '0029_agent_email_summary.sql' },
       { name: '0030_one_reminder_kind.sql' },
+      { name: '0031_agent_tasks.sql' },
     ]);
   });
 

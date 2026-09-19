@@ -403,6 +403,8 @@ export interface Task {
   assigneeContactId: string | null;
   assigneeName: string;
   sourceMessageSubject: string;
+  scheduledEventId: string | null;
+  scheduledEventTitle: string | null;
   description: string;
   remarks: string;
   completed: boolean;
@@ -651,6 +653,7 @@ export interface ContactPageTask {
   deadline: string;
   assigneeName: string;
   sourceMessageSubject: string;
+  scheduledEventTitle: string | null;
   description: string;
   remarks: string;
   completed: boolean;

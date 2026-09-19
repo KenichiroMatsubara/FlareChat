@@ -35,6 +35,7 @@ import accountNameTheContactMigration from '../migrations/organization/0027_name
 import accountRuleNoticeContactsMigration from '../migrations/organization/0028_rule_notice_contacts.sql';
 import accountAgentEmailSummaryMigration from '../migrations/organization/0029_agent_email_summary.sql';
 import accountOneReminderKindMigration from '../migrations/organization/0030_one_reminder_kind.sql';
+import accountAgentTasksMigration from '../migrations/organization/0031_agent_tasks.sql';
 
 type SchemaKind = 'control' | 'organization';
 
@@ -141,6 +142,7 @@ const ORGANIZATION_MIGRATIONS: readonly SchemaMigration[] = [
   { name: '0028_rule_notice_contacts.sql', sql: accountRuleNoticeContactsMigration },
   { name: '0029_agent_email_summary.sql', sql: accountAgentEmailSummaryMigration },
   { name: '0030_one_reminder_kind.sql', sql: accountOneReminderKindMigration },
+  { name: '0031_agent_tasks.sql', sql: accountAgentTasksMigration },
 ];
 const LEGACY_MIGRATION_CHECKSUMS = new Map<string, ReadonlySet<string>>([
   ['0001_tasks.sql', new Set(['4b2f3889191d0eafbbe45b78103db7139c7ce2b937c02cbbb6824f5131d7429f'])],

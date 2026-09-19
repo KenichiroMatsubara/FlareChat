@@ -10,7 +10,7 @@ A Contact is an addressable entity and nothing more — a name, tags, and one or
 
 One engine serves three entrances. Operator Chat runs it interactively with the Account's whole tool set, one exchange to one Rule Run; a Trigger runs it unattended with only the tools that Automation was granted; and an outside agent reaches it over MCP with an Access Token, holding one Tool Grant and bounded to one Contact List. A conversation that works becomes an Automation by naming its Prompt and tool set and attaching a Trigger, so nothing is designed twice.
 
-Two rule types coexist during a migration that ends by deleting one. A Schema Rule extracts Event Details, Tasks, and a Message Summary against one product-defined schema, so the external effects it can cause are known before it runs. An Agent Rule runs an Account-authored Prompt with a granted tool set and decides for itself whether and how to act. Agent Rules are strengthened until Schema Rules are redundant rather than rewritten into their equivalents, so both types are correct until the day the first is removed.
+Two rule types coexist during a migration that ends by deleting one. A Schema Rule extracts Event Details and a Message Summary against one product-defined schema, so the external effects it can cause are known before it runs. An Agent Rule runs an Account-authored Prompt with a granted tool set and decides for itself whether and how to act, including whether an explicitly requested Task should be created or an existing Task updated. Agent Rules are strengthened until Schema Rules are redundant rather than rewritten into their equivalents, so both types are correct until the day the first is removed.
 
 Safety comes from the granted tool set, not from predicting what a model will do. An external tool is called for real and returns its actual result, including its failures, because a model reasoning from a synthesised success is not a safer model. The Execution Mode decides which tools are bound at all: read-only binds no external tool whatsoever, while approval and unattended both bind and run them. An unattended Automation holding an external write tool therefore has no human gate before its external effects, bounded only by its tool set, its run ceilings, and its Suppression Window.
 
@@ -66,7 +66,7 @@ Account connection credentials are encrypted with an Account-specific data-encry
 
 Every Scheduled Event insertion is an upsert. An Event Candidate is correlated against the Automation Inbox's calendar as it currently stands rather than against what FlareChat last recorded, and a correlated candidate merges into that event field by field instead of creating a second one. A field whose current Calendar value differs from the value FlareChat last wrote is a Manual Override and is left out of the merge while the remaining fields still update. A correspondence whose two start times stand more than seven days apart is never merged, so a distant match becomes a new Scheduled Event rather than moving an existing invitation list onto a different meeting. No Account approval stands between a merge and the calendar.
 
-One extraction states the kind of the Source Message it read. An Event Response's extracted event fields locate the Scheduled Event it answers, within an Account-configured number of days either side of that event's start, and are never written to it; an Event Response that locates nothing creates nothing. Its Message Summary, Tasks, and attachments are handled as they are for any other Source Message.
+One extraction states the kind of the Source Message it read. An Event Response's extracted event fields locate the Scheduled Event it answers, within an Account-configured number of days either side of that event's start, and are never written to it; an Event Response that locates nothing creates nothing. Its Message Summary and attachments are handled as they are for any other Source Message; no Task is created merely because it is an Event Response.
 
 An Event Response may return a completed registration naming people from outside the Account. Each becomes one Guest Registration on the Scheduled Event that response answers, keyed by the Event Response that declared it so that reprocessing and correction replace those rows rather than accumulate beside them. Guest Registrations are retained with the delivery history and archived with it after twelve months.
 
@@ -215,7 +215,7 @@ The Primary Rule retained by a Scheduled Event for interpreting its later Event 
 _Avoid_: event rule, pinned rule
 
 **Schema Rule**:
-An Automation Rule that derives Event Details, Tasks, and a Message Summary from a Source Message through one product-defined extraction schema, so that every external effect it can cause is known before it runs.
+An Automation Rule that derives Event Details and a Message Summary from a Source Message through one product-defined extraction schema, so that every external effect it can cause is known before it runs. It does not apply Task effects; an Agent Rule decides explicit Task work through its Task tools.
 _Avoid_: standard rule, default rule
 
 **Agent Rule**:
@@ -443,7 +443,7 @@ A Contact selected by an Automation Rule to receive a Scheduled Event invitation
 _Avoid_: user, attendee
 
 **Task**:
-An Account-owned, deadline-bearing work item extracted once from a Source Message and tracked until completed.
+An Account-owned, deadline-bearing work item created or updated by an Account or Agent Rule and tracked until completed. It keeps the Source Message that provided its provenance and may hold a nullable Scheduled Event relation with a title snapshot.
 _Avoid_: reminder, to-do
 
 **Reminder Milestone**:
@@ -455,5 +455,5 @@ Every reminder an Account's Reminder Milestones still have ahead of them, each a
 _Avoid_: reminder queue, outbox, pending reminders
 
 **Task Assignment**:
-The Contact one Task was given to, named by the extraction from the Account's own Contacts and changeable by the Account afterwards. Each Task keeps the assignee name captured when it was created, so history still reads correctly after the roster changes.
+The Contact one Task was given to, selected by an Agent Rule or the Account from the Account's own Contacts and changeable afterwards. Each Task keeps the assignee name captured when it was created or reassigned, so history still reads correctly after the roster changes.
 _Avoid_: role, responsibility, permission, authorization
