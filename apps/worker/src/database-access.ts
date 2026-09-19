@@ -42,7 +42,8 @@ export const createDatabaseAccess = (env: Bindings) => ({
       throw new DatabaseBindingUnavailableError(bindingName);
     }
     const raw = bound as D1Database;
-    let schema: SchemaReceipt;
+    const startedAt = performance.now();
+    let schema: SchemaReceipt | undefined;
     try {
       schema = await schemaLifecycle.ensureCurrent({
         kind: locator.kind,
@@ -59,6 +60,16 @@ export const createDatabaseAccess = (env: Bindings) => ({
         bindingName,
         cause: error,
       });
+    } finally {
+      console.info(JSON.stringify({
+        event: 'database_schema_timing',
+        kind: locator.kind,
+        bindingName,
+        databaseId: locator.kind === 'organization' ? locator.databaseId : null,
+        durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
+        currentMigration: schema?.currentMigration ?? null,
+        appliedMigrations: schema?.appliedMigrations.length ?? null,
+      }));
     }
     return { kind: locator.kind, raw, schema } as ReadyDatabase;
   },
