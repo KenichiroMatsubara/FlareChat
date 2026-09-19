@@ -40,8 +40,19 @@ export const createApp = (providers: Providers) => {
 
   app.use('/api/*', cors({ origin: (origin) => origin || 'http://localhost:5173', credentials: true }));
   app.use('*', async (context, next) => {
-    await createDatabaseAccess(context.env).open({ kind: 'control' });
-    await next();
+    const startedAt = performance.now();
+    try {
+      await createDatabaseAccess(context.env).open({ kind: 'control' });
+      await next();
+    } finally {
+      console.info(JSON.stringify({
+        event: 'http_request_timing',
+        method: context.req.method,
+        path: new URL(context.req.url).pathname,
+        status: context.res.status,
+        durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
+      }));
+    }
   });
 
   app.route('/api', entryRoutes);
