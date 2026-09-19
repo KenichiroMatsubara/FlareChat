@@ -60,4 +60,20 @@ describe('Automation Inbox Google grant', () => {
     expect(url.searchParams.get('scope')).toContain('https://www.googleapis.com/auth/gmail.readonly');
   });
 
+  it('uses an online identity-only flow for ordinary login', () => {
+    const url = new URL(googleAuthorizationUrl({
+      clientId: 'client-id',
+      redirectUri: 'https://example.com/oauth/google/callback',
+      state: 'opaque-state',
+      challenge: 'pkce-challenge',
+      scopes: ['openid', 'email', 'profile'],
+      accessType: 'online',
+      prompt: 'select_account',
+    }));
+
+    expect(url.searchParams.get('access_type')).toBe('online');
+    expect(url.searchParams.get('prompt')).toBe('select_account');
+    expect(url.searchParams.get('scope')).toBe('openid email profile');
+  });
+
 });
