@@ -75,6 +75,7 @@ export const inboxAccessToken = async (input: {
   google: GoogleProvider;
 }): Promise<string> => {
   const { key, token } = await storedInboxToken(input.env, input.accountId, input.inbox);
+  if (!token.refreshToken) throw new Error('Automation Inbox credential has no refresh token.');
   const remaining = Date.parse(token.expiresAt) - Date.now();
   if (remaining > ACCESS_TOKEN_REFRESH_MARGIN_MS) return token.accessToken;
   let refreshed: GoogleTokenSet;

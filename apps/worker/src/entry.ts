@@ -89,12 +89,19 @@ export const beginGoogleEntry = async (
     expiresAt: expiresIn(OAUTH_WINDOW_MS),
     createdAt,
   }).run();
+  // Ordinary login only verifies identity. It must not create or revoke an
+  // offline grant, because Google's revocation endpoint can invalidate the
+  // Automation Inbox grant held by the same OAuth project.
   return googleAuthorizationUrl({
     clientId: env.GOOGLE_CLIENT_ID,
     redirectUri: redirectUri(env),
     state,
     challenge: pkce.challenge,
-    ...(intent === 'login' ? { scopes: GOOGLE_IDENTITY_SCOPES } : {}),
+    ...(intent === 'login' ? {
+      scopes: GOOGLE_IDENTITY_SCOPES,
+      accessType: 'online' as const,
+      prompt: 'select_account' as const,
+    } : {}),
   });
 };
 
@@ -130,6 +137,9 @@ export const completeGoogleEntry = async (
       clientSecret: env.GOOGLE_CLIENT_SECRET,
       redirectUri: redirectUri(env),
     });
+    if (flow.intent !== 'login' && !tokenSet.refreshToken) {
+      throw new Error('Google did not return an offline Automation Inbox grant.');
+    }
     const identity = await fetchGoogleIdentity(tokenSet.accessToken);
     const timestamp = now();
     await control.insert(identities).values({
@@ -148,7 +158,6 @@ export const completeGoogleEntry = async (
     if (!owner) throw new Error('Google identity could not be stored.');
     const sessionId = randomToken();
     const completeAsLogin = async (location: URL): Promise<GoogleEntryCompletion> => {
-      await revokeGoogleToken(tokenSet.refreshToken);
       await control.batch([
         control.delete(oauthFlows).where(eq(oauthFlows.id, flow.id)),
         control.insert(sessions).values({
@@ -175,7 +184,7 @@ export const completeGoogleEntry = async (
       }
     }
     if (!hasCompleteGoogleGrant(tokenSet.scopes)) {
-      await revokeGoogleToken(tokenSet.refreshToken);
+      if (tokenSet.refreshToken) await revokeGoogleToken(tokenSet.refreshToken);
       await control.delete(oauthFlows).where(eq(oauthFlows.id, flow.id)).run();
       return locationWithError(
         target,
@@ -202,7 +211,7 @@ export const completeGoogleEntry = async (
       const account = drizzleAccountDatabase(database.raw);
       const inbox = await account.select().from(googleConnections).where(eq(googleConnections.kind, 'automation_inbox')).get();
       if (!inbox || inbox.googleSubject !== identity.subject) {
-        await revokeGoogleToken(tokenSet.refreshToken);
+        if (tokenSet.refreshToken) await revokeGoogleToken(tokenSet.refreshToken);
         await control.delete(oauthFlows).where(eq(oauthFlows.id, flow.id)).run();
         return locationWithError(target, 'Automation Inbox は同じ Google アカウントで再接続してください。');
       }
@@ -251,7 +260,7 @@ export const completeGoogleEntry = async (
         eq(automationInboxClaims.inboxAddress, identity.email),
       )).get();
     if (existingClaim) {
-      await revokeGoogleToken(tokenSet.refreshToken);
+      if (tokenSet.refreshToken) await revokeGoogleToken(tokenSet.refreshToken);
       await control.delete(oauthFlows).where(eq(oauthFlows.id, flow.id)).run();
       return locationWithError(target, 'automation_inbox_already_claimed');
     }

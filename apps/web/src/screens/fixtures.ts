@@ -127,6 +127,8 @@ export const task = (overrides: Partial<Task> = {}): Task => ({
   assigneeContactId: 'contact-1',
   assigneeName: '山田 太郎',
   sourceMessageSubject: '総会案内',
+  scheduledEventId: null,
+  scheduledEventTitle: null,
   description: '',
   remarks: '',
   completed: false,

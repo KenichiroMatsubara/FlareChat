@@ -173,7 +173,7 @@ describe('Schema Lifecycle', () => {
 
     expect(receipt).toMatchObject({
       kind: 'organization',
-      currentMigration: '0030_one_reminder_kind.sql',
+      currentMigration: '0031_agent_tasks.sql',
       appliedMigrations: [
         '0001_tasks.sql',
         '0002_line_destination_roster.sql',
@@ -205,6 +205,7 @@ describe('Schema Lifecycle', () => {
         '0028_rule_notice_contacts.sql',
         '0029_agent_email_summary.sql',
         '0030_one_reminder_kind.sql',
+        '0031_agent_tasks.sql',
       ],
     });
     expect(database.rows<{ display_name: string }>(
@@ -237,7 +238,7 @@ describe('Schema Lifecycle', () => {
       category: 'migration_apply_failed',
       kind: 'organization',
       currentMigration: '0000_initial.sql',
-      expectedMigration: '0030_one_reminder_kind.sql',
+      expectedMigration: '0031_agent_tasks.sql',
     });
 
     database.execute('DROP INDEX tasks_source_role_deadline_title_idx');
@@ -246,7 +247,7 @@ describe('Schema Lifecycle', () => {
       kind: 'organization',
       database: database.binding,
     })).resolves.toMatchObject({
-      currentMigration: '0030_one_reminder_kind.sql',
+      currentMigration: '0031_agent_tasks.sql',
     });
   });
 
@@ -267,7 +268,7 @@ describe('Schema Lifecycle', () => {
       category: 'checksum_mismatch',
       kind: 'organization',
       currentMigration: '0000_initial.sql',
-      expectedMigration: '0030_one_reminder_kind.sql',
+      expectedMigration: '0031_agent_tasks.sql',
     });
   });
 
@@ -283,7 +284,7 @@ describe('Schema Lifecycle', () => {
     await expect(schemaLifecycle.ensureCurrent({
       kind: 'organization',
       database: database.binding,
-    })).resolves.toMatchObject({ currentMigration: '0030_one_reminder_kind.sql' });
+    })).resolves.toMatchObject({ currentMigration: '0031_agent_tasks.sql' });
   });
 
   it('accepts the legacy Operational Task Roles checksum recorded by the local schema lifecycle', async () => {
@@ -298,7 +299,7 @@ describe('Schema Lifecycle', () => {
     await expect(schemaLifecycle.ensureCurrent({
       kind: 'organization',
       database: database.binding,
-    })).resolves.toMatchObject({ currentMigration: '0030_one_reminder_kind.sql' });
+    })).resolves.toMatchObject({ currentMigration: '0031_agent_tasks.sql' });
   });
 
   it('carries a Task named by a legacy role across to an unassigned Contact assignment', async () => {
@@ -330,7 +331,7 @@ describe('Schema Lifecycle', () => {
     job('job-other', 'gmail.sync', '{"historyId":"1"}', 'gmail.sync:1', 'succeeded');
 
     await expect(schemaLifecycle.ensureCurrent({ kind: 'organization', database: database.binding }))
-      .resolves.toMatchObject({ currentMigration: '0030_one_reminder_kind.sql' });
+      .resolves.toMatchObject({ currentMigration: '0031_agent_tasks.sql' });
 
     expect(database.rows<{ id: string; kind: string; payload: string; idempotency_key: string }>(
       'SELECT id, kind, payload, idempotency_key FROM jobs ORDER BY id',
@@ -353,7 +354,7 @@ describe('Schema Lifecycle', () => {
       .rejects.toMatchObject({
         category: 'migration_apply_failed',
         currentMigration: '0029_agent_email_summary.sql',
-        expectedMigration: '0030_one_reminder_kind.sql',
+        expectedMigration: '0031_agent_tasks.sql',
       });
     expect(database.rows<{ kind: string }>('SELECT kind FROM jobs')).toEqual([{ kind: 'task_reminder' }]);
   });
@@ -472,8 +473,8 @@ describe('Schema Lifecycle', () => {
     ]);
 
     expect(receipts).toEqual([
-      expect.objectContaining({ currentMigration: '0030_one_reminder_kind.sql' }),
-      expect.objectContaining({ currentMigration: '0030_one_reminder_kind.sql' }),
+      expect.objectContaining({ currentMigration: '0031_agent_tasks.sql' }),
+      expect.objectContaining({ currentMigration: '0031_agent_tasks.sql' }),
     ]);
   });
 });

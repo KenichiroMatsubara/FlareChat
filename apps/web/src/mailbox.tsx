@@ -173,7 +173,7 @@ export const MailTestFlow = ({ test, pending, connected, aiConfigured, assigneeN
     {preview && <section className="test-card event-preview">
       <div>
         <p>4. {draft ? 'START DRAFT RULE RUN' : 'CONFIRM CALENDAR WRITE'}</p>
-        <h2>要約・予定・タスク候補を確認</h2>
+        <h2>要約・予定を確認</h2>
         <span>{draft
           ? 'Draft Rule の Selection Policy を検証し、副作用なしの read-only Rule Run として保存します。'
           : '下の確定操作だけが Calendar と添付用 Drive に書き込みます。'}</span>
@@ -187,14 +187,8 @@ export const MailTestFlow = ({ test, pending, connected, aiConfigured, assigneeN
         <dt>説明</dt><dd>{event.description || '指定なし'}</dd>
         <dt>要約</dt><dd>{event.summary || '指定なし'}</dd>
       </dl>)}
-      <h3>期限タスク候補（{preview.tasks.length}件）</h3>
-      {preview.tasks.length
-        ? preview.tasks.map((task) => <dl key={`${task.assigneeContactId}-${task.deadline}-${task.title}`}>
-          <dt>{assigneeName(task.assigneeContactId)}</dt><dd>{task.title}</dd>
-          <dt>期限</dt><dd>{task.deadline}</dd>
-          <dt>内容</dt><dd>{task.description}</dd>
-        </dl>)
-        : <p>明示された登録・振込期限はありません。</p>}
+      <h3>タスク</h3>
+      <p>タスクの作成・更新は、Source Message 全体を確認した Agent Rule が明示的な依頼と判断した場合に行います。</p>
       {draft
         ? <>
           <button className="primary" onClick={() => rule && test.startDraftRuleRun(rule.id)} disabled={startingRuleRun || Boolean(test.ruleRunIds.length)}>{startingRuleRun ? <RefreshCw className="spin" size={14} /> : null}{test.ruleRunIds.length ? 'Draft Rule Run 作成済み' : startingRuleRun ? 'Rule Run を作成中…' : 'Draft Rule Run を開始'}</button>

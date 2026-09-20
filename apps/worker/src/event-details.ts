@@ -165,7 +165,7 @@ export const validatedMailExtraction = (
     const value = JSON.parse(text) as Partial<MailExtraction>;
     const legacy = validatedEventDetails(text);
     if (legacy) return { kind: 'invitation', summary: legacy.description.trim() || legacy.title, events: [legacy], tasks: [], guests: [], warnings: [] };
-    if (!Array.isArray(value.events) || !Array.isArray(value.tasks)) return null;
+    if (!Array.isArray(value.events)) return null;
     // An extraction that omits the kind predates this field; reading it as an
     // invitation keeps it on the behaviour it was produced under.
     const kind: SourceMessageKind = value.kind === 'response' ? 'response' : 'invitation';
@@ -173,7 +173,10 @@ export const validatedMailExtraction = (
     if (guestValues.some((guest) => !guest)) return null;
     const events = value.events.map((event) => validatedEventDetails(JSON.stringify(event)));
     const contactIds = new Set(roster.map((contact) => contact.id));
-    const tasks = value.tasks.map((task) => validatedTaskDetails(task, contactIds));
+    // Task extraction is retained only so older stored previews remain readable;
+    // current Schema Rules never ask the model for Tasks and never apply them.
+    const rawTasks = Array.isArray(value.tasks) ? value.tasks : [];
+    const tasks = kind === 'response' ? [] : rawTasks.map((task) => validatedTaskDetails(task, contactIds));
     if (events.some((event) => !event) || tasks.some((task) => !task)) return null;
     const validatedEvents = events as EventDetails[];
     const summary = typeof value.summary === 'string' && value.summary.trim()
@@ -233,7 +236,7 @@ Create one item in events for each independently scheduled program. For example,
 
 When an event's date and start time are stated but its end time is not, set endsAt to exactly two hours after startsAt, and prepend this exact Japanese sentence to that event's description, followed by a space, before the rest of the description: "終了時間を抽出できませんでした。2時間後を終了時間としました。" Use this two-hour default only when the end time is truly absent from the invitation; never use it to override, adjust, or second-guess an end time that the invitation does state. Never invent, guess, or calculate an end time in any other way.
 
-Create tasks only for explicit administrative deadlines in the whole invitation, not once per event. Choose assigneeContactId from the Contacts listed below, reading each Contact's name and description as what that Contact is and what it looks after. Choose unassigned when no Contact clearly fits; never guess between two Contacts. Use exactly one task for each unique kind and calendar date, even when multiple events share it. deadline must be a complete date as YYYY-MM-DD. Never invent, guess, or calculate a date the invitation does not state. Omit tasks whose deadline date is not stated. Set tasks to [] when there are none.
+Do not create Tasks in this extraction. Task decisions are made by an Agent Rule with the Task query/create/update tools after it inspects the complete Source Message. In particular, an Event Response, returned registration form, acknowledgement, promotional message, or informational message must not become a Task merely because it mentions a deadline.
 
 ${dateCompletionGuidance}
 
@@ -288,22 +291,8 @@ Use ISO 8601 date-times with the stated time zone for events. Keep titles and de
               required: ['title', 'startsAt', 'endsAt', 'timeZone', 'location', 'description', 'summary'],
             },
           },
-          tasks: {
-            type: 'array',
-            items: {
-              type: 'object',
-              additionalProperties: false,
-              properties: {
-                title: { type: 'string' },
-                deadline: { type: 'string', format: 'date' },
-                assigneeContactId: { type: 'string', enum: roster.map((contact) => contact.id) },
-                description: { type: 'string' },
-              },
-              required: ['title', 'deadline', 'assigneeContactId', 'description'],
-            },
           },
-          },
-          required: ['kind', 'summary', 'guests', 'events', 'tasks'],
+          required: ['kind', 'summary', 'guests', 'events'],
         },
       },
     },

@@ -220,6 +220,7 @@ describe('Contact Portal progress', () => {
     tasks: [{
       taskId: 'task-1', title: '参加費を支払う', deadline: '2026-08-25',
       assigneeName: '山田', sourceMessageSubject: '総会案内', description: '', remarks: '', completed: false, mine: true,
+      scheduledEventTitle: '総会',
     }],
   };
   const view = (pending: (key: string) => boolean, settled: (key: string) => boolean = () => false, running: string[] = []): string =>

@@ -243,16 +243,11 @@ export const schemaPlan = (input: {
   attachments: SourceAttachment[];
 }): PlannedRuleEffect[] => {
   const { extraction } = input;
-  const createsTasks = extraction.tasks.length > 0;
   const appliesEvents = extraction.events.length > 0;
   return [
     ...(extraction.warnings.length ? [{
       key: 'record-warnings', dependsOn: [], kind: 'schema.record_warnings' as const,
       arguments: { sourceMessageId: input.sourceMessageId, warnings: extraction.warnings },
-    }] : []),
-    ...(createsTasks ? [{
-      key: 'create-tasks', dependsOn: [], kind: 'schema.create_tasks' as const,
-      arguments: { accountId: input.accountId, sourceMessageId: input.sourceMessageId, subject: input.subject, tasks: extraction.tasks },
     }] : []),
     ...(appliesEvents ? [{
       key: 'apply-events', dependsOn: [], kind: 'schema.apply_events' as const,
@@ -273,7 +268,7 @@ export const schemaPlan = (input: {
     }] : []),
     {
       key: 'deliver-summary',
-      dependsOn: [...(appliesEvents ? ['apply-events'] : []), ...(createsTasks ? ['create-tasks'] : [])],
+      dependsOn: [...(appliesEvents ? ['apply-events'] : [])],
       kind: 'schema.deliver_summary' as const,
       arguments: {
         accountId: input.accountId,
