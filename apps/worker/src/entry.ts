@@ -89,6 +89,9 @@ export const beginGoogleEntry = async (
     expiresAt: expiresIn(OAUTH_WINDOW_MS),
     createdAt,
   }).run();
+  // Ordinary login only verifies identity. It must not create or revoke an
+  // offline grant, because Google's revocation endpoint can invalidate the
+  // Automation Inbox grant held by the same OAuth project.
   return googleAuthorizationUrl({
     clientId: env.GOOGLE_CLIENT_ID,
     redirectUri: redirectUri(env),

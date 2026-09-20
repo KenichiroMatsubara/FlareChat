@@ -21,6 +21,22 @@ describe('Account setup client', () => {
     vi.unstubAllGlobals();
   });
 
+  it('shares concurrent bootstrap requests so one navigation does not fetch the same state twice', async () => {
+    let resolveResponse: (response: Response) => void = () => undefined;
+    const response = new Promise<Response>((resolve) => { resolveResponse = resolve; });
+    const fetchMock = vi.fn().mockReturnValue(response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const first = api.bootstrap();
+    const second = api.bootstrap();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    resolveResponse(new Response(JSON.stringify({ data: { kind: 'signed_out' } }), { status: 200 }));
+    await expect(Promise.all([first, second])).resolves.toEqual([{ kind: 'signed_out' }, { kind: 'signed_out' }]);
+
+    vi.unstubAllGlobals();
+  });
+
   it('defaults the Account name to the authenticated Google account name', () => {
     expect(defaultAccountName({ email: 'owner@example.com', displayName: '岡崎RAC' })).toBe('岡崎RAC');
     expect(defaultAccountName({ email: 'owner@example.com', displayName: '   ' })).toBe('');
