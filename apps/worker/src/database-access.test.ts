@@ -35,7 +35,7 @@ describe('Database Access', () => {
       databaseId: 'database-example',
     });
 
-    expect(ready.schema.currentMigration).toBe('0030_one_reminder_kind.sql');
+    expect(ready.schema.currentMigration).toBe('0031_agent_tasks.sql');
     await expect(ready.raw.prepare(
       'SELECT display_name FROM line_destinations',
     ).all()).resolves.toMatchObject({ success: true });

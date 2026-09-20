@@ -290,7 +290,7 @@ describe('Account Automation Inbox scheduling', () => {
     return { agentRuleId: (await created.json() as { data: { id: string } }).data.id, promptId };
   };
 
-  const toolCall = (name: 'send_line_message' | 'create_scheduled_event' | 'send_email_summary' | 'read_source_message' | 'query_scheduled_events' | 'query_tasks' | 'query_attendance', args: Record<string, unknown> = {}) =>
+  const toolCall = (name: 'send_line_message' | 'create_scheduled_event' | 'send_email_summary' | 'create_task' | 'update_task' | 'read_source_message' | 'query_scheduled_events' | 'query_tasks' | 'query_attendance', args: Record<string, unknown> = {}) =>
     ({ id: `${name}-${crypto.randomUUID()}`, name, arguments: JSON.stringify(args) });
 
   it('executes an unattended Agent Rule LINE write once and records a failed delivery without retry work', async () => {
@@ -371,6 +371,25 @@ describe('Account Automation Inbox scheduling', () => {
     expect(providers.google.eventWrites).toMatchObject([{ operation: 'create', body: { summary: 'Practice', attendees: [{ email: 'guest@example.com' }] } }]);
     expect(fixture.account.rows<{ agent_rule_id: string; title: string; status: string }>('SELECT agent_rule_id, title, status FROM events')).toEqual([{ agent_rule_id: agentRuleId, title: 'Practice', status: 'scheduled' }]);
     expect(fixture.account.rows<{ destination: string; outcome: string }>('SELECT destination, outcome FROM deliveries')).toEqual([{ destination: 'guest@example.com', outcome: 'succeeded' }]);
+  });
+
+  it('lets an Agent Rule create an explicit Task after querying existing Tasks', async () => {
+    fixture = await createAutomationTestApp({ ai: true });
+    fixture.account.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");
+    await seedAgentRule({ name: 'Task operator', instructions: 'Manage explicitly requested work.' });
+    const { automation } = automationWith(({ google, ai }) => {
+      google.addMessage(invitation('gmail-agent-task', { subject: '資料確認のお願い', body: '8月20日までに資料を確認してください。' }));
+      ai.agentTurns = [
+        { model: 'test-model', content: '', totalTokens: 10, toolCalls: [toolCall('query_tasks')] },
+        { model: 'test-model', content: '', totalTokens: 10, toolCalls: [toolCall('create_task', { title: '資料を確認する', deadline: '2026-08-20', description: '資料を確認する' })] },
+        { model: 'test-model', content: 'Task registered.', toolCalls: [], totalTokens: 5 },
+      ];
+    });
+
+    await expect(runAccount(automation)).resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 0 });
+    expect(fixture.account.rows('SELECT kind, status, error FROM rule_effects')).toEqual([{ kind: 'agent.create_task', status: 'succeeded', error: null }]);
+    expect(fixture.account.rows<{ title: string; source_message_subject: string; scheduled_event_id: string | null }>('SELECT title, source_message_subject, scheduled_event_id FROM tasks'))
+      .toEqual([{ title: '資料を確認する', source_message_subject: '資料確認のお願い', scheduled_event_id: null }]);
   });
 
   it('runs each matching read-only Agent Rule once with only Account query tools', async () => {
@@ -541,7 +560,7 @@ describe('Account Automation Inbox scheduling', () => {
     expect(r2.object(r2.keys()[0]!) ?? '').not.toContain('Secret Source Message body');
   });
 
-  it('keeps events and tasks when the extraction names a Contact this Account does not hold, and raises an Automation Warning', async () => {
+  it('keeps events but does not apply legacy extracted Tasks, while preserving extraction warnings', async () => {
     fixture = await createAutomationTestApp({ ai: true });
     const createdContact = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/members', {
       name: '山田花子', email: 'hanako@example.com', description: '出欠と申込期限を見ている人',
@@ -563,12 +582,9 @@ describe('Account Automation Inbox scheduling', () => {
     await automation.runEnabledAccounts();
 
     const tasks = await app.fetch(fixture.request('/api/organizations/organization-1/tasks'), fixture.environment);
-    await expect(tasks.json()).resolves.toMatchObject({ data: [
-      { assigneeContactId: contact.id, assigneeName: '山田花子' },
-      { assigneeContactId: null, assigneeName: '未割り当て' },
-    ] });
+    await expect(tasks.json()).resolves.toMatchObject({ data: [] });
     const unassignedTasks = await app.fetch(fixture.request('/api/organizations/organization-1/tasks?assignee=unassigned'), fixture.environment);
-    await expect(unassignedTasks.json()).resolves.toMatchObject({ data: [{ title: '資料を確認する', assigneeContactId: null }] });
+    await expect(unassignedTasks.json()).resolves.toMatchObject({ data: [] });
     const warnings = await app.fetch(fixture.request('/api/organizations/organization-1/automation-warnings'), fixture.environment);
     expect(warnings.status).toBe(200);
     await expect(warnings.json()).resolves.toMatchObject({ data: [{ code: 'task_assignee_unmatched' }] });
@@ -576,7 +592,7 @@ describe('Account Automation Inbox scheduling', () => {
     await expect(dashboard.json()).resolves.toMatchObject({ data: { upcomingEvents: 1 } });
   });
 
-  it('creates one named Task from a Source Message and does not duplicate it when the inbox run is retried', async () => {
+  it('does not create a Task from a Schema Rule even when legacy extraction contains one', async () => {
     fixture = await createAutomationTestApp({ ai: true });
     const createdContact = await app.fetch(fixture.jsonRequest('/api/organizations/organization-1/members', {
       name: '山田花子', email: 'hanako@example.com', description: '出欠と申込期限を見ている人',
@@ -594,16 +610,8 @@ describe('Account Automation Inbox scheduling', () => {
     const response = await app.fetch(fixture.request('/api/organizations/organization-1/tasks'), fixture.environment);
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      data: [{
-        title: '出席を取りまとめる',
-        deadline: '2026-07-31',
-        assigneeName: '山田花子',
-        completed: false,
-        sourceMessageSubject: '例会のお知らせ',
-      }],
-    });
-    expect(fixture.account.rows('SELECT id FROM tasks')).toHaveLength(1);
+    await expect(response.json()).resolves.toMatchObject({ data: [] });
+    expect(fixture.account.rows('SELECT id FROM tasks')).toHaveLength(0);
   });
 
   it('creates a Scheduled Event through the Automation interface with an injected Google adapter', async () => {
@@ -642,7 +650,7 @@ describe('Account Automation Inbox scheduling', () => {
     expect(fixture.account.rows('SELECT * FROM tasks')).toHaveLength(0);
     expect(fixture.account.rows<{ status: string }>('SELECT status FROM rule_runs')).toEqual([{ status: runStatus }]);
     const effects = fixture.account.rows<{ kind: string; status: string }>('SELECT kind, status FROM rule_effects ORDER BY created_at, kind');
-    expect(effects.map(({ kind }) => kind).sort()).toEqual(['schema.apply_events', 'schema.create_tasks', 'schema.deliver_summary']);
+    expect(effects.map(({ kind }) => kind).sort()).toEqual(['schema.apply_events', 'schema.deliver_summary']);
     expect(effects.every(({ status }) => status === effectStatus)).toBe(true);
     expect(fixture.account.rows<{ state: string }>('SELECT state FROM source_messages')).toEqual([{ state: 'processed' }]);
   });
@@ -910,7 +918,7 @@ describe('Account Automation Inbox scheduling', () => {
     }]);
   });
 
-  it('states the Scheduled Events and the Tasks a Source Message produced in the one notice', async () => {
+  it('states the Scheduled Events without treating legacy extracted Tasks as applied work', async () => {
     fixture = await createAutomationTestApp({ ai: true, lineSecret: 'line-secret' });
     // The group room is the chosen send-to and holds no email address, so the
     // one notice reaches it on LINE. 山田花子 is named only as the Task assignee.
@@ -936,9 +944,6 @@ describe('Account Automation Inbox scheduling', () => {
         '',
         '【予定】',
         '・8/3(月) 19:00〜21:30 例会（第一会議室）',
-        '',
-        '【タスク】',
-        '・7/31(金)まで 会場を予約する（山田花子）',
       ].join('\n') }],
     });
   });

@@ -297,7 +297,7 @@ export const createRuleExecution = (dependencies: RuleExecutionDependencies): Ru
           ...effectRows.map((effect) => database.insert(ruleEffects).values(effect)),
         ]);
         if (planned.effects.length && planned.executionMode === 'unattended') {
-          const applied = await applyRun(runId, planned.rule, null);
+          const applied = await applyRun(runId, planned.rule, input.sourceMessageId);
           failed ||= applied.status === 'failed';
           waiting ||= applied.status === 'applying';
           runs.push(applied);

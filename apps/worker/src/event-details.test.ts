@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { buildAiEventDetailsRequest, extractAiEventDetails, validatedEventDetails, validatedMailExtraction } from './event-details';
 
 describe('OpenAI-compatible Event Details validation', () => {
-  it('builds the assignee enum and guidance from the Contacts this Account holds', async () => {
+  it('does not expose Task extraction in the Schema Rule schema', async () => {
     const request = await buildAiEventDetailsRequest({
       source: '案内',
       roster: [
@@ -13,13 +13,8 @@ describe('OpenAI-compatible Event Details validation', () => {
         { id: 'contact-group', name: '会員グループ', description: '' },
       ],
     });
-    const taskSchema = request.response_format.json_schema.schema.properties?.tasks?.items;
-
-    expect(taskSchema?.properties?.assigneeContactId?.enum).toEqual([
-      'contact-yamada',
-      'contact-group',
-      'unassigned',
-    ]);
+    expect(request.response_format.json_schema.schema.properties?.tasks).toBeUndefined();
+    expect(request.response_format.json_schema.schema.required).toEqual(['kind', 'summary', 'guests', 'events']);
     expect(request.messages[0]?.content).toContain('contact-yamada: 山田花子 — 出欠と申込期限を見ている人');
     expect(request.messages[0]?.content).toContain('contact-group: 会員グループ');
     expect(request.messages[0]?.content).toContain('unassigned');
@@ -152,6 +147,13 @@ describe('OpenAI-compatible Event Details validation', () => {
     });
   });
 
+  it('discards legacy Task candidates from an Event Response', () => {
+    expect(validatedMailExtraction(JSON.stringify({
+      kind: 'response', summary: '登録用紙を返送します。', events: [],
+      tasks: [{ title: '登録用紙を確認する', deadline: '2026-08-20', description: '確認する' }],
+    }))).toMatchObject({ kind: 'response', tasks: [] });
+  });
+
   it('rejects a guest that names nobody rather than counting a blank', () => {
     expect(validatedMailExtraction(JSON.stringify({
       kind: 'response', summary: '参加申込です。', events: [], tasks: [],
@@ -212,7 +214,7 @@ describe('OpenAI-compatible Event Details validation', () => {
     };
     expect(body.model).toBe('test-model');
     expect(body.messages[1]?.content).toContain(source);
-    expect(body.response_format.json_schema.schema.required).toEqual(['kind', 'summary', 'guests', 'events', 'tasks']);
+    expect(body.response_format.json_schema.schema.required).toEqual(['kind', 'summary', 'guests', 'events']);
     expect(body.response_format.json_schema.schema.additionalProperties).toBe(false);
     expect(body.response_format.json_schema.schema.properties.summary).toMatchObject({ type: 'string' });
     expect(body.response_format.json_schema.schema.properties.events).toMatchObject({ type: 'array' });

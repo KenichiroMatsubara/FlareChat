@@ -316,7 +316,7 @@ export const ContactPageView = ({ page, running, pending, settled, error, onAtte
           <div>
             <h3>{task.title}</h3>
             <p>{task.assigneeName} ・ 期限 {task.deadline}</p>
-            <p className="portal-task-source">{task.sourceMessageSubject}</p>
+            <p className="portal-task-source">{task.scheduledEventTitle ?? 'イベント未紐付け'}</p>
           </div>
           {task.mine
             ? <div className="portal-answer">

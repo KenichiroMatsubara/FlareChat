@@ -90,6 +90,7 @@ describe('canonical D1 schemas', () => {
       '0028_rule_notice_contacts.sql',
       '0029_agent_email_summary.sql',
       '0030_one_reminder_kind.sql',
+      '0031_agent_tasks.sql',
     ]);
   });
 

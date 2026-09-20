@@ -405,12 +405,14 @@ export const automationWarnings = sqliteTable('automation_warnings', {
   index('automation_warnings_source_idx').on(table.sourceMessageId, table.createdAt),
 ]);
 
-/** An Account-defined responsibility used to route extracted Tasks. */
+/** An Account-owned deadline-bearing work item, often created by an Agent Rule. */
 export const tasks = sqliteTable('tasks', {
   id: text('id').primaryKey(),
   accountId: text('organization_id').notNull(),
   sourceMessageId: text('source_message_id').notNull().references(() => sourceMessages.id),
   sourceMessageSubject: text('source_message_subject').notNull(),
+  scheduledEventId: text('scheduled_event_id').references(() => events.id),
+  scheduledEventTitle: text('scheduled_event_title'),
   title: text('title').notNull(),
   deadline: text('deadline').notNull(),
   assigneeContactId: text('assignee_member_id').references(() => contacts.id),
@@ -426,6 +428,7 @@ export const tasks = sqliteTable('tasks', {
   uniqueIndex('tasks_source_deadline_title_idx').on(table.sourceMessageId, table.deadline, table.title),
   index('tasks_order_idx').on(table.completed, table.deadline),
   index('tasks_assignee_idx').on(table.assigneeContactId),
+  index('tasks_scheduled_event_idx').on(table.scheduledEventId),
 ]);
 
 export const deliveryArchives = sqliteTable('delivery_archives', {

@@ -172,6 +172,28 @@ describe('Agent Rule writes', () => {
     ]);
   });
 
+  it('plans Task creation and updates without requiring an external destination', async () => {
+    database = createMigratedTestD1('organization');
+    let turn = 0;
+    const result = await runAgent({
+      database: database.binding, runId: 'run-task-tools', agentRuleId: 'agent-rule-1', executionMode: 'approval',
+      permittedLineDestinations: [], permittedRecipientDestinations: [],
+      model: { complete: async () => turn++ === 0 ? {
+        model: 'test-model', content: '', totalTokens: 1, toolCalls: [
+          { id: 'call-create-task', name: 'create_task', arguments: JSON.stringify({ title: '資料を確認する', deadline: '2026-08-20', description: '資料を確認する' }) },
+          { id: 'call-update-task', name: 'update_task', arguments: JSON.stringify({ taskId: 'task-1', completed: true }) },
+        ],
+      } : { model: 'test-model', content: 'done', toolCalls: [], totalTokens: 1 } },
+      connection: { apiKey: 'test-key', baseUrl: 'https://ai.example.com/v1', model: 'test-model' }, prompt: 'Manage explicit work.',
+      source: { id: 'source-task-tools', sender: 'sender@example.com', subject: 'Request', body: 'Please handle the documents.', attachments: [] },
+    });
+
+    expect(result.plannedActions).toEqual([
+      { tool: 'create_task', arguments: { title: '資料を確認する', deadline: '2026-08-20', description: '資料を確認する' } },
+      { tool: 'update_task', arguments: { taskId: 'task-1', completed: true } },
+    ]);
+  });
+
   it('refuses an email summary addressed outside the permitted recipient set', async () => {
     database = createMigratedTestD1('organization');
     const run = runAgent({

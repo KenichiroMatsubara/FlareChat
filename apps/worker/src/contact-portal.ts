@@ -28,6 +28,7 @@ export interface PortalTask {
   deadline: string;
   assigneeName: string;
   sourceMessageSubject: string;
+  scheduledEventTitle: string | null;
   description: string;
   remarks: string;
   completed: boolean;
@@ -132,6 +133,7 @@ export const portalView = async (input: {
       assigneeName: tasks.assigneeName,
       assigneeContactId: tasks.assigneeContactId,
       sourceMessageSubject: tasks.sourceMessageSubject,
+      scheduledEventTitle: tasks.scheduledEventTitle,
       description: tasks.description,
       remarks: tasks.remarks,
       completed: tasks.completed,

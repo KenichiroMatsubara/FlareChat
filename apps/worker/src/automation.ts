@@ -189,25 +189,54 @@ const runMatchingAgentRules = async (run: AccountRun, input: {
 };
 
 /** The typed Rule Effect one planned Agent action becomes. */
-const agentEffect = (action: { tool: 'send_line_message' | 'create_scheduled_event' | 'send_email_summary'; arguments: Record<string, unknown> }, key: string): PlannedRuleEffect => {
-  const args = action.arguments as Record<string, string | undefined>;
+const agentEffect = (action: { tool: 'send_line_message' | 'create_scheduled_event' | 'send_email_summary' | 'create_task' | 'update_task'; arguments: Record<string, unknown> }, key: string): PlannedRuleEffect => {
+  const args = action.arguments;
+  const stringArg = (name: string): string | undefined => typeof args[name] === 'string' ? args[name] as string : undefined;
   switch (action.tool) {
     case 'send_line_message':
-      return { key, dependsOn: [], kind: 'agent.send_line_message', arguments: { destination: args.destination ?? '', message: args.message ?? '' } };
+      return { key, dependsOn: [], kind: 'agent.send_line_message', arguments: { destination: stringArg('destination') ?? '', message: stringArg('message') ?? '' } };
     case 'send_email_summary':
-      return { key, dependsOn: [], kind: 'agent.send_email_summary', arguments: { destination: args.destination ?? '', subject: args.subject ?? '', body: args.body ?? '' } };
+      return { key, dependsOn: [], kind: 'agent.send_email_summary', arguments: { destination: stringArg('destination') ?? '', subject: stringArg('subject') ?? '', body: stringArg('body') ?? '' } };
     case 'create_scheduled_event':
       return {
         key,
         dependsOn: [],
         kind: 'agent.create_scheduled_event',
         arguments: {
-          destination: args.destination ?? '',
-          title: args.title ?? '',
-          startsAt: args.startsAt ?? '',
-          endsAt: args.endsAt ?? '',
-          ...(args.location === undefined ? {} : { location: args.location }),
-          ...(args.description === undefined ? {} : { description: args.description }),
+          destination: stringArg('destination') ?? '',
+          title: stringArg('title') ?? '',
+          startsAt: stringArg('startsAt') ?? '',
+          endsAt: stringArg('endsAt') ?? '',
+          ...(typeof args.location === 'string' ? { location: args.location } : {}),
+          ...(typeof args.description === 'string' ? { description: args.description } : {}),
+        },
+      };
+    case 'create_task':
+      return {
+        key,
+        dependsOn: [],
+        kind: 'agent.create_task',
+        arguments: {
+          title: stringArg('title') ?? '',
+          deadline: stringArg('deadline') ?? '',
+          description: stringArg('description') ?? '',
+          ...(args.assigneeContactId === undefined ? {} : { assigneeContactId: args.assigneeContactId as string | null }),
+          ...(args.scheduledEventId === undefined ? {} : { scheduledEventId: args.scheduledEventId as string | null }),
+        },
+      };
+    case 'update_task':
+      return {
+        key,
+        dependsOn: [],
+        kind: 'agent.update_task',
+        arguments: {
+          taskId: stringArg('taskId') ?? '',
+          ...(typeof args.title === 'string' ? { title: args.title } : {}),
+          ...(typeof args.deadline === 'string' ? { deadline: args.deadline } : {}),
+          ...(typeof args.description === 'string' ? { description: args.description } : {}),
+          ...(typeof args.completed === 'boolean' ? { completed: args.completed } : {}),
+          ...(args.assigneeContactId === undefined ? {} : { assigneeContactId: args.assigneeContactId as string | null }),
+          ...(args.scheduledEventId === undefined ? {} : { scheduledEventId: args.scheduledEventId as string | null }),
         },
       };
   }

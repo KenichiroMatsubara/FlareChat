@@ -22,7 +22,7 @@ const normalizedGoogleScopes = (scopes: Iterable<string>): Set<string> =>
 
 export interface GoogleTokenSet {
   accessToken: string;
-  refreshToken: string;
+  refreshToken: string | null;
   expiresAt: string;
   scopes: string[];
   tokenType: string;
@@ -56,6 +56,8 @@ export const googleAuthorizationUrl = (input: {
   state: string;
   challenge: string;
   scopes?: readonly string[];
+  accessType?: 'online' | 'offline';
+  prompt?: 'consent' | 'select_account';
 }): string => {
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   url.search = new URLSearchParams({
@@ -66,8 +68,8 @@ export const googleAuthorizationUrl = (input: {
     state: input.state,
     code_challenge: input.challenge,
     code_challenge_method: 'S256',
-    access_type: 'offline',
-    prompt: 'consent',
+    access_type: input.accessType ?? 'offline',
+    prompt: input.prompt ?? 'consent',
     include_granted_scopes: 'false',
   }).toString();
   return url.toString();
@@ -122,12 +124,12 @@ export const exchangeGoogleCode = async (input: {
     }),
   });
   const body = await response.json() as GoogleTokenResponse;
-  if (!response.ok || !body.access_token || !body.refresh_token || !body.scope || !body.expires_in) {
+  if (!response.ok || !body.access_token || !body.scope || !body.expires_in) {
     throw new Error(body.error_description ?? body.error ?? 'Google authorization failed.');
   }
   return {
     accessToken: body.access_token,
-    refreshToken: body.refresh_token,
+    refreshToken: body.refresh_token ?? null,
     expiresAt: new Date(Date.now() + body.expires_in * 1_000).toISOString(),
     scopes: body.scope.split(' ').filter(Boolean),
     tokenType: body.token_type ?? 'Bearer',
