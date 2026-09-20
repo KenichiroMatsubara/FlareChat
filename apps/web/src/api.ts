@@ -116,8 +116,20 @@ const put = <T>(path: string, body: unknown): Promise<T> => request<T>(path, { m
 const patch = <T>(path: string, body: unknown): Promise<T> => request<T>(path, { method: 'PATCH', body: JSON.stringify(body) });
 const remove = <T>(path: string): Promise<T> => request<T>(path, { method: 'DELETE' });
 
+let bootstrapInFlight: Promise<AppState> | undefined;
+const bootstrap = (): Promise<AppState> => {
+  if (bootstrapInFlight) return bootstrapInFlight;
+  const requestPromise = request<AppState>('/api/bootstrap');
+  bootstrapInFlight = requestPromise;
+  void requestPromise.then(
+    () => { if (bootstrapInFlight === requestPromise) bootstrapInFlight = undefined; },
+    () => { if (bootstrapInFlight === requestPromise) bootstrapInFlight = undefined; },
+  );
+  return requestPromise;
+};
+
 export const api = {
-  bootstrap: (): Promise<AppState> => request('/api/bootstrap'),
+  bootstrap,
   beginGoogleEntry: (intent: 'login' | 'organization_setup'): Promise<{ authorizationUrl: string }> => post('/api/entry/google', { intent }),
   logout: (): Promise<{ loggedOut: boolean }> => post('/api/auth/logout'),
   presets: (): Promise<Preset[]> => request('/api/presets'),

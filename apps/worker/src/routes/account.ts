@@ -78,25 +78,46 @@ const memoised = <T>(compute: () => Promise<T>): (() => Promise<T>) => {
 export const accountRoute = <Body = Record<string, never>, T = unknown>(
   handler: (request: AccountRequest<Body>) => Promise<RouteResult<T>>,
 ) => async (context: RouteContext): Promise<Response> => {
+  const startedAt = performance.now();
+  const accessStartedAt = startedAt;
   const accountId = context.req.param('accountId') ?? '';
-  const access = await createRequestContext(context.req.raw, context.env).account(accountId);
-  if (!access.database) throw databaseUnavailable();
-  const request: AccountRequest<Body> = {
-    env: context.env,
-    session: access.session,
-    account: access.account,
-    accountId: access.account.id,
-    database: access.database,
-    db: accountDatabase(access.database),
-    key: memoised(() => accountKeyFor(context.env, access.account.id)),
-    params: context.req.param(),
-    query: (name) => context.req.query(name),
-    body: await parsedBody<Body>(context),
-    header: (name) => context.req.header(name),
-    raw: context.req.raw,
-    waitUntil: (task) => context.executionCtx.waitUntil(task),
-  };
-  return respond(context, await handler(request));
+  let response: Response | undefined;
+  let accessDurationMs: number | undefined;
+  let handlerStartedAt: number | undefined;
+  try {
+    const access = await createRequestContext(context.req.raw, context.env).account(accountId);
+    accessDurationMs = Math.round((performance.now() - accessStartedAt) * 100) / 100;
+    if (!access.database) throw databaseUnavailable();
+    handlerStartedAt = performance.now();
+    const request: AccountRequest<Body> = {
+      env: context.env,
+      session: access.session,
+      account: access.account,
+      accountId: access.account.id,
+      database: access.database,
+      db: accountDatabase(access.database),
+      key: memoised(() => accountKeyFor(context.env, access.account.id)),
+      params: context.req.param(),
+      query: (name) => context.req.query(name),
+      body: await parsedBody<Body>(context),
+      header: (name) => context.req.header(name),
+      raw: context.req.raw,
+      waitUntil: (task) => context.executionCtx.waitUntil(task),
+    };
+    response = respond(context, await handler(request));
+    return response;
+  } finally {
+    console.info(JSON.stringify({
+      event: 'account_route_timing',
+      method: context.req.method,
+      path: new URL(context.req.url).pathname,
+      accountId,
+      accessMs: accessDurationMs ?? null,
+      handlerMs: handlerStartedAt === undefined ? null : Math.round((performance.now() - handlerStartedAt) * 100) / 100,
+      totalMs: Math.round((performance.now() - startedAt) * 100) / 100,
+      status: response?.status ?? null,
+    }));
+  }
 };
 
 /** Declares a route handler that needs a signed-in session but no Account. */
