@@ -12,31 +12,73 @@ export interface FleetMigrationReceipt {
   migratedDatabases: number;
 }
 
-const migrateFleet = async (env: Bindings): Promise<FleetMigrationReceipt> => {
+type FleetRow = {
+  source: 'organizations' | 'organization_provisionings';
+  accountId: string;
+  bindingName: string | null | undefined;
+  databaseId: string | null | undefined;
+};
+
+export interface FleetDatabase {
+  accountId: string;
+  bindingName: string;
+  databaseId: string;
+}
+
+export const validateFleetRows = (rows: readonly FleetRow[]): FleetDatabase[] => {
+  const fleet = new Map<string, FleetDatabase>();
+  for (const row of rows) {
+    if (typeof row.bindingName !== 'string' || row.bindingName.trim() === '') {
+      throw new Error(
+        `Invalid Account database route in ${row.source} for ${row.accountId}: binding_name is missing.`,
+      );
+    }
+    if (typeof row.databaseId !== 'string' || row.databaseId.trim() === '') {
+      throw new Error(
+        `Invalid Account database route in ${row.source} for ${row.accountId}: database_id is missing.`,
+      );
+    }
+    fleet.set(row.databaseId, {
+      accountId: row.accountId,
+      bindingName: row.bindingName,
+      databaseId: row.databaseId,
+    });
+  }
+  return [...fleet.values()];
+};
+
+const readFleet = async (env: Bindings): Promise<FleetDatabase[]> => {
   const control = controlDatabase(env.CONTROL_DB);
   const [activeOrSuspended, provisioning] = await Promise.all([
     control.select({
+      accountId: accounts.id,
       bindingName: accounts.bindingName,
       databaseId: accounts.databaseId,
     }).from(accounts).where(isNotNull(accounts.databaseId)).all(),
     control.select({
+      accountId: accountProvisionings.accountId,
       bindingName: accountProvisionings.bindingName,
       databaseId: accountProvisionings.databaseId,
     }).from(accountProvisionings)
       .where(isNotNull(accountProvisionings.databaseId)).all(),
   ]);
-  const fleet = [...new Map(
-    [...activeOrSuspended, ...provisioning]
-      .filter((database): database is { bindingName: string; databaseId: string } =>
-        database.databaseId !== null)
-      .map((database) => [database.databaseId, database]),
-  ).values()];
+  return validateFleetRows([
+    ...activeOrSuspended.map((row) => ({ ...row, source: 'organizations' as const })),
+    ...provisioning.map((row) => ({ ...row, source: 'organization_provisionings' as const })),
+  ]);
+};
+
+const migrateFleet = async (
+  env: Bindings,
+  fleet?: FleetDatabase[],
+): Promise<FleetMigrationReceipt> => {
+  const resolvedFleet = fleet ?? await readFleet(env);
   const databases = createDatabaseAccess(env);
-  const remote = fleet.some(({ databaseId }) => !databaseId.startsWith('local:'))
+  const remote = resolvedFleet.some(({ databaseId }) => !databaseId.startsWith('local:'))
     ? cloudflareControlPlane(env)
     : null;
   let targetMigration = ORGANIZATION_SCHEMA_TARGET;
-  for (const account of fleet) {
+  for (const account of resolvedFleet) {
     if (account.databaseId.startsWith('local:')) {
       const ready = await databases.open({
         kind: 'organization',
@@ -54,12 +96,16 @@ const migrateFleet = async (env: Bindings): Promise<FleetMigrationReceipt> => {
   }
   return {
     targetMigration,
-    migratedDatabases: fleet.length,
+    migratedDatabases: resolvedFleet.length,
   };
 };
 
 export const fleetMigration = {
   async prepareRelease(env: Bindings): Promise<FleetMigrationReceipt> {
+    // Validate the Control-plane fleet before acquiring the release barrier.
+    // A malformed route must not leave provisioning paused after a pre-release
+    // inventory failure.
+    const fleet = await readFleet(env);
     const control = controlDatabase(env.CONTROL_DB);
     const acquired = await control.update(schemaReleases).set({
       state: 'migrating',
@@ -78,7 +124,7 @@ export const fleetMigration = {
     if (acquired.meta.changes === 0) {
       throw new Error('Another schema release is already in progress.');
     }
-    return migrateFleet(env);
+    return migrateFleet(env, fleet);
   },
 
   async completeRelease(env: Bindings): Promise<FleetMigrationReceipt> {
