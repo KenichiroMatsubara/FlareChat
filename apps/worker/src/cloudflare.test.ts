@@ -1,8 +1,11 @@
 import { readFile } from 'node:fs/promises';
 
+import { isNotNull } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
 
 import { cloudflareControlPlane, type CloudflareFetch } from './cloudflare';
+import { controlDatabase } from './storage/database';
+import { accounts } from './storage/control-schema';
 import type { Bindings } from './types';
 
 const environment = {
@@ -17,6 +20,39 @@ const cloudflareResponse = (result: unknown): Response =>
   });
 
 describe('Cloudflare control plane', () => {
+  it('maps object rows from the Cloudflare REST API for Drizzle D1 selects', async () => {
+    const fetcher = vi.fn<CloudflareFetch>(async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { sql?: string };
+      expect(body.sql).toContain('"organizations"');
+      return cloudflareResponse([{
+        success: true,
+        results: [{
+          id: 'organization-production',
+          binding_name: 'ORG_PRODUCTION',
+          database_id: 'database-production',
+        }],
+        meta: { rows_read: 1 },
+      }]);
+    });
+    const controlPlane = cloudflareControlPlane(environment, fetcher);
+    const rows = await controlDatabase(controlPlane.openDatabase('control-db'))
+      .select({
+        accountId: accounts.id,
+        bindingName: accounts.bindingName,
+        databaseId: accounts.databaseId,
+      })
+      .from(accounts)
+      .where(isNotNull(accounts.databaseId))
+      .all();
+
+    expect(rows).toEqual([{
+      accountId: 'organization-production',
+      bindingName: 'ORG_PRODUCTION',
+      databaseId: 'database-production',
+    }]);
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
   it('preserves dynamically provisioned Account D1 bindings during deployment', async () => {
     const config = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8')) as {
       keep_vars?: boolean;

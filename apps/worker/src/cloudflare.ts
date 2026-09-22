@@ -73,6 +73,16 @@ const REMOTE_QUERY = Symbol('remote-query');
 const BINDING_DEPLOYMENT_ATTEMPTS = 20;
 const BINDING_DEPLOYMENT_POLL_MS = 250;
 
+const rawRows = <T>(results: unknown[]): T[][] => results.map((row) => {
+  if (Array.isArray(row)) return row as T[];
+  if (!row || typeof row !== 'object') {
+    throw new Error('Cloudflare D1 returned an invalid result row.');
+  }
+  // Cloudflare's REST API returns object rows, while Drizzle's D1 raw()
+  // contract is positional. JSON object key order is the SELECT column order.
+  return Object.values(row) as T[];
+});
+
 /**
  * Owns Cloudflare control-plane transport details. Callers use D1 operations
  * and never select URLs, authentication headers, or request encodings.
@@ -165,7 +175,7 @@ export const cloudflareControlPlane = (
         const result = await execute();
         return { success: true, results: result.results as T[], meta: result.meta as D1Result<T>['meta'] };
       },
-      raw: async <T>(): Promise<T[][]> => (await execute()).results as T[][],
+      raw: async <T>(): Promise<T[][]> => rawRows<T>((await execute()).results),
     } as unknown as D1PreparedStatement;
   };
 
