@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import accountInitialMigration from '../migrations/organization/0000_initial.sql';
 import { createMigratedTestD1, createTestD1Database, type TestD1Database } from '../test/d1';
 import { seedAccountRoute } from '../test/seed';
-import { fleetMigration } from './fleet-migration';
+import { fleetMigration, validateFleetRows } from './fleet-migration';
 import type { Bindings } from './types';
 
 const openDatabases: TestD1Database[] = [];
@@ -30,6 +30,49 @@ const initialAccountDatabase = (): TestD1Database => {
 };
 
 describe('Fleet Migration', () => {
+  it('rejects a route whose database ID is missing instead of calling startsWith on undefined', () => {
+    expect(() => validateFleetRows([{
+      source: 'organizations',
+      accountId: 'organization-invalid',
+      bindingName: 'ORG_INVALID',
+      databaseId: undefined,
+    }])).toThrow(
+      'Invalid Account database route in organizations for organization-invalid: database_id is missing.',
+    );
+  });
+
+  it('rejects a route whose binding name is missing', () => {
+    expect(() => validateFleetRows([{
+      source: 'organization_provisionings',
+      accountId: 'organization-invalid',
+      bindingName: null,
+      databaseId: 'database-invalid',
+    }])).toThrow(
+      'Invalid Account database route in organization_provisionings for organization-invalid: binding_name is missing.',
+    );
+  });
+
+  it('deduplicates the same database recorded by an Account and its provisioning row', () => {
+    expect(validateFleetRows([
+      {
+        source: 'organizations',
+        accountId: 'organization-one',
+        bindingName: 'ORG_ONE',
+        databaseId: 'database-one',
+      },
+      {
+        source: 'organization_provisionings',
+        accountId: 'organization-one',
+        bindingName: 'ORG_ONE',
+        databaseId: 'database-one',
+      },
+    ])).toEqual([{
+      accountId: 'organization-one',
+      bindingName: 'ORG_ONE',
+      databaseId: 'database-one',
+    }]);
+  });
+
   it('pauses Account provisioning until the prepared release is completed', async () => {
     const control = createMigratedTestD1('control');
     openDatabases.push(control);
