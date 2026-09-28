@@ -168,7 +168,7 @@ export const memoryGoogle = (): MemoryGoogle => {
         if (google.mailbox.historyExpired) throw new GoogleApiError('Requested entity was not found.', 404, 'history');
         return {
           historyId: google.mailbox.historyId,
-          history: google.mailbox.inbox.map((message) => ({ messagesAdded: [{ message: { id: message.id } }] })),
+          history: google.mailbox.inbox.map((message) => ({ id: `history-of-${message.id}`, messagesAdded: [{ message: { id: message.id } }] })),
         };
       },
       currentHistoryId: async () => google.mailbox.historyId,

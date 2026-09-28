@@ -10,6 +10,10 @@
  * The composition is deliberately pure. What it states is decided by the caller,
  * which delivers only after the events and Tasks are actually applied, so a
  * notice never announces work that did not happen.
+ *
+ * Nothing composed here is sent when it is composed: each notice is kept as a
+ * Morning Entry and reaches its reader inside the Morning Notice, which is
+ * composed here too (ADR 0176).
  */
 
 /** One Scheduled Event as it is stated to a reader. */
@@ -129,3 +133,62 @@ export const sourceMessageNotice = (input: {
   ...(input.events.length ? [['【予定】', ...input.events.map(eventLine)].join('\n')] : []),
   ...(input.tasks.length ? [['【タスク】', ...input.tasks.map(taskLine)].join('\n')] : []),
 ].filter(Boolean).join('\n\n');
+
+/** One thing a Morning Notice carries, as its reader will see it. */
+export interface MorningNoticeEntry {
+  /** What the entry is about, such as the subject of the mail it came from; empty when the body says it. */
+  heading: string;
+  body: string;
+}
+
+/** Splits text that alone exceeds a limit, never between the two halves of a surrogate pair. */
+const hardSplit = (text: string, limit: number): string[] => {
+  const pieces: string[] = [];
+  let rest = text;
+  while (rest.length > limit) {
+    const low = rest.charCodeAt(limit);
+    const cut = low >= 0xdc00 && low <= 0xdfff ? limit - 1 : limit;
+    pieces.push(rest.slice(0, cut));
+    rest = rest.slice(cut);
+  }
+  return rest ? [...pieces, rest] : pieces;
+};
+
+/** The subject a Morning Notice carries when it arrives by email. */
+export const morningNoticeSubject = (morning: string): string => `朝のお知らせ ${dayAndWeekday.format(new Date(morning))}`;
+
+/**
+ * One address's Morning Notice (ADR 0176): every entry kept for it since the
+ * last Morning, under one heading naming the day, packed into as few texts of at
+ * most `limit` characters as the entries allow.
+ *
+ * An entry is never divided while a whole one still fits in a fresh text, so a
+ * reader finds each piece of news in one place; only an entry longer than the
+ * limit on its own is cut. The address's quota pays per request rather than per
+ * text, so the caller carries these texts in as few requests as the Channel
+ * allows.
+ */
+export const morningNotice = (input: {
+  morning: string;
+  entries: readonly MorningNoticeEntry[];
+  limit: number;
+}): string[] => {
+  const blocks = [
+    `【${dayAndWeekday.format(new Date(input.morning))}のお知らせ】`,
+    ...input.entries.map(({ heading, body }) => heading.trim() ? `■ ${heading.trim()}\n${body.trim()}` : body.trim()),
+  ].filter(Boolean);
+  const texts: string[] = [];
+  let current = '';
+  for (const block of blocks) {
+    const joined = current ? `${current}\n\n${block}` : block;
+    if (joined.length <= input.limit) {
+      current = joined;
+      continue;
+    }
+    if (current) texts.push(current);
+    const pieces = hardSplit(block, input.limit);
+    current = pieces.pop() ?? '';
+    texts.push(...pieces);
+  }
+  return current ? [...texts, current] : texts;
+};

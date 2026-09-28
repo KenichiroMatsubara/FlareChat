@@ -2,19 +2,19 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { DUE_WORK_CRON, MAIL_POLL_CRON } from './background/runner';
+import { DUE_WORK_CRON } from './background/runner';
 
 const packageJson = (path: string): { scripts: Record<string, string> } => JSON.parse(
   readFileSync(resolve(import.meta.dirname, path), 'utf8'),
 ) as { scripts: Record<string, string> };
 
 describe('deployment contract', () => {
-  it('declares exactly the cron cadences the background runner reads', () => {
+  it('declares exactly the one cron the background runner is written for', () => {
     const wrangler = JSON.parse(
       readFileSync(resolve(import.meta.dirname, '../wrangler.jsonc'), 'utf8'),
     ) as { triggers: { crons: string[] } };
 
-    expect(wrangler.triggers.crons).toEqual([DUE_WORK_CRON, MAIL_POLL_CRON]);
+    expect(wrangler.triggers.crons).toEqual([DUE_WORK_CRON]);
   });
 
   it('routes both root and Worker deploy commands through the migration release pipeline', () => {

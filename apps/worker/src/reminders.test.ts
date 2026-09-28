@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { app } from './app';
 import { claimDueJobs } from './jobs';
-import { enqueueDueReminders, reminderJobHandler, reminderSettings, scheduleReminder, upcomingReminders } from './reminders';
+import { dueReminders, reminderJobHandler, reminderSettings, scheduleReminder, upcomingReminders } from './reminders';
 import { accountDatabase } from './storage/database';
 import type { ClaimedJob } from './jobs';
 import type { TestApp } from '../test/app';
@@ -64,66 +64,77 @@ const databaseWithRegistration = (input: { deadline?: string; status?: 'unanswer
 
 const daysBefore = (deadline: string, days: number): string => new Date(Date.parse(deadline) - days * 86_400_000).toISOString();
 
-describe('queueing due reminders', () => {
-  it('makes one durable Task reminder claimable for the assignee at each milestone', async () => {
+/** How many reminders are due on the day `at` falls on. */
+const dueCount = async (database: TestD1Database, at: string): Promise<number> => (await dueReminders(database.binding, at)).length;
+
+describe('the reminders due today', () => {
+  it('addresses one Task reminder to the assignee at each milestone, keyed by the milestone', async () => {
     for (const milestone of [7, 3, 1] as const) {
       const database = databaseWithTask();
-      const now = daysBefore(DEADLINE, milestone);
 
-      await expect(enqueueDueReminders(database.binding, now)).resolves.toBe(1);
-      const reminders = await claimDueJobs(database.binding, now);
+      const due = await dueReminders(database.binding, daysBefore(DEADLINE, milestone));
 
-      expect(reminders).toHaveLength(1);
-      expect(reminders[0]).toMatchObject({ kind: 'reminder', idempotencyKey: `reminder:task:task-1:member-1:${milestone}` });
-      expect(JSON.parse(reminders[0]!.payload)).toEqual({ subject: 'task', taskId: 'task-1', contactId: 'member-1', milestone });
+      expect(due).toEqual([{
+        key: `reminder:task:task-1:member-1:${milestone}`,
+        contactId: 'member-1',
+        destination: 'Umember-1',
+        text: expect.stringContaining(`締め切りまであと${milestone}日`),
+      }]);
     }
   });
 
-  it('makes one durable attendance reminder claimable at each 7, 3, and 1-day milestone', async () => {
+  it('addresses one attendance reminder at each 7, 3, and 1-day milestone', async () => {
     for (const milestone of [7, 3, 1] as const) {
       const database = databaseWithRegistration();
-      const now = daysBefore('2026-08-03T00:00:00.000Z', milestone);
 
-      await expect(enqueueDueReminders(database.binding, now)).resolves.toBe(1);
-      const reminders = await claimDueJobs(database.binding, now);
+      const due = await dueReminders(database.binding, daysBefore('2026-08-03T00:00:00.000Z', milestone));
 
-      expect(reminders[0]).toMatchObject({ kind: 'reminder', idempotencyKey: `reminder:registration:event-1:contact-1:${milestone}` });
-      expect(JSON.parse(reminders[0]!.payload)).toEqual({ subject: 'registration', eventId: 'event-1', contactId: 'contact-1', milestone });
+      expect(due).toEqual([{
+        key: `reminder:registration:event-1:contact-1:${milestone}`,
+        contactId: 'contact-1',
+        destination: 'Ucontact-1',
+        text: expect.stringContaining(`回答期限まであと${milestone}日`),
+      }]);
     }
+  });
+
+  it('passes over a Task whose deadline cannot be read rather than failing the day\'s reminders', async () => {
+    const database = databaseWithTask({ deadline: '未定' });
+
+    await expect(dueReminders(database.binding, daysBefore(DEADLINE, 3))).resolves.toEqual([]);
+  });
+
+  it('counts the days on the Tokyo calendar, so a deadline early in the morning is still that day', async () => {
+    // 03:00 on 20 August in Tokyo; at 05:00 on the 17th that is three calendar days away, not two.
+    const database = databaseWithTask({ deadline: '2026-08-19T18:00:00.000Z' });
+
+    await expect(dueReminders(database.binding, '2026-08-16T20:00:00.000Z')).resolves.toMatchObject([{ key: 'reminder:task:task-1:member-1:3' }]);
   });
 
   it('reminds nobody about a completed Task, an unassigned one, an answered Registration, or a day that is not a milestone', async () => {
     const threeDaysBefore = daysBefore(DEADLINE, 3);
-    await expect(enqueueDueReminders(databaseWithTask({ completed: true }).binding, threeDaysBefore)).resolves.toBe(0);
-    await expect(enqueueDueReminders(databaseWithTask({ assigned: false }).binding, threeDaysBefore)).resolves.toBe(0);
-    await expect(enqueueDueReminders(databaseWithTask().binding, daysBefore(DEADLINE, 2))).resolves.toBe(0);
-    await expect(enqueueDueReminders(databaseWithRegistration({ status: 'attending' }).binding, '2026-07-31T00:00:00.000Z')).resolves.toBe(0);
-  });
-
-  it('does not duplicate a milestone it already queued', async () => {
-    const database = databaseWithTask();
-    const now = daysBefore(DEADLINE, 3);
-
-    await expect(enqueueDueReminders(database.binding, now)).resolves.toBe(1);
-    await expect(enqueueDueReminders(database.binding, now)).resolves.toBe(0);
+    await expect(dueCount(databaseWithTask({ completed: true }), threeDaysBefore)).resolves.toBe(0);
+    await expect(dueCount(databaseWithTask({ assigned: false }), threeDaysBefore)).resolves.toBe(0);
+    await expect(dueCount(databaseWithTask(), daysBefore(DEADLINE, 2))).resolves.toBe(0);
+    await expect(dueCount(databaseWithRegistration({ status: 'attending' }), '2026-07-31T00:00:00.000Z')).resolves.toBe(0);
   });
 
   it('reminds on the deadline day and the day a Task falls overdue, but never after an attendance deadline', async () => {
-    await expect(enqueueDueReminders(databaseWithTask().binding, DEADLINE)).resolves.toBe(1);
-    await expect(enqueueDueReminders(databaseWithTask().binding, daysBefore(DEADLINE, -1))).resolves.toBe(1);
-    await expect(enqueueDueReminders(databaseWithTask().binding, daysBefore(DEADLINE, -2))).resolves.toBe(0);
-    await expect(enqueueDueReminders(databaseWithRegistration().binding, '2026-08-03T00:00:00.000Z')).resolves.toBe(0);
+    await expect(dueCount(databaseWithTask(), DEADLINE)).resolves.toBe(1);
+    await expect(dueCount(databaseWithTask(), daysBefore(DEADLINE, -1))).resolves.toBe(1);
+    await expect(dueCount(databaseWithTask(), daysBefore(DEADLINE, -2))).resolves.toBe(0);
+    await expect(dueCount(databaseWithRegistration(), '2026-08-03T00:00:00.000Z')).resolves.toBe(0);
   });
 
-  it('queues both subjects in one pass, each under its own switch', async () => {
+  it('finds both subjects in one pass, each under its own switch', async () => {
     const database = databaseWithTask({ deadline: '2026-08-03T00:00:00.000Z' });
     enable(database, 'attendance_reminders_enabled');
     seedScheduledEvent(database, { id: 'event-1', attendanceDeadline: '2026-08-03T00:00:00.000Z' });
     seedAttendanceRegistration(database, { eventId: 'event-1', contactId: 'contact-1', destination: 'Ucontact-1' });
 
-    await expect(enqueueDueReminders(database.binding, '2026-07-31T00:00:00.000Z')).resolves.toBe(2);
+    await expect(dueCount(database, '2026-07-31T00:00:00.000Z')).resolves.toBe(2);
     await reminderSettings(accountDatabase(database.binding), 'task').saveEnabled(false, '2026-07-31T00:00:00.000Z');
-    await expect(enqueueDueReminders(database.binding, '2026-08-02T00:00:00.000Z')).resolves.toBe(1);
+    await expect(dueCount(database, '2026-08-02T00:00:00.000Z')).resolves.toBe(1);
   });
 });
 
@@ -136,27 +147,27 @@ describe('the reminder switches', () => {
     const registration = databaseWithRegistration({ enabled: false });
 
     await expect(reminderSettings(accountDatabase(task.binding), 'task').enabled()).resolves.toBe(false);
-    await expect(enqueueDueReminders(task.binding, daysBefore(DEADLINE, 3))).resolves.toBe(0);
+    await expect(dueCount(task, daysBefore(DEADLINE, 3))).resolves.toBe(0);
     // The preview still answers what turning it on would send.
     await expect(upcomingReminders(task.binding, daysBefore(DEADLINE, 3))).resolves.not.toEqual([]);
     await expect(reminderSettings(accountDatabase(registration.binding), 'registration').enabled()).resolves.toBe(false);
-    await expect(enqueueDueReminders(registration.binding, '2026-07-31T00:00:00.000Z')).resolves.toBe(0);
+    await expect(dueCount(registration, '2026-07-31T00:00:00.000Z')).resolves.toBe(0);
     await expect(upcomingReminders(registration.binding, '2026-07-20T00:00:00.000Z')).resolves.toMatchObject([
       { sendOn: '2026-07-27', milestone: 7 }, { sendOn: '2026-07-31', milestone: 3 }, { sendOn: '2026-08-02', milestone: 1 },
     ]);
   });
 
-  it('stop queueing again when turned off, and keep the cadence they were given', async () => {
+  it('stop reminding when turned off, and keep the cadence they were given', async () => {
     const database = databaseWithTask();
     const settings = reminderSettings(accountDatabase(database.binding), 'task');
     await settings.saveDays([3], '2026-08-01T00:00:00.000Z');
 
     await settings.saveEnabled(false, '2026-08-01T00:00:00.000Z');
-    await expect(enqueueDueReminders(database.binding, daysBefore(DEADLINE, 3))).resolves.toBe(0);
+    await expect(dueCount(database, daysBefore(DEADLINE, 3))).resolves.toBe(0);
 
     await settings.saveEnabled(true, '2026-08-01T00:00:00.000Z');
     await expect(settings.days()).resolves.toEqual([3]);
-    await expect(enqueueDueReminders(database.binding, daysBefore(DEADLINE, 3))).resolves.toBe(1);
+    await expect(dueCount(database, daysBefore(DEADLINE, 3))).resolves.toBe(1);
   });
 });
 
@@ -171,25 +182,25 @@ describe('the Reminder Milestones an Account chose', () => {
     const database = databaseWithTask();
     await reminderSettings(accountDatabase(database.binding), 'task').saveDays([14], '2026-08-01T00:00:00.000Z');
 
-    await expect(enqueueDueReminders(database.binding, daysBefore(DEADLINE, 3))).resolves.toBe(0);
-    await expect(enqueueDueReminders(database.binding, daysBefore(DEADLINE, 14))).resolves.toBe(1);
+    await expect(dueCount(database, daysBefore(DEADLINE, 3))).resolves.toBe(0);
+    await expect(dueCount(database, daysBefore(DEADLINE, 14))).resolves.toBe(1);
   });
 
-  it('queue on a chosen attendance milestone and no longer on one that was dropped', async () => {
+  it('remind on a chosen attendance milestone and no longer on one that was dropped', async () => {
     const database = databaseWithRegistration();
     await reminderSettings(accountDatabase(database.binding), 'registration').saveDays([14, 0], '2026-07-01T00:00:00.000Z');
 
-    await expect(enqueueDueReminders(database.binding, '2026-07-31T00:00:00.000Z')).resolves.toBe(0);
-    await expect(enqueueDueReminders(database.binding, '2026-07-20T00:00:00.000Z')).resolves.toBe(1);
-    await expect(enqueueDueReminders(database.binding, '2026-08-03T00:00:00.000Z')).resolves.toBe(1);
+    await expect(dueCount(database, '2026-07-31T00:00:00.000Z')).resolves.toBe(0);
+    await expect(dueCount(database, '2026-07-20T00:00:00.000Z')).resolves.toBe(1);
+    await expect(dueCount(database, '2026-08-03T00:00:00.000Z')).resolves.toBe(1);
   });
 
-  it('queue nothing at all once the Account empties the list', async () => {
+  it('remind of nothing at all once the Account empties the list', async () => {
     const database = databaseWithTask();
     await reminderSettings(accountDatabase(database.binding), 'task').saveDays([], '2026-08-01T00:00:00.000Z');
 
-    await expect(enqueueDueReminders(database.binding, daysBefore(DEADLINE, 3))).resolves.toBe(0);
-    await expect(enqueueDueReminders(database.binding, DEADLINE)).resolves.toBe(0);
+    await expect(dueCount(database, daysBefore(DEADLINE, 3))).resolves.toBe(0);
+    await expect(dueCount(database, DEADLINE)).resolves.toBe(0);
     await expect(upcomingReminders(database.binding, daysBefore(DEADLINE, 5))).resolves.toEqual([]);
   });
 

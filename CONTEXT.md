@@ -36,7 +36,7 @@ The Automation Inbox remains an Account-owned Google Connection rather than a pe
 
 A Contact registers attendance, writes comments, and completes the Tasks assigned to it through a Contact Page, which it enters by a short-lived single-use link exchanged for a time-bounded session, delivered only to a Channel Handle that addresses that Contact alone. A Contact may read every Task in the Account but may complete only its own. It holds no credential of any kind, so anyone holding an unexpired link acts as that Contact, and revocation, single use, and expiry are the whole mitigation. A Contact reachable only through a shared group or room has no page and is administered entirely by the Account, because a link sent into a group lets every member of it act as that Contact.
 
-An Account sends no reminders until it turns them on, and turns Task reminders and attendance reminders on separately. An unfinished Task then notifies its assignee alone at the Reminder Milestones its Account chose, which default to seven, three, and one day before the deadline, the deadline day itself, and the day the Task falls overdue. An unanswered Registration notifies its Contact at the Reminder Milestones its Account chose for attendance, which default to seven, three, and one day before the Response Deadline and stop at the deadline day, because a Registration answered after it is one FlareChat will not accept. Whichever reminders an Account would send are readable before it turns them on, worded and addressed as they will arrive.
+An Account sends no reminders until it turns them on, and turns Task reminders and attendance reminders on separately. An unfinished Task then notifies its assignee alone at the Reminder Milestones its Account chose, which default to seven, three, and one day before the deadline, the deadline day itself, and the day the Task falls overdue. An unanswered Registration notifies its Contact at the Reminder Milestones its Account chose for attendance, which default to seven, three, and one day before the Response Deadline and stop at the deadline day, because a Registration answered after it is one FlareChat will not accept. Whichever reminders an Account would send are readable before it turns them on, worded and addressed as they will arrive. A reminder is counted in Asia/Tokyo calendar days and arrives in the Morning Notice of the day it falls on.
 
 A Task names the Contact it was given to, and nothing stands between the two. The extraction is shown the Account's active Contacts, each with the description the Account wrote for it, and names one of them or states that none fits; the assignee's name is copied onto the Task when it is created, so a Task keeps saying who it was given to after that Contact is renamed or removed. An Account may hand a Task to a different Contact, or take it off every Contact, at any time.
 
@@ -287,12 +287,24 @@ The single plain-text account of one Source Message and its accepted attachments
 _Avoid_: description, digest, snippet
 
 **Source Message Notice**:
-The one message a Source Message's readers receive: its Message Summary, then the Scheduled Events it produced, then the Tasks it raised, composed as one text and delivered once to the Contacts its Automation Rule names, each reached on the Channel it is reachable on. It is delivered only after those events and Tasks are applied, so it never announces work that did not happen, and a section with nothing in it is left out.
+What a Source Message's readers are told about it: its Message Summary, then the Scheduled Events it produced, then the Tasks it raised, composed as one text for each Contact its Automation Rule names, each reached on the Channel it is reachable on. It is composed only after those events and Tasks are applied, so it never announces work that did not happen, and a section with nothing in it is left out. It is kept as a Morning Entry and reaches its readers in the next Morning Notice.
 _Avoid_: digest, summary mail, notification
 
 **Intake Notice**:
 The sender-and-subject-only notification substituted for a Message Summary when a Source Message becomes an Automation Exception before a summary exists.
 _Avoid_: error notice, fallback summary
+
+**Morning**:
+05:00 Asia/Tokyo, the one moment each day an Automation Inbox owes an intake and its Account's readers are spoken to. An intake that has not finished by 07:00 no longer holds the Morning Notice back.
+_Avoid_: batch window, daily run, cron
+
+**Morning Entry**:
+One thing an address is to be told at the next Morning: a Source Message Notice, an Intake Notice, a LINE message an Agent Rule wrote, or a Task or attendance reminder due that day. It is addressed when it is kept and waits until the Morning Notice carries it.
+_Avoid_: outbox, queue, pending message, digest item
+
+**Morning Notice**:
+The one message an address receives each Morning, carrying every Morning Entry kept for it since the last. It is one email, or as few LINE or Discord messages as their text limits allow, and each Morning Entry it carries keeps its own Delivery Record.
+_Avoid_: digest, daily summary, batch notification
 
 **Event Candidate**:
 One distinct proposed event or recurring series extracted from a Source Message before it becomes a Scheduled Event or Automation Exception.

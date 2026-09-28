@@ -4,7 +4,7 @@ import { inboxRoutes } from './inbox';
 import { memoryProviders } from '../../test/providers';
 import { createTestApp, type TestApp } from '../../test/app';
 import { seedContact } from '../../test/seed';
-import { enqueueDueReminders } from '../reminders';
+import { dueReminders } from '../reminders';
 
 const automationRoutes = inboxRoutes(memoryProviders());
 
@@ -136,7 +136,7 @@ describe('Account Automation routes', () => {
     );
     const threeDaysBefore = '2026-08-17T00:00:00.000Z';
 
-    await expect(enqueueDueReminders(fixture.account.binding, threeDaysBefore)).resolves.toBe(0);
+    await expect(dueReminders(fixture.account.binding, threeDaysBefore)).resolves.toHaveLength(0);
 
     const turnedOn = await automationRoutes.fetch(
       fixture.jsonRequest('/organizations/organization-1/task-reminders', { enabled: true }, 'PUT'),
@@ -144,13 +144,13 @@ describe('Account Automation routes', () => {
     );
     expect(turnedOn.status).toBe(200);
 
-    await expect(enqueueDueReminders(fixture.account.binding, threeDaysBefore)).resolves.toBe(1);
+    await expect(dueReminders(fixture.account.binding, threeDaysBefore)).resolves.toHaveLength(1);
 
     await automationRoutes.fetch(
       fixture.jsonRequest('/organizations/organization-1/task-reminders', { enabled: false }, 'PUT'),
       fixture.environment,
     );
-    await expect(enqueueDueReminders(fixture.account.binding, '2026-08-19T00:00:00.000Z')).resolves.toBe(0);
+    await expect(dueReminders(fixture.account.binding, '2026-08-19T00:00:00.000Z')).resolves.toHaveLength(0);
   });
 
   it('reports both reminder kinds as off until an Account turns them on', async () => {

@@ -6,8 +6,12 @@
  * A reminder has a subject — a Task, a Registration, or a message an outside
  * agent scheduled for a stated time (ADR 0156) — and the subject is a
  * distinction inside this module: the milestone arithmetic, the "still today"
- * guard that keeps a backlog from arriving as one burst, the Job key, and the
- * send are written once.
+ * guard that keeps a backlog from arriving as one burst, the key, and the send
+ * are written once.
+ *
+ * A Task or attendance reminder is counted in Asia/Tokyo calendar days and
+ * travels in the Morning Notice of the day it falls on (ADR 0176); only a
+ * reminder scheduled for a stated time still travels as its own Job.
  */
 
 import {
@@ -16,11 +20,12 @@ import {
   displayLineDestinationId,
   shouldSendAttendanceReminder,
   shouldSendTaskReminder,
+  tokyoDay,
+  tokyoDaysBetween,
 } from '@mail/domain';
 import { and, eq, isNotNull } from 'drizzle-orm';
 
 import { channelCredentials, isChannelName, sendOnChannel } from './channel';
-import { createDatabaseAccess } from './database-access';
 import type { JobHandler } from './job-dispatch';
 import { enqueueJob } from './jobs';
 import { accountKeyFor } from './keys';
@@ -36,9 +41,8 @@ import {
   saveAccountReminderDays,
   saveAccountRemindersEnabled,
 } from './reminder-settings';
-import { accounts } from './storage/control-schema';
 import { attendance, contactLineDestinations, contacts, events, lineDestinations, tasks } from './storage/account-schema';
-import { controlDatabase, accountDatabase, type AccountDatabase } from './storage/database';
+import { accountDatabase, type AccountDatabase } from './storage/database';
 import type { Bindings } from './types';
 
 /** The one Job kind every reminder travels as; the payload names its subject. */
@@ -91,11 +95,17 @@ export const reminderSettings = (database: AccountDatabase, subject: 'task' | 'r
   };
 };
 
-const day = (instant: number): string => new Date(instant).toISOString().slice(0, 10);
+/** The Asia/Tokyo day `days` whole days after the one `day` names, both as `YYYY-MM-DD`. */
+const dayAfter = (day: string, days: number): string =>
+  new Date(Date.parse(day) + days * 86_400_000).toISOString().slice(0, 10);
 
-/** Whole days from `at` to the deadline, the same count the milestones are chosen in. */
+/**
+ * Whole Asia/Tokyo calendar days from the day `at` falls on to the deadline's,
+ * the same count the milestones are chosen in: a deadline at 03:00 is on the
+ * day it names, not on the day before.
+ */
 export const milestoneAt = (deadline: string, at: string): number =>
-  Math.floor((Date.parse(deadline) - Date.parse(at)) / 86_400_000);
+  tokyoDaysBetween(Date.parse(at), Date.parse(deadline));
 
 interface TaskCandidate {
   taskId: string;
@@ -175,11 +185,11 @@ export const upcomingReminders = async (
   subject?: 'task' | 'registration',
 ): Promise<ScheduledReminder[]> => {
   const db = accountDatabase(database);
-  const today = day(Date.parse(now));
+  const today = tokyoDay(Date.parse(now));
   const scheduled: ScheduledReminder[] = [];
   const milestonesAhead = (deadline: string, milestones: readonly number[]): Array<{ milestone: number; sendOn: string }> =>
     milestones.flatMap((milestone) => {
-      const sendOn = day(Date.parse(deadline) - milestone * 86_400_000);
+      const sendOn = dayAfter(tokyoDay(Date.parse(deadline)), -milestone);
       return sendOn < today ? [] : [{ milestone, sendOn }];
     });
   if (subject !== 'registration') {
@@ -226,7 +236,8 @@ export const upcomingReminders = async (
   return scheduled.sort((left, right) => left.sendOn.localeCompare(right.sendOn) || left.title.localeCompare(right.title));
 };
 
-const reminderKey = (payload: ReminderPayload, at: string): string => {
+/** The key a reminder is kept under, as a Job or a Morning Entry; the same milestone keeps the same key in both. */
+export const reminderKey = (payload: ReminderPayload, at: string): string => {
   switch (payload.subject) {
     case 'task':
       return `reminder:task:${payload.taskId}:${payload.contactId}:${payload.milestone}`;
@@ -247,49 +258,56 @@ const enqueueReminder = async (database: D1Database, payload: ReminderPayload, a
   return job.created;
 };
 
+/** One Task or attendance reminder due today, addressed and worded as it will arrive. */
+export interface DueReminder {
+  /** Names the subject, the thing, the Contact, and the milestone, so each milestone is kept once (ADR 0171). */
+  key: string;
+  contactId: string;
+  /** The LINE destination the Contact is reachable at. */
+  destination: string;
+  text: string;
+}
+
 /**
- * Queues one durable reminder per subject and milestone that is due today,
- * addressed to the one Contact it concerns. ADR 0030 reminds only those who have
- * not yet acted, so a completed Task, an unassigned one, and an answered
- * Registration produce nothing; a switch that is off produces nothing either.
+ * The reminders due on the Asia/Tokyo day `at` falls on, one per subject and
+ * milestone, addressed to the one Contact it concerns. ADR 0030 reminds only
+ * those who have not yet acted, so a completed Task, an unassigned one, and an
+ * answered Registration produce nothing; a switch that is off produces nothing
+ * either. The Morning Notice keeps each under its key, so reading this twice
+ * on one day sends nothing twice (ADR 0176).
  */
-export const enqueueDueReminders = async (database: D1Database, now: string): Promise<number> => {
+export const dueReminders = async (database: D1Database, at: string): Promise<DueReminder[]> => {
   const db = accountDatabase(database);
-  let queued = 0;
+  const due: DueReminder[] = [];
   const taskSettings = reminderSettings(db, 'task');
   if (await taskSettings.enabled()) {
     const milestones = await taskSettings.days();
     for (const row of milestones.length ? await taskCandidates(db) : []) {
-      const milestone = milestoneAt(row.deadline, now);
+      const milestone = milestoneAt(row.deadline, at);
       if (!shouldSendTaskReminder({ completed: row.completed, assigned: true, daysUntilDeadline: milestone, milestones })) continue;
-      if (await enqueueReminder(database, { subject: 'task', taskId: row.taskId, contactId: row.contactId, milestone }, now)) queued += 1;
+      due.push({
+        key: reminderKey({ subject: 'task', taskId: row.taskId, contactId: row.contactId, milestone }, at),
+        contactId: row.contactId,
+        destination: row.destination,
+        text: taskText(row, milestone),
+      });
     }
   }
   const registrationSettings = reminderSettings(db, 'registration');
   if (await registrationSettings.enabled()) {
     const milestones = await registrationSettings.days();
     for (const row of milestones.length ? await registrationCandidates(db) : []) {
-      const milestone = milestoneAt(row.attendanceDeadline, now);
+      const milestone = milestoneAt(row.attendanceDeadline, at);
       if (!shouldSendAttendanceReminder({ status: row.status, daysUntilDeadline: milestone, alreadySent: false, milestones })) continue;
-      if (await enqueueReminder(database, { subject: 'registration', eventId: row.eventId, contactId: row.contactId, milestone }, now)) queued += 1;
+      due.push({
+        key: reminderKey({ subject: 'registration', eventId: row.eventId, contactId: row.contactId, milestone }, at),
+        contactId: row.contactId,
+        destination: row.destination,
+        text: attendanceReminderNotice({ title: row.eventTitle, deadline: row.attendanceDeadline, milestone }),
+      });
     }
   }
-  return queued;
-};
-
-/** Scans every active Account database; a suspended Account deliberately receives no new reminder work. */
-export const enqueueDueAccountReminders = async (env: Bindings, now: string): Promise<number> => {
-  const activeAccounts = await controlDatabase(env.CONTROL_DB).select({
-    bindingName: accounts.bindingName,
-    databaseId: accounts.databaseId,
-  }).from(accounts).where(and(eq(accounts.status, 'active'), isNotNull(accounts.databaseId))).all();
-  let queued = 0;
-  const databases = createDatabaseAccess(env);
-  for (const account of activeAccounts) {
-    const database = await databases.open({ kind: 'organization', bindingName: account.bindingName, databaseId: account.databaseId });
-    queued += await enqueueDueReminders(database.raw, now);
-  }
-  return queued;
+  return due;
 };
 
 /** Records a reminder an outside agent scheduled for a stated time (ADR 0156); the Job row is the whole promise. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { sourceMessageNotice, taskReminderNotice } from './notice';
+import { morningNotice, morningNoticeSubject, sourceMessageNotice, taskReminderNotice } from './notice';
 
 const event = {
   title: '定例会議',
@@ -92,5 +92,48 @@ describe('Task reminder notice', () => {
   it('leaves out a subject or a description the Task does not carry', () => {
     expect(taskReminderNotice({ ...reminder, sourceMessageSubject: '  ', description: '' }))
       .toBe('【リマインド】締め切りまであと3日\n・8/29(土)まで 登録用紙の返信');
+  });
+});
+
+describe('Morning Notice', () => {
+  const morning = '2026-07-31T20:00:00.000Z';
+
+  it('opens with the day and states each entry under the subject it is about', () => {
+    expect(morningNotice({
+      morning,
+      entries: [
+        { heading: '例会のお知らせ', body: '例会を開催します。' },
+        { heading: '', body: '【リマインド】本日が締め切りです\n・8/1(土)まで 会費を払う' },
+      ],
+      limit: 5_000,
+    })).toEqual([[
+      '【8/1(土)のお知らせ】',
+      '',
+      '■ 例会のお知らせ',
+      '例会を開催します。',
+      '',
+      '【リマインド】本日が締め切りです',
+      '・8/1(土)まで 会費を払う',
+    ].join('\n')]);
+    expect(morningNoticeSubject(morning)).toBe('朝のお知らせ 8/1(土)');
+  });
+
+  it('starts a new text rather than dividing an entry that still fits whole in one', () => {
+    const texts = morningNotice({
+      morning,
+      entries: [{ heading: '', body: 'あ'.repeat(30) }, { heading: '', body: 'い'.repeat(30) }],
+      limit: 50,
+    });
+
+    expect(texts).toEqual(['【8/1(土)のお知らせ】\n\n' + 'あ'.repeat(30), 'い'.repeat(30)]);
+    expect(texts.every((text) => text.length <= 50)).toBe(true);
+  });
+
+  it('cuts only an entry longer than the limit, and never inside a character', () => {
+    const texts = morningNotice({ morning, entries: [{ heading: '', body: '😀'.repeat(30) }], limit: 25 });
+
+    expect(texts.every((text) => text.length <= 25)).toBe(true);
+    expect(texts.join('')).toContain('😀'.repeat(30));
+    expect(texts.every((text) => !/[\uD800-\uDBFF]$/u.test(text))).toBe(true);
   });
 });

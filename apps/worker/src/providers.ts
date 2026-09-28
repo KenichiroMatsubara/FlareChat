@@ -37,7 +37,8 @@ export interface GmailMessage {
 export interface GmailHistory {
   historyId?: string;
   nextPageToken?: string;
-  history?: Array<{ messagesAdded?: Array<{ message?: { id?: string } }> }>;
+  /** Each record's `id` is a history position a later read may start after. */
+  history?: Array<{ id?: string; messagesAdded?: Array<{ message?: { id?: string } }> }>;
 }
 
 export interface CalendarTime {

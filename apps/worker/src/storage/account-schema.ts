@@ -395,6 +395,30 @@ export const deliveries = sqliteTable('deliveries', {
   index('deliveries_source_message_idx').on(table.sourceMessageId, table.createdAt),
 ]);
 
+/**
+ * One thing an address is to be told at the next Morning (ADR 0176). It is
+ * addressed when it is kept, and the Morning Notice that carries it marks it
+ * sent, or failed once its attempts run out.
+ */
+export const morningEntries = sqliteTable('morning_entries', {
+  id: text('id').primaryKey(),
+  channel: text('channel', { enum: ['email', 'line', 'discord'] }).notNull(),
+  destination: text('destination').notNull(),
+  contactId: text('contact_id'),
+  sourceMessageId: text('source_message_id').references(() => sourceMessages.id),
+  heading: text('heading').notNull().default(''),
+  body: text('body').notNull(),
+  idempotencyKey: text('idempotency_key').unique(),
+  state: text('state', { enum: ['pending', 'sent', 'failed'] }).notNull().default('pending'),
+  attempts: integer('attempts').notNull().default(0),
+  createdAt: text('created_at').notNull(),
+  sentAt: text('sent_at'),
+}, (table) => [
+  check('morning_entries_channel_check', sql`${table.channel} in ('email', 'line', 'discord')`),
+  check('morning_entries_state_check', sql`${table.state} in ('pending', 'sent', 'failed')`),
+  index('morning_entries_state_idx').on(table.state, table.attempts, table.createdAt),
+]);
+
 export const automationWarnings = sqliteTable('automation_warnings', {
   id: text('id').primaryKey(),
   sourceMessageId: text('source_message_id').notNull().references(() => sourceMessages.id),

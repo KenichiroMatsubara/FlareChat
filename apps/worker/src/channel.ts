@@ -151,7 +151,8 @@ const discordTargetFor = async (database: D1Database, contactId: string): Promis
   return row?.replyTarget ?? null;
 };
 
-const destinationFor = async (input: {
+/** The address a Contact is reachable at on one Channel, or null when it holds no handle there. */
+export const contactDestination = async (input: {
   database: D1Database;
   contactId: string;
   channel: ChannelName;
@@ -165,7 +166,7 @@ export const contactChannels = async (input: {
   contactId: string;
 }): Promise<ChannelName[]> => {
   const reachable = await Promise.all(CHANNELS.map(async (channel) =>
-    await destinationFor({ ...input, channel }) ? channel : null));
+    await contactDestination({ ...input, channel }) ? channel : null));
   return reachable.filter((channel): channel is ChannelName => channel !== null);
 };
 
@@ -212,6 +213,36 @@ const stated = (texts: readonly string[]): string[] => {
   return said;
 };
 
+/**
+ * What one Delivery Record names besides its address. A send records one per
+ * intended message unless its caller states the records itself, as a Morning
+ * Notice does for the Morning Entries its texts carry (ADR 0176).
+ */
+export interface DeliveryRecordTarget {
+  eventId?: string | null;
+  sourceMessageId?: string | null;
+}
+
+const recordTargets = (input: {
+  texts: number;
+  records?: readonly DeliveryRecordTarget[] | undefined;
+  eventId?: string | null | undefined;
+  sourceMessageId?: string | null | undefined;
+}): DeliveryRecordTarget[] => input.records ? [...input.records] : Array.from({ length: input.texts }, () => ({
+  ...(input.eventId === undefined ? {} : { eventId: input.eventId }),
+  ...(input.sourceMessageId === undefined ? {} : { sourceMessageId: input.sourceMessageId }),
+}));
+
+const recordAll = (
+  database: D1Database,
+  targets: readonly DeliveryRecordTarget[],
+  attempt: { channel: ChannelName; destination: string; outcome: DeliveryAttempt['outcome']; externalId: string | null },
+): Promise<DeliveryAttempt[]> => Promise.all(targets.map((target) => recordDeliveryAttempt(database, {
+  ...(target.eventId === undefined ? {} : { eventId: target.eventId }),
+  ...(target.sourceMessageId === undefined ? {} : { sourceMessageId: target.sourceMessageId }),
+  ...attempt,
+})));
+
 const failedAt = async (input: {
   database: D1Database;
   channel: ChannelName;
@@ -219,19 +250,11 @@ const failedAt = async (input: {
   messages: number;
   requests: number;
   error: string;
-  eventId?: string | null;
-  sourceMessageId?: string | null;
+  targets: readonly DeliveryRecordTarget[];
 }): Promise<ChannelOutcome> => {
-  for (let index = 0; index < input.messages; index += 1) {
-    await recordDeliveryAttempt(input.database, {
-      ...(input.eventId === undefined ? {} : { eventId: input.eventId }),
-      ...(input.sourceMessageId === undefined ? {} : { sourceMessageId: input.sourceMessageId }),
-      destination: input.destination,
-      channel: input.channel,
-      outcome: 'failed',
-      externalId: null,
-    });
-  }
+  await recordAll(input.database, input.targets, {
+    channel: input.channel, destination: input.destination, outcome: 'failed', externalId: null,
+  });
   return {
     channel: input.channel,
     destination: input.destination,
@@ -245,19 +268,20 @@ const failedAt = async (input: {
 
 const LINE_PUSH_URL = 'https://api.line.me/v2/bot/message/push';
 
-/** Speaks the LINE Messaging API once: one push of at most five message objects, one Delivery Record per intended message. */
-const deliverLineBatch = async (input: {
-  database: D1Database;
+/** What one LINE push did, before anything is recorded about it. */
+interface LinePush {
+  outcome: DeliveryAttempt['outcome'];
+  externalId: string | null;
+}
+
+/** Speaks the LINE Messaging API once: one push of at most five message objects. */
+const pushLineBatch = async (input: {
   request: ChannelFetch;
   accessToken: string;
-  eventId?: string | null;
-  sourceMessageId?: string | null;
   destinationId: string;
   messages: string[];
-}): Promise<DeliveryAttempt[]> => {
+}): Promise<LinePush> => {
   if (!input.messages.length || input.messages.length > LINE_BATCH_LIMIT) throw new Error('A LINE batch must contain between one and five messages.');
-  let outcome: DeliveryAttempt['outcome'] = 'failed';
-  let externalId: string | null = null;
   try {
     const response = await input.request(LINE_PUSH_URL, {
       method: 'POST',
@@ -265,19 +289,11 @@ const deliverLineBatch = async (input: {
       body: JSON.stringify({ to: input.destinationId, messages: input.messages.map((text) => ({ type: 'text', text })) }),
     });
     if (!response.ok) throw new Error('LINE push failed.');
-    outcome = 'succeeded';
-    externalId = response.headers.get('x-line-request-id');
+    return { outcome: 'succeeded', externalId: response.headers.get('x-line-request-id') };
   } catch {
-    // Every failed intended message still receives its own retryable record below.
+    // The failed intended messages still receive their retryable records from the caller.
+    return { outcome: 'failed', externalId: null };
   }
-  return Promise.all(input.messages.map(() => recordDeliveryAttempt(input.database, {
-    ...(input.eventId === undefined ? {} : { eventId: input.eventId }),
-    ...(input.sourceMessageId === undefined ? {} : { sourceMessageId: input.sourceMessageId }),
-    destination: input.destinationId,
-    channel: 'line',
-    outcome,
-    externalId,
-  })));
 };
 
 /**
@@ -301,15 +317,18 @@ export const sendOnDestination = async (input: {
   texts: readonly string[];
   eventId?: string | null;
   sourceMessageId?: string | null;
+  /**
+   * The Delivery Records this send leaves, each with the send's one outcome, in
+   * place of one per text. A Morning Notice states one per Morning Entry.
+   */
+  records?: readonly DeliveryRecordTarget[];
   fetch?: ChannelFetch;
 }): Promise<ChannelOutcome> => {
   if (!isChannelName(input.channel)) throw new Error(`This product does not reach an address on ${input.channel} yet.`);
   const channel = input.channel;
   const texts = stated(input.texts);
-  const records = {
-    ...(input.eventId === undefined ? {} : { eventId: input.eventId }),
-    ...(input.sourceMessageId === undefined ? {} : { sourceMessageId: input.sourceMessageId }),
-  };
+  const perText = !input.records;
+  const targets = recordTargets({ texts: texts.length, records: input.records, eventId: input.eventId, sourceMessageId: input.sourceMessageId });
   const credential = input.credentials[channel];
   if (!credential) {
     return failedAt({
@@ -319,30 +338,39 @@ export const sendOnDestination = async (input: {
       messages: texts.length,
       requests: 0,
       error: `This Account has no ${channel === 'line' ? 'LINE' : 'Discord'} Connection to send through.`,
-      ...records,
+      targets,
     });
   }
   const request = input.fetch ?? ((url, init) => fetch(url, init));
 
   if (channel === 'line') {
     const batches = batched(texts, LINE_BATCH_LIMIT);
-    const attempts = await Promise.all(batches.map((messages) => deliverLineBatch({
-      database: input.database,
+    const pushes = await Promise.all(batches.map((messages) => pushLineBatch({
       request,
       accessToken: credential,
       destinationId: input.destination,
       messages,
-      ...records,
     })));
-    const flattened = attempts.flat();
-    const delivered = flattened.every((attempt) => attempt.outcome === 'succeeded');
+    const delivered = pushes.every((push) => push.outcome === 'succeeded');
+    const externalId = pushes.find((push) => push.externalId)?.externalId ?? null;
+    if (perText) {
+      // One record per intended message, carrying the outcome of the push that carried it.
+      await Promise.all(batches.map((messages, index) => recordAll(
+        input.database, targets.slice(index * LINE_BATCH_LIMIT, index * LINE_BATCH_LIMIT + messages.length),
+        { channel, destination: input.destination, outcome: pushes[index]!.outcome, externalId: pushes[index]!.externalId },
+      )));
+    } else {
+      await recordAll(input.database, targets, {
+        channel, destination: input.destination, outcome: delivered ? 'succeeded' : 'failed', externalId: delivered ? externalId : null,
+      });
+    }
     return {
       channel,
       destination: input.destination,
       delivered,
       messages: texts.length,
       requests: batches.length,
-      externalId: flattened.find((attempt) => attempt.externalId)?.externalId ?? null,
+      externalId,
       error: delivered ? null : 'LINE refused the message.',
     };
   }
@@ -352,13 +380,11 @@ export const sendOnDestination = async (input: {
     try {
       const sent = await sendDiscordMessage({ fetch: request, botToken: credential, channelId: input.destination, text });
       externalId = externalId ?? sent.externalId;
-      await recordDeliveryAttempt(input.database, {
-        ...records,
-        destination: input.destination,
-        channel,
-        outcome: 'succeeded',
-        externalId: sent.externalId,
-      });
+      if (perText) {
+        await recordAll(input.database, [targets[index]!], {
+          channel, destination: input.destination, outcome: 'succeeded', externalId: sent.externalId,
+        });
+      }
     } catch (error) {
       const failure = await failedAt({
         database: input.database,
@@ -367,10 +393,13 @@ export const sendOnDestination = async (input: {
         messages: texts.length - index,
         requests: index,
         error: error instanceof Error ? error.message : 'Discord refused the message.',
-        ...records,
+        targets: perText ? targets.slice(index) : targets,
       });
       return { ...failure, messages: texts.length, externalId };
     }
+  }
+  if (!perText) {
+    await recordAll(input.database, targets, { channel, destination: input.destination, outcome: 'succeeded', externalId });
   }
   return {
     channel,
@@ -427,7 +456,7 @@ export const sendOnChannel = async (input: {
   if (!isChannelName(input.channel)) throw invalid(`This product does not reach a Contact on ${input.channel} yet.`);
   const channel = input.channel;
   const texts = stated(input.texts);
-  const destination = await destinationFor({ database: input.database, contactId: input.contactId, channel });
+  const destination = await contactDestination({ database: input.database, contactId: input.contactId, channel });
   if (!destination) throw conflict(`Contact ${input.contactId} has no ${channel === 'line' ? 'LINE' : 'Discord'} handle to reach.`);
   const outcome = await sendOnDestination({ ...input, channel, destination, texts });
   if (!outcome.delivered) throw conflict(outcome.error ?? `${channel} refused the message.`);
