@@ -150,6 +150,7 @@ describe('Account database resolver', () => {
       { name: '0029_agent_email_summary.sql' },
       { name: '0030_one_reminder_kind.sql' },
       { name: '0031_agent_tasks.sql' },
+      { name: '0032_morning_entries.sql' },
     ]);
   });
 

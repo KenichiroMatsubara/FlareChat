@@ -7,7 +7,7 @@
 import { now } from './clock';
 
 import { and, count, eq, inArray, isNotNull } from 'drizzle-orm';
-import { validateAttachmentIntake } from '@mail/domain';
+import { intakeOwed, latestMorning, morningNoticeSent, validateAttachmentIntake } from '@mail/domain';
 
 import { aiConnection } from './ai';
 import { AGENT_TRANSCRIPT_RETENTION_DAYS, AgentRunFailure, runAgent, writeAgentRunTranscript } from './agent-runs';
@@ -15,12 +15,13 @@ import { convertAttachmentsForEventExtraction, type ConvertedAttachment } from '
 import { completeBaselineSkippedRepair, ensureBaselineSchemaRule } from './baseline-automation';
 import { planSchemaCorrelations } from './calendar';
 import { createDatabaseAccess } from './database-access';
-import { deliverSourceMessageNotice, settleSourceMessage } from './effects';
+import { settleSourceMessage } from './effects';
 import { ruleExecutionFor, type PlannedRuleEffect, type RuleExecution } from './execution';
 import { AutomationConfigurationError } from './health';
 import { enabledAutomationInboxes, openInbox, recordInboxFailure, verifyInboxCredential, type AutomationInbox, type InboxSession } from './inbox';
 import { accountKeyFor } from './keys';
 import { mailboxTests, ruleRunPreviews } from './mailbox';
+import { keepSourceMessageNotice, morningNoticeSentFor, sendMorningNotice } from './morning';
 import { productionProviders, type Providers, type SourceAttachmentContent } from './providers';
 import {
   activeSchemaRules,
@@ -242,18 +243,15 @@ const agentEffect = (action: { tool: 'send_line_message' | 'create_scheduled_eve
   }
 };
 
-const intakeNotice = (run: AccountRun, input: { sourceMessageId: string; rule: ActiveRule | null; sender: string; subject: string }): Promise<void> => {
-  if (!input.rule) return Promise.resolve();
-  return deliverSourceMessageNotice({
-    env: run.env,
+/** Keeps the Intake Notice for the next Morning Notice: the sender and the subject, and nothing the message said. */
+const intakeNotice = async (run: AccountRun, input: { sourceMessageId: string; rule: ActiveRule | null; sender: string; subject: string }): Promise<void> => {
+  if (!input.rule) return;
+  await keepSourceMessageNotice({
     database: run.database,
-    accountId: run.accountId,
-    providers: run.providers,
-    accessToken: run.session.accessToken,
     sourceMessageId: input.sourceMessageId,
     noticeContactListId: input.rule.noticeContactListId ?? null,
-    subject: `Intake Notice: ${input.subject}`,
-    body: `差出人: ${input.sender}\r\n件名: ${input.subject}`,
+    heading: '取り込めなかったメール',
+    body: `差出人: ${input.sender}\n件名: ${input.subject}`,
   });
 };
 
@@ -262,22 +260,26 @@ const markSourceMessage = async (database: D1Database, sourceMessageId: string, 
     .where(eq(sourceMessages.id, sourceMessageId)).run();
 };
 
-/** Takes one Gmail message in: admission, Source Message intake, rule selection, extraction, and the plan. */
+/**
+ * Takes one Gmail message in: admission, Source Message intake, rule selection,
+ * extraction, and the plan. Answers whether it read the message from Gmail, which
+ * is what an invocation's intake cap counts; one already taken in costs nothing.
+ */
 const processAccountMessage = async (
   run: AccountRun,
   gmailHistoryId: string,
   gmailMessageId: string,
   reprocessSkipped = false,
-): Promise<void> => {
+): Promise<boolean> => {
   const db = accountDatabase(run.database);
   const known = await db.select({ id: sourceMessages.id, state: sourceMessages.state, driveFolderId: sourceMessages.driveFolderId }).from(sourceMessages)
     .where(eq(sourceMessages.gmailMessageId, gmailMessageId)).get();
-  if (known && !(reprocessSkipped && known.state === 'skipped')) return;
+  if (known && !(reprocessSkipped && known.state === 'skipped')) return false;
   const message = await run.providers.google.gmail.readMessage(run.session.accessToken, gmailMessageId);
   // Gmail history reports transport and mailbox traffic alongside Source
   // Messages. Skip it before BYOK AI or other processing without changing the
   // message's labels, inbox membership, or read state in Gmail.
-  if (decideSourceMessageAdmission(message).kind === 'ignore') return;
+  if (decideSourceMessageAdmission(message).kind === 'ignore') return true;
   const subject = subjectOf(message.payload);
   const sender = senderOf(message.payload);
   const sourceMessageId = known?.id ?? crypto.randomUUID();
@@ -319,14 +321,14 @@ const processAccountMessage = async (
   }).sort((left, right) => right.priority - left.priority);
   if (!rule && !matchingAgentRules.length) {
     await markSourceMessage(run.database, sourceMessageId, 'skipped');
-    return;
+    return true;
   }
   const attachmentIntake = validateAttachmentIntake(sourceAttachmentSizes(message.payload));
   if (!attachmentIntake.accepted) {
     await raiseException(run.database, sourceMessageId, attachmentIntake.reason, 'Source Message attachments exceed the configured intake limit.');
     await intakeNotice(run, { sourceMessageId, rule, sender, subject });
     await markSourceMessage(run.database, sourceMessageId, 'exception');
-    return;
+    return true;
   }
   const attachments = sourceAttachments(message.payload);
   let attachmentContents: SourceAttachmentContent[];
@@ -336,7 +338,7 @@ const processAccountMessage = async (
     await raiseException(run.database, sourceMessageId, 'gmail_attachment_download_failed', error instanceof Error ? error.message : 'Gmail attachment download failed.');
     await intakeNotice(run, { sourceMessageId, rule, sender, subject });
     await markSourceMessage(run.database, sourceMessageId, 'exception');
-    return;
+    return true;
   }
   let convertedAttachments: ConvertedAttachment[] | undefined;
   try {
@@ -346,7 +348,7 @@ const processAccountMessage = async (
   } catch (error) {
     await raiseException(run.database, sourceMessageId, 'source_attachment_conversion_failed', error instanceof Error ? error.message : 'Source Message attachment conversion failed.');
     await markSourceMessage(run.database, sourceMessageId, 'exception');
-    return;
+    return true;
   }
   await runMatchingAgentRules(run, {
     sourceMessageId, sender, subject, body,
@@ -355,7 +357,7 @@ const processAccountMessage = async (
   });
   if (!rule) {
     await settleSourceMessage(run.database, sourceMessageId, false);
-    return;
+    return true;
   }
   const receivedAt = receivedAtOf(message.internalDate);
   const preparation = await preparePrimarySchema({
@@ -373,16 +375,16 @@ const processAccountMessage = async (
   if (preparation.kind === 'ai_connection_missing') {
     await raiseException(run.database, sourceMessageId, 'ai_connection_missing', 'An active AI Connection is required to analyze incoming mail.');
     await markSourceMessage(run.database, sourceMessageId, 'exception');
-    return;
+    return true;
   }
   if (preparation.kind === 'invalid_extraction') {
     await raiseException(run.database, sourceMessageId, 'ai_event_details_invalid', 'The AI API could not produce safe Event Details.');
     await markSourceMessage(run.database, sourceMessageId, 'exception');
-    return;
+    return true;
   }
   if (preparation.kind === 'no_matching_rule') {
     await settleSourceMessage(run.database, sourceMessageId, false);
-    return;
+    return true;
   }
   const { extraction } = preparation;
   const correlations = await planSchemaCorrelations({
@@ -409,20 +411,47 @@ const processAccountMessage = async (
       }),
     }],
   });
+  return true;
 };
 
 const isGoogleNotFound = (error: unknown, path: string): boolean =>
   error instanceof Error && error.name === 'GoogleApiError' && (error as { status?: number }).status === 404
   && (error as { url?: string }).url?.includes(path) === true;
 
-/** Reads one Automation Inbox forward from its stored history position. */
+/**
+ * How many Gmail messages one scheduled invocation reads, shared across every
+ * Account (ADR 0176). A day of mail would otherwise be one invocation's worth
+ * of D1 queries and subrequests; past the cap the read stops at a history record
+ * boundary and the next tick carries on from there.
+ */
+export const INTAKE_READS_PER_TICK = 20;
+
+/** What an invocation may still read before it leaves the rest to the next tick. */
+export interface IntakeBudget {
+  remaining: number;
+}
+
+/**
+ * Reads one Automation Inbox forward from its stored history position.
+ *
+ * Without a budget it reads everything the history holds, as a run started by
+ * hand does. With one, it stops before a read the budget cannot pay for, saves
+ * the cursor at the last history record it finished, and reports itself
+ * incomplete, so the Inbox still owes its intake and the next tick resumes it.
+ * Only a read that reaches the end of the history counts as the intake.
+ */
 const runAccountInbox = async (
   run: AccountRun,
   reprocessSkipped = false,
-): Promise<{ reprocessed: number }> => {
+  budget?: IntakeBudget,
+): Promise<{ reprocessed: number; complete: boolean }> => {
   const { google } = run.providers;
   const { accessToken, inbox } = run.session;
   const db = accountDatabase(run.database);
+  const exhausted = (): boolean => budget !== undefined && budget.remaining <= 0;
+  const spend = (read: boolean): void => {
+    if (budget && read) budget.remaining -= 1;
+  };
   let reprocessed = 0;
   if (reprocessSkipped) {
     const skippedMessages = await db.select({
@@ -431,8 +460,9 @@ const runAccountInbox = async (
       gmailHistoryId: sourceMessages.gmailHistoryId,
     }).from(sourceMessages).where(eq(sourceMessages.state, 'skipped')).all();
     for (const skipped of skippedMessages) {
+      if (exhausted()) return { reprocessed, complete: false };
       try {
-        await processAccountMessage(run, skipped.gmailHistoryId, skipped.gmailMessageId, true);
+        spend(await processAccountMessage(run, skipped.gmailHistoryId, skipped.gmailMessageId, true));
       } catch (error) {
         if (!isGoogleNotFound(error, `/messages/${encodeURIComponent(skipped.gmailMessageId)}`)) throw error;
         await db.update(sourceMessages).set({ state: 'processed', processedAt: now() })
@@ -443,6 +473,16 @@ const runAccountInbox = async (
   }
   let pageToken: string | undefined;
   let historyId = inbox.gmailHistoryId;
+  let finishedRecord: string | null = null;
+  const stopAt = async (): Promise<{ reprocessed: number; complete: boolean }> => {
+    // The records up to the last one finished are done; the Inbox still owes
+    // its intake, so the next tick reads on from there.
+    if (finishedRecord) {
+      await db.update(googleConnections).set({ gmailHistoryId: finishedRecord, updatedAt: now() })
+        .where(eq(googleConnections.id, inbox.id)).run();
+    }
+    return { reprocessed, complete: false };
+  };
   do {
     let history;
     try {
@@ -460,13 +500,15 @@ const runAccountInbox = async (
       for (const message of entry.messagesAdded ?? []) {
         const messageId = message.message?.id;
         if (!messageId) continue;
+        if (exhausted()) return stopAt();
         try {
-          await processAccountMessage(run, inbox.gmailHistoryId, messageId);
+          spend(await processAccountMessage(run, inbox.gmailHistoryId, messageId));
         } catch (error) {
           if (isGoogleNotFound(error, `/messages/${encodeURIComponent(messageId)}`)) continue;
           throw error;
         }
       }
+      if (entry.id) finishedRecord = entry.id;
     }
     historyId = history.historyId ?? historyId;
     pageToken = history.nextPageToken;
@@ -476,7 +518,7 @@ const runAccountInbox = async (
     .set({ gmailHistoryId: historyId, lastSyncedAt: syncedAt, lastError: null, failingSince: null, alertedAt: null, updatedAt: syncedAt })
     .where(eq(googleConnections.id, inbox.id))
     .run();
-  return { reprocessed };
+  return { reprocessed, complete: true };
 };
 
 const automationCounts = async (database: D1Database): Promise<{ scanned: number; created: number; skipped: number; exceptions: number }> => {
@@ -536,7 +578,22 @@ const runAccountAutomation = async (input: {
   };
 };
 
-const runEnabledAutomations = async (env: Bindings, providers: Providers): Promise<void> => {
+/**
+ * The scheduled sweep of every active Account (ADR 0176): take in the mail each
+ * Automation Inbox owes this Morning, within the invocation's read budget, then
+ * let the Account's Morning Notice go out once its intake has finished.
+ *
+ * An Inbox that completed an intake since the Morning is not read again until
+ * the next one, so a tick in the middle of the day only retries what failed or
+ * ran out of budget, and sends nothing new.
+ *
+ * Rule Run upkeep — expiring approvals and resuming interrupted runs — keeps
+ * the same rhythm: it runs while the Account's Morning is unfinished, not on
+ * every tick, so resuming a run cannot race a run started by hand any more often
+ * than the intake itself does.
+ */
+const runScheduledAccounts = async (env: Bindings, providers: Providers, at: string): Promise<void> => {
+  const morning = latestMorning(at);
   const activeAccounts = await controlDatabase(env.CONTROL_DB).select({
     id: accounts.id,
     bindingName: accounts.bindingName,
@@ -544,8 +601,9 @@ const runEnabledAutomations = async (env: Bindings, providers: Providers): Promi
   }).from(accounts).where(and(
     eq(accounts.status, 'active'),
     isNotNull(accounts.databaseId),
-  )).orderBy(accounts.updatedAt).limit(20).all();
+  )).orderBy(accounts.updatedAt).all();
   const databases = createDatabaseAccess(env);
+  const budget: IntakeBudget = { remaining: INTAKE_READS_PER_TICK };
   for (const account of activeAccounts) {
     // One Account whose database or schema is unreachable must not end the
     // scheduled sweep before the Accounts after it have run.
@@ -555,19 +613,30 @@ const runEnabledAutomations = async (env: Bindings, providers: Providers): Promi
         bindingName: account.bindingName,
         databaseId: account.databaseId,
       })).raw;
-      const execution = ruleExecutionFor({ env, database, accountId: account.id, providers });
-      await execution.expireApprovals();
-      await execution.resumeDue();
-      for (const inbox of await enabledAutomationInboxes(database)) {
+      const owed = (await enabledAutomationInboxes(database)).filter((inbox) => intakeOwed({ lastSyncedAt: inbox.lastSyncedAt, morning }));
+      if (owed.length || !morningNoticeSent({ sentFor: await morningNoticeSentFor(database), morning })) {
+        const execution = ruleExecutionFor({ env, database, accountId: account.id, providers });
+        await execution.expireApprovals();
+        await execution.resumeDue();
+      }
+      let intakeComplete = true;
+      for (const inbox of owed) {
+        if (budget.remaining <= 0) {
+          intakeComplete = false;
+          continue;
+        }
         try {
           await requireActiveAiConnection(database);
           const baseline = await ensureBaselineSchemaRule(accountDatabase(database), account.id);
-          await runAccountInbox(await openAccountRun({ env, database, accountId: account.id, providers, inbox }), baseline.repairSkipped);
-          await completeBaselineSkippedRepair(accountDatabase(database));
+          const read = await runAccountInbox(await openAccountRun({ env, database, accountId: account.id, providers, inbox }), baseline.repairSkipped, budget);
+          if (read.complete) await completeBaselineSkippedRepair(accountDatabase(database));
+          else intakeComplete = false;
         } catch (error) {
+          intakeComplete = false;
           await recordInboxFailure({ env, accountId: account.id, database, inbox, error, google: providers.google });
         }
       }
+      await sendMorningNotice({ env, database, accountId: account.id, providers, at, intakeComplete });
     } catch (error) {
       console.error(JSON.stringify({
         event: 'automation_organization_skipped',
@@ -587,7 +656,7 @@ export const createAutomation = (env: Bindings, providers: Providers = productio
     runAccountAutomation({ env, providers, ...input }),
   verifyAccountInboxCredential: (input: { accountId: string; database: D1Database }): Promise<void> =>
     verifyInboxCredential({ env, google: providers.google, ...input }),
-  runEnabledAccounts: (): Promise<void> => runEnabledAutomations(env, providers),
+  runEnabledAccounts: (at: string = now()): Promise<void> => runScheduledAccounts(env, providers, at),
   mailboxTest: mailboxTests(env, providers),
   ruleRuns: ruleRunPreviews(env, providers),
 });

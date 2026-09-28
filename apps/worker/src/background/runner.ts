@@ -4,37 +4,28 @@ import { retryProvisioning } from '../onboarding';
 import { dispatchDueAccountJobs } from '../job-dispatch';
 import { runDueAccountAutomations } from '../automation-schedule';
 import { productionProviders, type Providers } from '../providers';
-import { REMINDER_JOB_KIND, enqueueDueAccountReminders, reminderJobHandler } from '../reminders';
+import { REMINDER_JOB_KIND, reminderJobHandler } from '../reminders';
 import type { Bindings } from '../types';
 
-/** The frequent tick: work that is late the moment its stated time passes. */
+/**
+ * The one tick (ADR 0176). It runs the work that is late the moment its stated
+ * time passes, and it is how the Morning is noticed: the first tick at or after
+ * 05:00 Asia/Tokyo finds every Automation Inbox owing its intake, and later
+ * ticks carry on an intake the read budget or a failure left unfinished. One
+ * cron means no two invocations ever read the same Inbox at once.
+ */
 export const DUE_WORK_CRON = '*/30 * * * *';
 
 /**
- * The wider tick: reading each Automation Inbox for new Source Messages. Mail
- * that arrived an hour ago is not late in the way a reminder due at 09:00 is, and
- * every poll costs a Gmail history request per Account whether or not anything
- * arrived, so it wakes on its own slower cadence.
+ * Deployment-facing background capability. Individual Job, reminder, Morning
+ * Notice, and Automation implementations stay behind this one scheduled-use-case
+ * seam.
  */
-export const MAIL_POLL_CRON = '0 */3 * * *';
-
-/**
- * Deployment-facing background capability. Individual Job, attendance, Task
- * reminder, and Automation implementations stay behind this one
- * scheduled-use-case seam.
- *
- * Which cron woke the Worker decides what runs. A wake-up that names neither
- * cadence — a local trigger, or a test — stands for both, so nothing is silently
- * skipped by a caller that does not know the schedule.
- */
-export const runBackgroundWork = async (env: Bindings, cron?: string, providers: Providers = productionProviders()): Promise<void> => {
+export const runBackgroundWork = async (env: Bindings, providers: Providers = productionProviders()): Promise<void> => {
   await createDatabaseAccess(env).open({ kind: 'control' });
   const dueAt = new Date().toISOString();
-  if (cron !== MAIL_POLL_CRON) {
-    await retryProvisioning(env);
-    await enqueueDueAccountReminders(env, dueAt);
-    await dispatchDueAccountJobs(env, dueAt, { [REMINDER_JOB_KIND]: reminderJobHandler(env, providers) });
-    await runDueAccountAutomations(env, new Date(dueAt));
-  }
-  if (cron !== DUE_WORK_CRON) await createAutomation(env, providers).runEnabledAccounts();
+  await retryProvisioning(env);
+  await dispatchDueAccountJobs(env, dueAt, { [REMINDER_JOB_KIND]: reminderJobHandler(env, providers) });
+  await runDueAccountAutomations(env, new Date(dueAt));
+  await createAutomation(env, providers).runEnabledAccounts(dueAt);
 };

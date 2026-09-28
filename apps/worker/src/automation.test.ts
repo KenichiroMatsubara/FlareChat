@@ -51,6 +51,22 @@ const automationWith = (setup?: (providers: MemoryProviders) => void) => {
 const runAccount = (automation: ReturnType<typeof createAutomation>) =>
   automation.runAccount({ accountId: 'organization-1', database: fixture!.account.binding });
 
+/**
+ * The scheduled tick at the Morning after TEST_NOW's (ADR 0176). A run by hand
+ * keeps its notices as Morning Entries, and this is what says them.
+ */
+const theMorning = (automation: ReturnType<typeof createAutomation>) => automation.runEnabledAccounts();
+
+/** A tick on the next Morning, when every Automation Inbox owes a fresh intake. */
+const NEXT_MORNING = '2026-08-02T00:00:00.000Z';
+
+/** The heading every Morning Notice on TEST_NOW's day opens with. */
+const MORNING_HEADING = '【8/1(土)のお知らせ】';
+
+const morningEntries = () => fixture!.account.rows<{ channel: string; destination: string; heading: string; body: string; state: string; attempts: number }>(
+  'SELECT channel, destination, heading, body, state, attempts FROM morning_entries ORDER BY created_at',
+);
+
 const invitation = (id: string, overrides: { subject?: string; sender?: string; body?: string } = {}) => ({
   id,
   subject: overrides.subject ?? '例会のお知らせ',
@@ -293,7 +309,7 @@ describe('Account Automation Inbox scheduling', () => {
   const toolCall = (name: 'send_line_message' | 'create_scheduled_event' | 'send_email_summary' | 'create_task' | 'update_task' | 'read_source_message' | 'query_scheduled_events' | 'query_tasks' | 'query_attendance', args: Record<string, unknown> = {}) =>
     ({ id: `${name}-${crypto.randomUUID()}`, name, arguments: JSON.stringify(args) });
 
-  it('executes an unattended Agent Rule LINE write once and records a failed delivery without retry work', async () => {
+  it('keeps an unattended Agent Rule LINE write for the Morning Notice and records LINE refusing it there', async () => {
     fixture = await createAutomationTestApp({ ai: true, lineSecret: 'line-secret' });
     fixture.account.execute("UPDATE rules SET status = 'suspended' WHERE id = 'rule-1'");
     await seedAgentRule({ name: 'Writer', lineDestinations: ['line-user-1'], instructions: 'Notify.' });
@@ -307,8 +323,15 @@ describe('Account Automation Inbox scheduling', () => {
     });
 
     await expect(runAccount(automation)).resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 0 });
+    expect(lineSends(providers)).toHaveLength(0);
+    expect(morningEntries()).toEqual([{ channel: 'line', destination: 'line-user-1', heading: '', body: 'Practice moved.', state: 'pending', attempts: 0 }]);
+
+    await theMorning(automation);
+
     expect(lineSends(providers)).toHaveLength(1);
+    expect(lineSends(providers)[0]?.body).toEqual({ to: 'line-user-1', messages: [{ type: 'text', text: `${MORNING_HEADING}\n\nPractice moved.` }] });
     expect(fixture.account.rows<{ destination: string; outcome: string }>('SELECT destination, outcome FROM deliveries')).toEqual([{ destination: 'line-user-1', outcome: 'failed' }]);
+    expect(morningEntries()).toMatchObject([{ state: 'pending', attempts: 1 }]);
     expect(fixture.account.rows('SELECT * FROM jobs')).toHaveLength(0);
     const run = fixture.account.row<{ id: string }>('SELECT id FROM agent_runs')!;
     const transcript = await app.fetch(fixture.request(`/api/organizations/organization-1/agent-runs/${run.id}/transcript`), fixture.environment);
@@ -348,7 +371,13 @@ describe('Account Automation Inbox scheduling', () => {
     const approved = await app.fetch(fixture.jsonRequest(`/api/organizations/organization-1/rule-runs/${run.id}/decision`, { decision: 'approve' }), fixture.environment);
 
     expect(approved.status).toBe(200);
-    expect(linePush).toHaveBeenCalledTimes(1);
+    // An approval applies the run now; its LINE message waits for the Morning (ADR 0176).
+    expect(linePush).not.toHaveBeenCalled();
+    expect(morningEntries()).toMatchObject([{ destination: 'line-user-1', body: 'Exact approved text', state: 'pending' }]);
+
+    await theMorning(automation);
+
+    expect(lineSends(providers)).toHaveLength(1);
     expect(providers.ai.agentRequests).toHaveLength(2);
     expect(fixture.account.rows<{ destination: string; outcome: string }>('SELECT destination, outcome FROM deliveries')).toEqual([{ destination: 'line-user-1', outcome: 'succeeded' }]);
   });
@@ -757,7 +786,7 @@ describe('Account Automation Inbox scheduling', () => {
 
     await automation.runEnabledAccounts();
     providers.google.mailbox.historyId = 'history-after-second-run';
-    await automation.runEnabledAccounts();
+    await automation.runEnabledAccounts(NEXT_MORNING);
 
     expect(providers.google.mailbox.historyRequests).toEqual(['history-before-connection', 'history-after-first-run']);
     const status = await app.fetch(fixture.request('/api/organizations/organization-1/automation'), fixture.environment);
@@ -774,7 +803,7 @@ describe('Account Automation Inbox scheduling', () => {
     await automation.runEnabledAccounts();
     providers.google.mailbox.historyExpired = false;
     providers.google.mailbox.historyId = 'history-after-recovery';
-    await automation.runEnabledAccounts();
+    await automation.runEnabledAccounts(NEXT_MORNING);
 
     expect(providers.google.mailbox.historyRequests).toEqual(['history-before-connection', 'history-current']);
     const status = await app.fetch(fixture.request('/api/organizations/organization-1/automation'), fixture.environment);
@@ -830,8 +859,14 @@ describe('Account Automation Inbox scheduling', () => {
     });
 
     await expect(runAccount(automation)).resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 0 });
+    expect(providers.google.mailbox.sent).toEqual([]);
+    await theMorning(automation);
 
-    expect(providers.google.mailbox.sent).toEqual([{ destination: 'reader@example.com', subject: 'Message Summary: 例会のお知らせ', body: '次年度の活動方針を共有するお知らせです。' }]);
+    expect(providers.google.mailbox.sent).toEqual([{
+      destination: 'reader@example.com',
+      subject: '朝のお知らせ 8/1(土)',
+      body: `${MORNING_HEADING}\n\n■ 例会のお知らせ\n次年度の活動方針を共有するお知らせです。`,
+    }]);
     expect(providers.ai.extractionRequests).toHaveLength(1);
     const audit = await app.fetch(fixture.request('/api/organizations/organization-1/audit/deliveries'), fixture.environment);
     await expect(audit.json()).resolves.toMatchObject({
@@ -859,9 +894,10 @@ describe('Account Automation Inbox scheduling', () => {
     });
 
     await runAccount(automation);
+    await theMorning(automation);
 
     expect(providers.google.mailbox.sent.map(({ destination }) => destination).sort()).toEqual(['guest@example.com', 'member@example.com']);
-    expect(providers.google.mailbox.sent.every(({ body }) => body === '選ばれた読者へ送る要約です。')).toBe(true);
+    expect(providers.google.mailbox.sent.every(({ body }) => body.endsWith('選ばれた読者へ送る要約です。'))).toBe(true);
   });
 
   it('skips Message Summary channels with no permitted lists without failing the Source Message', async () => {
@@ -893,12 +929,16 @@ describe('Account Automation Inbox scheduling', () => {
     });
 
     await expect(runAccount(automation)).resolves.toEqual({ scanned: 1, created: 2, skipped: 0, exceptions: 0 });
+    await theMorning(automation);
 
     const sends = lineSends(providers);
     expect(sends).toHaveLength(1);
     expect(sends[0]?.body).toEqual({
       to: 'Usummary-reader-1',
       messages: [{ type: 'text', text: [
+        MORNING_HEADING,
+        '',
+        '■ 例会のお知らせ',
         '会議と懇親会を同日に開催します。',
         '',
         '【予定】',
@@ -940,6 +980,9 @@ describe('Account Automation Inbox scheduling', () => {
     expect(sends[0]?.body).toEqual({
       to: 'Cnotice-group-1',
       messages: [{ type: 'text', text: [
+        MORNING_HEADING,
+        '',
+        '■ 例会のお知らせ',
         '例会の案内と会場手配のお願いです。',
         '',
         '【予定】',
@@ -961,7 +1004,7 @@ describe('Account Automation Inbox scheduling', () => {
 
     const sends = lineSends(providers);
     expect(sends).toHaveLength(1);
-    expect(sends[0]?.body).toEqual({ to: 'Csummary-group-1', messages: [{ type: 'text', text: '会費納入のお願いです。' }] });
+    expect(sends[0]?.body).toEqual({ to: 'Csummary-group-1', messages: [{ type: 'text', text: `${MORNING_HEADING}\n\n■ 例会のお知らせ\n会費納入のお願いです。` }] });
     const audit = await app.fetch(fixture.request('/api/organizations/organization-1/audit/deliveries'), fixture.environment);
     await expect(audit.json()).resolves.toMatchObject({ data: [{
       channel: 'line', outcome: 'succeeded', externalId: 'line-contact-notice-1', sourceMessageId: expect.any(String),
@@ -1001,11 +1044,12 @@ describe('Account Automation Inbox scheduling', () => {
     });
 
     await expect(runAccount(automation)).resolves.toEqual({ scanned: 1, created: 0, skipped: 0, exceptions: 1 });
+    await theMorning(automation);
 
     expect(providers.google.mailbox.sent).toEqual([{
       destination: 'intake-reader@example.com',
-      subject: 'Intake Notice: 容量超過のお知らせ',
-      body: '差出人: sender@example.com\r\n件名: 容量超過のお知らせ',
+      subject: '朝のお知らせ 8/1(土)',
+      body: `${MORNING_HEADING}\n\n■ 取り込めなかったメール\n差出人: sender@example.com\n件名: 容量超過のお知らせ`,
     }]);
     expect(providers.ai.extractionRequests).toEqual([]);
     const audit = await app.fetch(fixture.request('/api/organizations/organization-1/audit/deliveries'), fixture.environment);

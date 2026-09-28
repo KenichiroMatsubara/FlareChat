@@ -14,20 +14,17 @@ import { and, asc, eq } from 'drizzle-orm';
 
 import { resolveSourceMessageFolder } from './attachment-folders';
 import { mergeScheduledEvent, rewriteScheduledEventDescription, type PlannedSchemaCorrelation } from './calendar';
-import { channelCredentials, contactChannels, sendOnChannel, sendOnDestination, type ChannelCredentials } from './channel';
 import { activeContactInvitees, recordDeliveryAttempt, recordEventInvitations } from './delivery';
 import { calendarEventDescription } from './event-description';
 import type { EventDetails, GuestDetails, MailExtractionWarning, SourceMessageKind, TaskDetails } from './event-details';
 import { sourceMessageAttribution } from './event-refresh';
 import { openInbox, type InboxSession } from './inbox';
-import { accountKeyFor } from './keys';
+import { keepMorningEntry, keepSourceMessageNotice } from './morning';
 import { sourceMessageNotice } from './notice';
 import type { Providers, PublishedDriveAttachment, SourceAttachment, SourceAttachmentContent } from './providers';
 import { accountDatabase } from './storage/database';
 import {
   automationWarnings,
-  contactListMembers,
-  contacts,
   deliveries,
   eventAttachments,
   events,
@@ -142,57 +139,6 @@ export interface RuleEffectAdapter {
 /** Stands in for a publication that never ran because no Drive folder was available. */
 const unpublishedAttachment: PublishedDriveAttachment = { outcome: 'failed', driveFileId: null, publicUrl: null };
 
-/**
- * Delivers one Source Message-level notice to the Contacts the Rule names.
- *
- * The Rule has exactly one destination setting: the Contacts an operator ticked
- * in the GUI (ADR 0162, ADR 0166). Each Contact is reached once: by email when
- * it holds an address, on its Channel handle when it does not, and not at all
- * when it holds neither.
- */
-export const deliverSourceMessageNotice = async (input: {
-  env: Bindings;
-  database: D1Database;
-  accountId: string;
-  providers: Providers;
-  accessToken: string;
-  sourceMessageId: string;
-  noticeContactListId: string | null;
-  subject: string;
-  body: string;
-}): Promise<void> => {
-  if (!input.noticeContactListId) return;
-  const db = accountDatabase(input.database);
-  const readers = await db.select({ contactId: contactListMembers.contactId, email: contacts.email })
-    .from(contactListMembers)
-    .innerJoin(contacts, eq(contacts.id, contactListMembers.contactId))
-    .where(eq(contactListMembers.listId, input.noticeContactListId)).all();
-  if (!readers.length) return;
-  const credentials = await accountChannelCredentials(input.env, input.accountId, input.database);
-  for (const reader of new Map(readers.map((reader) => [reader.contactId, reader])).values()) {
-    if (reader.email) {
-      await sendSourceMessageEmail({ ...input, destination: reader.email });
-      continue;
-    }
-    const channel = (await contactChannels({ database: input.database, contactId: reader.contactId }))[0];
-    if (!channel) continue;
-    try {
-      await sendOnChannel({
-        database: input.database,
-        credentials,
-        contactId: reader.contactId,
-        channel,
-        texts: [input.body],
-        sourceMessageId: input.sourceMessageId,
-        fetch: input.providers.fetch,
-      });
-    } catch {
-      // A refusal is already recorded as a failed Delivery Record; the rest of
-      // the roster must still hear about the Source Message.
-    }
-  }
-};
-
 /** Sends one notice through the Automation Inbox and records the effect independently of Events. */
 const sendSourceMessageEmail = async (input: {
   database: D1Database;
@@ -221,19 +167,6 @@ const sendSourceMessageEmail = async (input: {
     outcome,
     externalId,
   });
-};
-
-/**
- * This Account's Channel credentials, or none when they cannot be read. A run
- * that cannot decrypt a Connection records its notices as failed rather than
- * aborting the extraction it already completed.
- */
-const accountChannelCredentials = async (env: Bindings, accountId: string, database: D1Database): Promise<ChannelCredentials> => {
-  try {
-    return await channelCredentials({ database, accountKey: await accountKeyFor(env, accountId), accountId });
-  } catch {
-    return { line: null, discord: null };
-  }
 };
 
 const raiseException = async (database: D1Database, sourceMessageId: string, code: string, message: string): Promise<void> => {
@@ -358,24 +291,20 @@ const applyScheduledEvents = async (input: {
   if (publicationFailed) await raiseException(input.database, args.sourceMessageId, 'drive_attachment_publish_failed', '一部の添付ファイルを公開できませんでした。');
 };
 
-/** Sends the one notice a Source Message produces, stating the events and the Tasks it actually raised. */
+/**
+ * Keeps the one notice a Source Message produces, stating the events and the
+ * Tasks it actually raised, for the next Morning Notice (ADR 0176).
+ */
 const deliverSummary = async (input: {
-  env: Bindings;
   database: D1Database;
-  providers: Providers;
-  session: InboxSession;
   arguments: SummaryArguments;
 }): Promise<void> => {
   const args = input.arguments;
-  await deliverSourceMessageNotice({
-    env: input.env,
+  await keepSourceMessageNotice({
     database: input.database,
-    accountId: args.accountId,
-    providers: input.providers,
-    accessToken: input.session.accessToken,
     sourceMessageId: args.sourceMessageId,
     noticeContactListId: args.noticeContactListId,
-    subject: `Message Summary: ${args.subject}`,
+    heading: args.subject,
     body: sourceMessageNotice({
       summary: args.summary,
       events: args.events,
@@ -447,7 +376,6 @@ export const ruleEffectsFor = (input: {
     session ??= openInbox({ env: input.env, accountId: input.accountId, database: input.database, google: input.providers.google });
     return session;
   };
-  const credentials = (): Promise<ChannelCredentials> => accountChannelCredentials(input.env, input.accountId, input.database);
   return {
     apply: async (run, effect) => {
       switch (effect.kind) {
@@ -488,18 +416,18 @@ export const ruleEffectsFor = (input: {
           await applyScheduledEvents({ env: input.env, database: input.database, providers: input.providers, session: await inbox(), arguments: effect.arguments });
           return { applied: true };
         case 'schema.deliver_summary':
-          await deliverSummary({ env: input.env, database: input.database, providers: input.providers, session: await inbox(), arguments: effect.arguments });
+          await deliverSummary({ database: input.database, arguments: effect.arguments });
           return { applied: true };
         case 'agent.send_line_message':
-          return sendOnDestination({
-            database: input.database,
-            credentials: await credentials(),
+          // Kept for the next Morning Notice rather than pushed now (ADR 0176);
+          // LINE's answer is the Delivery Record that Morning leaves.
+          await keepMorningEntry(input.database, {
             channel: 'line',
             destination: effect.arguments.destination,
-            texts: [effect.arguments.message],
             sourceMessageId: run.sourceMessageId,
-            fetch: input.providers.fetch,
+            body: effect.arguments.message,
           });
+          return { kept: true, destination: effect.arguments.destination };
         case 'agent.send_email_summary': {
           const { accessToken } = await inbox();
           if (!run.sourceMessageId) throw new Error('An Agent Rule effect needs the Source Message its run read.');

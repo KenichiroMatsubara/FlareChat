@@ -1,5 +1,7 @@
 # Poll the Automation Inbox on its own cadence
 
+Superseded by ADR 0176.
+
 The Worker wakes on two crons. `*/30 * * * *` runs the work that is late the moment its stated time passes — provisioning retries, attendance and Task reminders, due Jobs, and the Automations whose Trigger carries no payload. `0 */3 * * *` reads each Automation Inbox for new Source Messages.
 
 One cadence had to serve both, and the mailbox was the reason it was frequent. Mail that arrived an hour ago is not late in the way a reminder due at 09:00 is: a Source Message becomes a Calendar event and a notice, and both are read hours later by whoever the notice reached. Every poll, meanwhile, costs a Gmail history request per Account whether or not anything arrived, so the frequent tick spent its requests mostly discovering that nothing had.
