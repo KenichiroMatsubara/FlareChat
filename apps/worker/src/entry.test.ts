@@ -178,6 +178,7 @@ describe('application entry', () => {
     expect(authorization.searchParams.get('access_type')).toBe('online');
     expect(authorization.searchParams.get('prompt')).toBe('select_account');
     expect(callback.headers.get('set-cookie')).not.toContain('mail_setup=');
+    expect(callback.headers.get('set-cookie')).toContain('Max-Age=2592000');
     await expect(bootstrap.json()).resolves.toEqual({
       data: {
         kind: 'ready',
@@ -212,6 +213,51 @@ describe('application entry', () => {
         accounts: [{ accountId: 'organization-1' }],
       },
     });
+  });
+
+  it('renews a session in use to thirty days from now on bootstrap', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-01T00:00:00.000Z'));
+    fixture = createTestApp();
+
+    const bootstrap = await app.fetch(fixture.request('/api/bootstrap'), fixture.environment);
+
+    expect(bootstrap.status).toBe(200);
+    expect(bootstrap.headers.get('set-cookie')).toBe(
+      'mail_session=session-1; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=2592000',
+    );
+    expect(fixture.control.row<{ expires_at: string; last_seen_at: string }>(
+      "SELECT expires_at, last_seen_at FROM sessions WHERE id = 'session-1'",
+    )).toEqual({ expires_at: '2026-10-31T00:00:00.000Z', last_seen_at: '2026-10-01T00:00:00.000Z' });
+  });
+
+  it('renews a session at most once a day', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-01T00:00:00.000Z'));
+    fixture = createTestApp();
+    await app.fetch(fixture.request('/api/bootstrap'), fixture.environment);
+    vi.setSystemTime(new Date('2026-10-01T23:00:00.000Z'));
+
+    const again = await app.fetch(fixture.request('/api/bootstrap'), fixture.environment);
+
+    expect(again.status).toBe(200);
+    expect(again.headers.get('set-cookie')).toBeNull();
+    expect(fixture.control.row<{ expires_at: string; last_seen_at: string }>(
+      "SELECT expires_at, last_seen_at FROM sessions WHERE id = 'session-1'",
+    )).toEqual({ expires_at: '2026-10-31T00:00:00.000Z', last_seen_at: '2026-10-01T00:00:00.000Z' });
+  });
+
+  it('does not renew a session that was logged out', async () => {
+    fixture = createTestApp();
+    fixture.control.execute("UPDATE sessions SET revoked_at = '2026-09-30T00:00:00.000Z' WHERE id = 'session-1'");
+
+    const bootstrap = await app.fetch(fixture.request('/api/bootstrap'), fixture.environment);
+
+    await expect(bootstrap.json()).resolves.toEqual({ data: { kind: 'signed_out' } });
+    expect(bootstrap.headers.get('set-cookie')).toBeNull();
+    expect(fixture.control.row<{ expires_at: string }>(
+      "SELECT expires_at FROM sessions WHERE id = 'session-1'",
+    )).toEqual({ expires_at: '2099-01-01T00:00:00.000Z' });
   });
 
   it('checks an expired Automation Inbox token at login and records a required reauthentication', async () => {
