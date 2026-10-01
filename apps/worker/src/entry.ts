@@ -44,10 +44,10 @@ interface GoogleEntryOptions {
 const SETUP_WINDOW_MS = 15 * 60 * 1_000;
 const OAUTH_WINDOW_MS = 10 * 60 * 1_000;
 /**
- * How long a session lasts after its last renewal. Browsers cap a cookie's
- * lifetime at 400 days, so no session can outlast this between two uses.
+ * How long a session lasts after its last renewal. Each bootstrap renews it,
+ * so only thirty days without opening the GUI signs a device out.
  */
-export const SESSION_LIFETIME_MS = 400 * 24 * 60 * 60 * 1_000;
+export const SESSION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1_000;
 const SESSION_RENEWAL_INTERVAL_MS = 24 * 60 * 60 * 1_000;
 
 const expiresIn = (milliseconds: number): string => new Date(Date.now() + milliseconds).toISOString();

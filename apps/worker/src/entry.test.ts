@@ -178,7 +178,7 @@ describe('application entry', () => {
     expect(authorization.searchParams.get('access_type')).toBe('online');
     expect(authorization.searchParams.get('prompt')).toBe('select_account');
     expect(callback.headers.get('set-cookie')).not.toContain('mail_setup=');
-    expect(callback.headers.get('set-cookie')).toContain('Max-Age=34560000');
+    expect(callback.headers.get('set-cookie')).toContain('Max-Age=2592000');
     await expect(bootstrap.json()).resolves.toEqual({
       data: {
         kind: 'ready',
@@ -215,7 +215,7 @@ describe('application entry', () => {
     });
   });
 
-  it('renews a session in use to the 400-day cookie limit on bootstrap', async () => {
+  it('renews a session in use to thirty days from now on bootstrap', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-10-01T00:00:00.000Z'));
     fixture = createTestApp();
@@ -224,11 +224,11 @@ describe('application entry', () => {
 
     expect(bootstrap.status).toBe(200);
     expect(bootstrap.headers.get('set-cookie')).toBe(
-      'mail_session=session-1; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=34560000',
+      'mail_session=session-1; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=2592000',
     );
     expect(fixture.control.row<{ expires_at: string; last_seen_at: string }>(
       "SELECT expires_at, last_seen_at FROM sessions WHERE id = 'session-1'",
-    )).toEqual({ expires_at: '2027-11-05T00:00:00.000Z', last_seen_at: '2026-10-01T00:00:00.000Z' });
+    )).toEqual({ expires_at: '2026-10-31T00:00:00.000Z', last_seen_at: '2026-10-01T00:00:00.000Z' });
   });
 
   it('renews a session at most once a day', async () => {
@@ -244,7 +244,7 @@ describe('application entry', () => {
     expect(again.headers.get('set-cookie')).toBeNull();
     expect(fixture.control.row<{ expires_at: string; last_seen_at: string }>(
       "SELECT expires_at, last_seen_at FROM sessions WHERE id = 'session-1'",
-    )).toEqual({ expires_at: '2027-11-05T00:00:00.000Z', last_seen_at: '2026-10-01T00:00:00.000Z' });
+    )).toEqual({ expires_at: '2026-10-31T00:00:00.000Z', last_seen_at: '2026-10-01T00:00:00.000Z' });
   });
 
   it('does not renew a session that was logged out', async () => {
