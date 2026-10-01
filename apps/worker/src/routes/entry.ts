@@ -2,7 +2,7 @@ import { and, eq, isNotNull } from 'drizzle-orm';
 
 import { now } from '../clock';
 import { createDatabaseAccess } from '../database-access';
-import { beginGoogleEntry, completeGoogleEntry, entryConfigurationError } from '../entry';
+import { beginGoogleEntry, completeGoogleEntry, entryConfigurationError, renewSession, SESSION_LIFETIME_MS } from '../entry';
 import { applicationState, cancelAccountOnboarding, confirmAccount, retryAccountProvisioning } from '../onboarding';
 import { invalid, upstream } from '../refusal';
 import { json, resource } from '../response';
@@ -14,12 +14,17 @@ import { accountIdentities, accounts, sessions } from '../storage/control-schema
 export const entryRoutes = resource();
 export const oauthRoutes = resource();
 
-const sessionWindowMs = 7 * 24 * 60 * 60 * 1_000;
 const cookie = (name: string, value: string, secure: boolean, maxAge?: number): string => {
   const secureAttribute = secure ? '; Secure' : '';
   const lifetime = maxAge === undefined ? '' : `; Max-Age=${maxAge}`;
   return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax${secureAttribute}${lifetime}`;
 };
+const sessionCookie = (request: Request, sessionId: string): string => cookie(
+  SESSION_COOKIE,
+  sessionId,
+  new URL(request.url).protocol === 'https:',
+  Math.floor(SESSION_LIFETIME_MS / 1_000),
+);
 
 entryRoutes.get('/health', async (context) => {
   const control = await createDatabaseAccess(context.env).open({ kind: 'control' });
@@ -46,14 +51,7 @@ entryRoutes.post('/entry/google', async (context) => {
 
 oauthRoutes.get('/oauth/google/callback', async (context) => {
   const completed = await completeGoogleEntry(context.env, context.req.query('code'), context.req.query('state'));
-  if (completed.sessionId) {
-    context.header('Set-Cookie', cookie(
-      SESSION_COOKIE,
-      completed.sessionId,
-      new URL(context.req.raw.url).protocol === 'https:',
-      Math.floor(sessionWindowMs / 1_000),
-    ));
-  }
+  if (completed.sessionId) context.header('Set-Cookie', sessionCookie(context.req.raw, completed.sessionId));
   return context.redirect(completed.location);
 });
 
@@ -89,7 +87,10 @@ entryRoutes.get('/auth/me', async (context) => {
 entryRoutes.get('/bootstrap', async (context) => {
   const session = await createRequestContext(context.req.raw, context.env).session();
   if (!session) return json(context, { kind: 'signed_out' });
-  return json(context, await applicationState(context.env, session));
+  const state = await applicationState(context.env, session);
+  // Every page load bootstraps, so renewing here keeps a session in use from expiring.
+  if (await renewSession(context.env, session.id)) context.header('Set-Cookie', sessionCookie(context.req.raw, session.id));
+  return json(context, state);
 });
 
 entryRoutes.post('/auth/logout', async (context) => {

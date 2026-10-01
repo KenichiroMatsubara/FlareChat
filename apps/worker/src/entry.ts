@@ -1,4 +1,4 @@
-import { and, eq, gt, inArray, or } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNull, lt, or } from 'drizzle-orm';
 import { now } from './clock';
 
 import { decrypt, encrypt, masterKey, unwrapAccountKey } from './cryptography';
@@ -43,7 +43,12 @@ interface GoogleEntryOptions {
 
 const SETUP_WINDOW_MS = 15 * 60 * 1_000;
 const OAUTH_WINDOW_MS = 10 * 60 * 1_000;
-const SESSION_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
+/**
+ * How long a session lasts after its last renewal. Browsers cap a cookie's
+ * lifetime at 400 days, so no session can outlast this between two uses.
+ */
+export const SESSION_LIFETIME_MS = 400 * 24 * 60 * 60 * 1_000;
+const SESSION_RENEWAL_INTERVAL_MS = 24 * 60 * 60 * 1_000;
 
 const expiresIn = (milliseconds: number): string => new Date(Date.now() + milliseconds).toISOString();
 const redirectUri = (env: Bindings): string => `${env.APP_URL.replace(/\/$/u, '')}/oauth/google/callback`;
@@ -55,6 +60,25 @@ const recoveryReturnOrigin = (env: Bindings, accountId: string): string => {
 const recoveryAccountIdFrom = (returnOrigin: string): string | null => {
   const target = new URL(returnOrigin);
   return target.searchParams.get('automation_reauthorization');
+};
+
+/**
+ * Extends a live session to a full lifetime from now, at most once a day, so a
+ * session in use never expires. False when it was renewed within the last day
+ * or is no longer live, in which case the browser's cookie needs no update.
+ */
+export const renewSession = async (env: Bindings, sessionId: string): Promise<boolean> => {
+  const timestamp = now();
+  const renewed = await controlDatabase(env.CONTROL_DB).update(sessions).set({
+    expiresAt: expiresIn(SESSION_LIFETIME_MS),
+    lastSeenAt: timestamp,
+  }).where(and(
+    eq(sessions.id, sessionId),
+    isNull(sessions.revokedAt),
+    gt(sessions.expiresAt, timestamp),
+    lt(sessions.lastSeenAt, new Date(Date.now() - SESSION_RENEWAL_INTERVAL_MS).toISOString()),
+  )).returning({ id: sessions.id }).get();
+  return renewed !== undefined;
 };
 
 export const entryConfigurationError = (env: Bindings): string | null => {
@@ -163,7 +187,7 @@ export const completeGoogleEntry = async (
         control.insert(sessions).values({
           id: sessionId,
           identityId: owner.id,
-          expiresAt: expiresIn(SESSION_WINDOW_MS),
+          expiresAt: expiresIn(SESSION_LIFETIME_MS),
           createdAt: timestamp,
           lastSeenAt: timestamp,
         }),
@@ -246,7 +270,7 @@ export const completeGoogleEntry = async (
         control.insert(sessions).values({
           id: sessionId,
           identityId: owner.id,
-          expiresAt: expiresIn(SESSION_WINDOW_MS),
+          expiresAt: expiresIn(SESSION_LIFETIME_MS),
           createdAt: timestamp,
           lastSeenAt: timestamp,
         }),
@@ -296,7 +320,7 @@ export const completeGoogleEntry = async (
       control.insert(sessions).values({
         id: sessionId,
         identityId: owner.id,
-        expiresAt: expiresIn(SESSION_WINDOW_MS),
+        expiresAt: expiresIn(SESSION_LIFETIME_MS),
         createdAt: timestamp,
         lastSeenAt: timestamp,
       }),
